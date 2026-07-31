@@ -301,7 +301,7 @@ so the two sides are coupled through `drawnIndex`. **[verified]**
 
 ### 5.2b Call chain — how the contracts reach these
 
-Worth recording, because it is what makes the reconciliation job meaningful: our off-chain
+Worth recording, because it is what makes the reconciliation job (§9) meaningful: our off-chain
 code and the on-chain getters must bottom out in the same primitives.
 
 **Supply** — [`Spoke.getUserSuppliedAssets:573-580`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L573-L580)
@@ -388,7 +388,7 @@ every branch of the §5.1–5.2 formulas is now covered.
 - Source of truth: `suppliedShares` / `drawnShares` per `(spoke, reserveId, user)`, plus a
   per-`(hub, assetId)` mirror of Hub asset state.
 - The API needs **no RPC on the read path** — valuation is arithmetic over indexed state.
-- `eth_call` is demoted from *required* to a **reconciliation job**: periodically compare
+- `eth_call` is demoted from *required* to a **reconciliation job** (§9): periodically compare
   computed values against `getUserDebt` / `getUserSuppliedAssets` and alert on drift. That is
   a much better use of it, and it turns the wei-exact match above into a standing invariant
   rather than a one-off check.
@@ -398,7 +398,7 @@ The cost: the Hub asset mirror must be folded from the Hub's own events (`Add`, 
 `UpdateAsset`) to keep `liquidity`, `addedShares`, `drawnShares`, `swept`, `realizedFees`,
 `deficitRay` and the premium fields current. **This is the highest-risk part of the ingestion
 logic** — one mis-folded transition silently corrupts every supply valuation for that asset. It
-is also exactly what the reconciliation job is there to catch.
+is also exactly what the reconciliation job (§9) is there to catch.
 
 The transitions, read from `Hub.sol`: **[verified]**
 
@@ -451,7 +451,7 @@ getReserveSuppliedAssets / getReserveTotalDebt(uint256)
 getLiquidationConfig() / getLiquidationBonus(...)
 ```
 
-Given §5, these are **not on the read path** — they are the reconciliation oracle. The
+Given §5, these are **not on the read path** — they are the reconciliation oracle (§9). The
 indexer computes values arithmetically and uses these calls to prove it stayed correct.
 
 `getUserAccountData` remains the highest-value single call: **health factor** in WAD plus
@@ -688,7 +688,7 @@ Three properties worth stating in the API contract:
   exactly like a rounding bug in the formula until the JSON was inspected. Silent, plausible,
   and wrong in the last few digits — the worst failure shape for a financial API.
 
-`getUserAccountData` stays the reconciliation oracle, never the serving path.
+`getUserAccountData` stays the reconciliation oracle (§9), never the serving path.
 
 ---
 
@@ -706,7 +706,7 @@ Worth separating clearly, because public RPCs blur it commercially:
 The design in §5 satisfies this and then some: because the Hub emits its own index
 (§5.3), **the entire pipeline — backfill, valuation, and historical queries — reads logs
 only.** No archive node, and no `eth_call` on the critical path at all. `eth_call` is used
-solely by the reconciliation job, and only at `latest`. This is a deliberate constraint to
+solely by the reconciliation job (§9), and only at `latest`. This is a deliberate constraint to
 state in the README, not an accident.
 
 Caveat: some providers gate `eth_getLogs` history behind an "archive" plan anyway. That is a
@@ -776,7 +776,137 @@ Two practical notes for standing it up:
 
 ---
 
-## 9. Live state — Main Spoke, block 25652535 **[verified]**
+## 9. Reconciliation
+
+§5 makes the indexer compute values arithmetically instead of asking the chain. That is what
+removes RPC from the read path — but it means **a bug in the fold produces wrong numbers, not
+errors**. The Hub asset mirror in particular is folded from nine event types; one mis-handled
+transition silently corrupts every supply valuation for that asset, indefinitely, with nothing
+to flag it.
+
+The contracts can compute the same values we do. Reconciliation is the standing comparison of
+the two, and it is what turns the one-off exactness results in §5.4 and §7.2 into a continuous
+invariant.
+
+### 9.1 What it compares
+
+Three tiers, cheapest first. **Which tier drifts is the diagnosis**, so they are worth keeping
+distinct rather than collapsing into one "is the data right" check.
+
+| tier | compares | a failure here means |
+|---|---|---|
+| 1. shares | folded balances vs `getUserSuppliedShares`, `getUserPosition` | ingestion is broken — missed log, bad decode, un-rolled-back reorg |
+| 2. Hub mirror | mirrored asset state vs `getAsset` | a mis-folded Hub transition — the highest-risk component (§5.5) |
+| 3. derived | computed assets / HF vs `getUserDebt`, `getUserSuppliedAssets`, `getUserAccountData` | if tiers 1–2 are clean, **the formula is wrong, not the data** |
+
+Tier 2 is the best value per unit cost: ~17 `getAsset` calls covers the entire Core Hub, and it
+catches corruption *at the source*, before it reaches user-facing numbers.
+
+Tier 3 drifting while 1 and 2 are clean is a specific, predictable signature. Mainnet premium
+and deficit are zero today (§5.4); the day an asset acquires either, tier 3 moves alone. Worth
+encoding as a named alert rather than rediscovering at 3am.
+
+### 9.2 Tolerance is zero
+
+Not approximate agreement. Rounding is fully specified — `rayMulUp`, `Math.Rounding.Floor`,
+`percentMulDown` — and the implementation is wei-exact against the contracts on both mainnet
+(20/20, 8/8) and Anvil (6/6). **Any nonzero drift is a bug, not noise.** That removes the usual
+argument about whether a threshold is too tight.
+
+With zero tolerance a systemic fault will fire thousands of alerts, so aggregate by
+`(tier, asset, field)` before paging.
+
+### 9.3 When it runs
+
+**Anchor on `finalized`, never on the tip.** Comparing against `latest` produces false
+mismatches whenever a block reorgs out mid-check — intermittent and far harder to diagnose than
+the block-skew trap in §7.2. `finalized` is immutable by definition, so a mismatch there is
+always real.
+
+Measured: `finalized` trails by **75 blocks (~15 min)** and `safe` by **43 (~8.6 min)**, and
+**state is readable at both** — inside the ~128-block window non-archive providers serve.
+**[verified]** So the reorg-immune choice costs nothing in infrastructure.
+
+| trigger | scope | rationale |
+|---|---|---|
+| backfill completes | full — all assets, all users | gates serving; don't expose computed values until the fold is proven once |
+| `finalized` advances (poll ~5 min) | Hub assets **touched since last run** | the high-risk mirror, checked at the source |
+| every ~100 blocks | 50–100 sampled users | fold bugs that don't surface at asset level |
+| continuous, paged | all users, one full pass / 24h | cold accounts sampling never visits |
+| after a reorg rollback | assets + users in the replayed range | highest-probability moment for the fold to be wrong |
+| after a deploy touching fold logic | full | prior confidence is void |
+| on demand | anything | debugging and CI |
+
+**Reconcile what moved, not everything.** An asset whose state did not change cannot have
+drifted, and the Hub event stream already tells us which `assetId`s saw activity. On measured
+volumes this matters: 434 `UpdateAsset` events per 10k blocks spread across 15 active assets
+means only a handful move in any 5-minute window. Blind-polling all 17 every run is mostly
+waste — and worse, it makes the check feel expensive enough that someone eventually reduces its
+frequency.
+
+Sampling for tiers 1 and 3 should weight toward recently-touched positions (most likely to
+expose a bad transition), the largest positions (blast radius), and users near HF 1.0 (highest
+consequence), plus a random tail.
+
+Cost is negligible: the asset tier is 3–4k calls/day at a 5-minute poll; a full user sweep is
+roughly `3 × user_count`, trivially absorbed across 24h.
+
+### 9.4 Handling drift
+
+The response depends entirely on which tier moved.
+
+| drifted | recoverable? | action |
+|---|---|---|
+| Hub mirror only | yes — it is a cache of readable state | auto-heal from `getAsset`, alert loudly |
+| user shares | yes, but healing destroys the evidence | snapshot, alert, targeted replay — **never silent overwrite** |
+| derived, tiers 1–2 clean | no — resyncing fixes nothing | code bug; halt serving that scope |
+
+**Repair is replay, not patch.** Because raw events are immutable and positions are a derived
+projection, repair means rewinding the affected asset or user to the last verified block and
+re-folding. That also bisects for free: if replay from known-good yields the correct value, the
+stored projection was corrupted; if replay reproduces the drift, the fold logic itself is wrong.
+Manual patching of balances should never be a runbook step — it hides the bug and breaks the
+"positions are a pure function of the log" invariant everything else rests on.
+
+**Keep ingesting; degrade only the projection.** Raw ingestion is append-only and always safe,
+and halting it just means falling further behind while debugging. Serving degrades instead, and
+scoped: drift on `assetId 5` quarantines reserves backed by asset 5, not the whole API.
+Affected responses carry `verified: false` and `lastVerifiedBlock` rather than a 503 — though
+past some magnitude, withholding a number beats confidently serving a wrong one.
+
+**Diff per field.** Each mirror field maps almost 1:1 to the event type that maintains it, so a
+field-level diff names the culprit before anyone opens a debugger:
+
+`addedShares` → `Add`/`Remove`/`MintFeeShares` · `drawnShares` → `Draw`/`Restore` ·
+`swept` → `Sweep`/`Reclaim` · `deficitRay` → `ReportDeficit`/`EliminateDeficit` ·
+`realizedFees` → `UpdateAsset`
+
+**Alert on heal frequency, not just on drift.** The failure mode to design against is auto-heal
+running every five minutes, silently papering over a persistent fold bug, with every individual
+check passing *after* the heal. A mirror that needs repeated healing is broken even though it is
+never observed in a bad state.
+
+Escalation: single asset healing once → log and metric. Recurring on the same asset → page and
+quarantine it. Tier-1 drift or multiple assets → page, and **fall back to `eth_call`
+passthrough** for reads. Naming that fallback matters: the RPC dependency §5 deliberately
+designed away becomes the emergency path — slower, but correct by construction. Having a
+known-correct degraded mode is what makes the aggressive compute-everything-off-chain choice
+defensible.
+
+### 9.5 What it does not prove
+
+Reconciliation checks correctness **at `finalized`, not throughout history**. A compensating
+pair of errors could agree now while past values were wrong. Providers serve state for roughly
+the last ~128 blocks, so a short historical window is available; anything deeper needs archive,
+which §8 deliberately designs away from.
+
+Verified state therefore trails served state by ~15 minutes. That is the right trade, but it
+should be visible rather than implied — expose `lastVerifiedBlock` and a drift counter on
+`/health` so the gap is legible.
+
+---
+
+## 10. Live state — Main Spoke, block 25652535 **[verified]**
 
 14 reserves, all on the Core Hub.
 
@@ -808,7 +938,7 @@ Two things to design for, visible in this table:
 
 ---
 
-## 10. Enrichment candidates
+## 11. Enrichment candidates
 
 The brief needs ≥1 additional source, exposed alongside indexed data.
 
@@ -841,7 +971,7 @@ rather than USD conversion.
 
 ---
 
-## 11. Open questions
+## 12. Open questions
 
 None blocking. Every question raised during this research has been closed, the last two on a
 local Anvil deployment (§8) because mainnet cannot reach the states involved.
@@ -870,7 +1000,7 @@ Residual risks worth carrying forward, none of which need answering before build
 - Anvil scenarios prove the formulas at specific points, not across the whole input domain.
   Property-based fuzzing against `AssetLogic` would be the stronger follow-up.
 - Mainnet's premium and deficit state is zero *today*. When it becomes nonzero the
-  reconciliation job is what should confirm these findings still hold in production.
+  reconciliation job (§9) is what should confirm these findings still hold in production.
 
 ---
 
