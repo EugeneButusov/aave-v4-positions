@@ -19,7 +19,7 @@ logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint
 lefthook.
 
 **Not yet:** database and migrations, the ingestion pipeline, the enrichment source, the positions
-endpoints, Docker Compose, CI. The API serves one stub endpoint; the indexer is a probe-serving shell. See [Not here yet](#not-here-yet).
+endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer is a probe-serving shell. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -90,6 +90,38 @@ curl -s localhost:3000/health/ready && curl -s localhost:3001/health/ready
 ```
 
 Browse the API contract at **<http://localhost:3000/docs>**.
+
+## Running with Docker
+
+Nothing to install but Docker — no Node, no pnpm:
+
+```bash
+docker compose up --build
+```
+
+Both services come up with health checks; `docker compose ps` shows them as `healthy` once their
+readiness probes pass. Same addresses as above (`:3000`, `:3001`, `/docs`). Tear down with
+`docker compose down`.
+
+If 3000 or 3001 are taken:
+
+```bash
+API_PORT=4000 INDEXER_PORT=4001 docker compose up --build
+```
+
+One [`Dockerfile`](Dockerfile) serves both services — compose passes `APP=api` or `APP=indexer`. It
+is a multi-stage build: manifests are copied before sources so the dependency layer survives a source
+edit, and `pnpm deploy` collects the app, its built workspace packages and production-only
+`node_modules` into a self-contained directory. The runtime stage carries that and nothing else, and
+runs as the image's unprivileged `node` user.
+
+Two details that exist so the drain actually works in a container:
+
+- **`CMD` is exec form.** A shell wrapper would sit between Docker and Node and swallow `SIGTERM`,
+  so the readiness-first shutdown would never run and the container would die on the timeout instead.
+- **`stop_grace_period` (20s) exceeds `SHUTDOWN_GRACE_SECONDS` (5s).** Docker's default is 10s; if
+  the grace window ever grew past it, `SIGKILL` would land mid-drain. Verified end to end — readiness
+  answers `503` while the container is still serving, then it exits 0.
 
 ## Commands
 
@@ -276,5 +308,6 @@ Deliberate, in rough order of what comes next.
 - **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
   must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
-- **Docker Compose and Kubernetes manifests.** CI is in place: format, lint, typecheck, test and
-  build, on Node 22.13 and 24.
+- **Kubernetes manifests.** The probes, drain sequence and JSON logs are already shaped for them.
+  CI covers format, lint, typecheck, test and build on Node 22.13 and 24, but does not yet build the
+  Docker images — so the `Dockerfile` can rot without anything failing.
