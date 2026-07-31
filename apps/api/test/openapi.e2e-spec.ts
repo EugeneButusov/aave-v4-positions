@@ -49,7 +49,7 @@ describe('openapi', () => {
     });
 
     it('exposes exactly the routes we expect', () => {
-      expect(Object.keys(document.paths).sort()).toEqual(['/health/live', '/health/ready']);
+      expect(Object.keys(document.paths).toSorted()).toEqual(['/health/live', '/health/ready']);
     });
 
     /**
@@ -82,13 +82,13 @@ describe('openapi', () => {
     it('describes both readiness outcomes, not just the happy path', () => {
       const responses = document.paths['/health/ready']?.get?.responses ?? {};
 
-      expect(Object.keys(responses).sort()).toEqual(['200', '503']);
+      expect(Object.keys(responses).toSorted()).toEqual(['200', '503']);
     });
 
     it('emits a real schema for the liveness response', () => {
       const schema = document.components?.schemas?.['LivenessResponseDto'] as SchemaNode;
 
-      expect(schema.required?.sort()).toEqual(['status', 'uptimeSeconds']);
+      expect(schema.required?.toSorted()).toEqual(['status', 'uptimeSeconds']);
       expect(schema.properties?.['uptimeSeconds']).toMatchObject({ type: 'number' });
       expect(schema.properties?.['status']).toMatchObject({ enum: ['ok'] });
     });
@@ -96,7 +96,7 @@ describe('openapi', () => {
     it('marks an optional property optional rather than required', () => {
       const schema = document.components?.schemas?.['CheckResultDto'] as SchemaNode;
 
-      expect(schema.required?.sort()).toEqual(['name', 'status']);
+      expect(schema.required?.toSorted()).toEqual(['name', 'status']);
       expect(schema.properties?.['error']).toBeDefined();
     });
   });

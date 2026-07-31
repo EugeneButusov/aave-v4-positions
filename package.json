@@ -13,8 +13,8 @@
     "dev:api": "pnpm --filter @aave-v4-positions/api start:dev",
     "dev:indexer": "pnpm --filter @aave-v4-positions/indexer start:dev",
     "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r --filter './apps/*' typecheck",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "oxlint --type-aware",
+    "lint:fix": "oxlint --type-aware --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
@@ -25,19 +25,16 @@
     "prepare": "lefthook install"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
     "@types/node": "^24.13.3",
     "@vitest/coverage-v8": "^4.1.10",
-    "eslint": "^10.8.0",
-    "eslint-config-prettier": "^10.1.8",
-    "globals": "^17.8.0",
     "lefthook": "^2.1.10",
+    "oxlint": "^1.76.0",
+    "oxlint-tsgolint": "^7.0.2001",
     "prettier": "^3.9.6",
     "rimraf": "^6.1.3",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
   }
 }

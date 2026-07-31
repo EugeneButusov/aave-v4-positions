@@ -4,9 +4,12 @@
 pre-commit:
   parallel: true
   jobs:
-    - name: eslint
+    # Type-aware rules need the whole program, so this is not as cheap as a
+    # syntax-only pass — but oxlint does the repo in ~250ms, so scoping to
+    # staged files keeps it well inside a commit's patience budget.
+    - name: oxlint
       glob: '*.{ts,mts,cts,js,mjs,cjs}'
-      run: pnpm exec eslint --fix --no-warn-ignored {staged_files}
+      run: pnpm exec oxlint --type-aware --fix {staged_files}
       stage_fixed: true
 
     - name: prettier

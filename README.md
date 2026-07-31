@@ -13,7 +13,7 @@ This is the **scaffold**. It stands up the workspace, both services, the test an
 the operational shape a Kubernetes deployment expects.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
-logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, ESLint + Prettier,
+logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook.
 
 **Not yet:** database and migrations, the ingestion pipeline itself, the enrichment source, the
@@ -82,7 +82,7 @@ Browse the API contract at **<http://localhost:3000/docs>**.
 | `pnpm test`                         | every app's tests in one run                     |
 | `pnpm test:watch` / `pnpm test:cov` | watch mode / V8 coverage                         |
 | `pnpm typecheck`                    | `tsc --noEmit` across the workspace              |
-| `pnpm lint` / `pnpm lint:fix`       | ESLint, type-aware                               |
+| `pnpm lint` / `pnpm lint:fix`       | oxlint, type-aware                               |
 | `pnpm format` / `pnpm format:check` | Prettier                                         |
 | `pnpm check`                        | format, lint, typecheck, test — what CI will run |
 | `pnpm clean`                        | remove build output                              |
@@ -169,9 +169,33 @@ the pod down with it. Nothing is registered yet, and the service says so at boot
 
 Choices that are not the default, and why.
 
-**TypeScript 5.9, not 7.** typescript-eslint 8 declares `typescript <6.1.0`; there is no stable
-release supporting TS 7 yet, and the Nest CLI itself pins 5.9. Type-aware linting is worth more here
-than being on the newest compiler.
+**oxlint + tsgolint instead of ESLint + typescript-eslint.** Measured, not assumed. Of the 115 rules
+our ESLint config had enabled, oxlint implements 114 (the miss is `no-octal`), and the type-aware
+ones run on a real TypeScript checker — `tsgolint` is a Go binary embedding `typescript-go`, which is
+the compiler that became TS 7. The `no-unsafe-*` family and `no-floating-promises` report identically
+to typescript-eslint, down to the character position. Whole repo: **~250ms versus ~2.2s**.
+
+The `no-unsafe-*` family is the reason type-aware linting is not optional here. `tsc --noEmit`
+does **not** catch `any` propagation — assigning an `any` is legal TypeScript, and `noImplicitAny`
+governs declarations, not values flowing through them. A real instance of this shipped into this
+repo: pino types `base` as `Record<string, any>`, and that contextual `any` silently swallowed a
+`ConfigService.get` return. Only the linter saw it.
+
+Two consequences of that choice:
+
+- **`consistent-type-imports` is off.** No Rust linter is `emitDecoratorMetadata`-aware, so it
+  rewrites Nest's constructor-injected imports to `import type` and erases them. Applying that
+  "safe fix" produces `Nest can't resolve dependencies of the HealthController (?)` at runtime.
+  typescript-eslint was the only linter of the three evaluated that got this right.
+- **Biome was rejected.** It has no `no-unsafe-*` rules at all — it carries its own inference rather
+  than a TypeScript checker, so that information does not exist for it to report on. On the pino bug
+  above it is silent, and it makes the same DI-breaking `useImportType` call (its own docs recommend
+  disabling that rule for NestJS).
+
+**TypeScript 5.9 for now.** Nothing blocks 7 any more — the tsconfig is already free of the options
+it removed, and TS 7 compiles this codebase clean. What holds it back is that `@nestjs/cli` pins
+`typescript: 5.9.3` exactly, so bumping the root would leave `pnpm typecheck` on one compiler and
+`nest build` on another. Worth one version, not two compilers.
 
 **Vitest with no SWC step.** The usual Nest recipe adds `unplugin-swc` because esbuild does not emit
 decorator metadata, which is exactly what Nest's injector reads. Vite's current transform _does_ emit
@@ -188,7 +212,7 @@ implicit `any` on a balance is a silent wrong number.
 **A pnpm catalog** holds every shared dependency version in `pnpm-workspace.yaml`, so the two services
 cannot drift onto different Nest minors.
 
-**Hooks are split by cost.** `pre-commit` runs ESLint and Prettier over staged files only; `pre-push`
+**Hooks are split by cost.** `pre-commit` runs oxlint and Prettier over staged files only; `pre-push`
 runs the whole typecheck and test suite, since those are project-wide and too slow to attach to every
 commit. Bypass with `LEFTHOOK=0`, or one job with `LEFTHOOK_EXCLUDE=<name>`.
 

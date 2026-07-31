@@ -37,8 +37,11 @@ describe('IngestionService', () => {
   });
 
   it('starts every registered source', async () => {
-    const spoke = { name: 'spoke', start: vi.fn().mockResolvedValue(undefined) };
-    const hub = { name: 'hub', start: vi.fn().mockResolvedValue(undefined) };
+    const spoke = {
+      name: 'spoke',
+      start: vi.fn<EventSource['start']>().mockResolvedValue(undefined),
+    };
+    const hub = { name: 'hub', start: vi.fn<EventSource['start']>().mockResolvedValue(undefined) };
     const service = await buildService([spoke, hub]);
 
     service.onApplicationBootstrap();
