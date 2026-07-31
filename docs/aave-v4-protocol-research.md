@@ -1082,6 +1082,26 @@ comfortably healthy on the other. A portfolio view must report HF per spoke. Ble
 a single number is not a simplification — it is wrong in the one direction that matters, hiding
 an imminent liquidation behind unrelated collateral.
 
+This is structural, not a policy choice. `liquidationCall(collateralReserveId, debtReserveId,
+user, …)` resolves both ids against `_reserves` — *that* Spoke's reserve map — and uses that
+Spoke's `_liquidationConfig` and `ORACLE`; `_calculateUserAccountData` reads only that Spoke's
+`_positionStatus` and `_userPositions`. Pairing collateral in one spoke against debt in another
+cannot be expressed. **[verified]** For a borrower, two spokes are two independent margin
+accounts with non-fungible collateral.
+
+Losses are absorbed explicitly rather than socialised. Bad debt is recorded per
+`(assetId, spoke)` as `coveredSpoke.deficitRay`, and
+[`Hub.eliminateDeficit`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/Hub.sol#L333-L359)
+clears it by burning the covering spoke's **own** `addedShares` — both `addedShares` and
+`deficitRay` fall together, so the share price is preserved and other suppliers take no haircut.
+It is role-gated; the treasury spoke, which also receives liquidation fees (§4.1), is the
+natural caller. **[verified]**
+
+Risk does still cross spokes at the **liquidity** layer, just not the liquidation one. Until a
+deficit is eliminated it remains inside `aggregatedOwedRay` (§5.2), so `totalAddedAssets` counts
+bad debt as if still owed, and suppliers of that asset — through *any* spoke — hold shares
+partly backed by it. Per-spoke credit lines (§1) are what bound that exposure.
+
 **Net worth is not `totalCollateralValue`.** That field counts only reserves that are flagged
 collateral *and* have `collateralFactor > 0`. A portfolio balance counts everything supplied.
 With five of fourteen reserves at `CF = 0`, the two diverge materially — do not reuse one for
