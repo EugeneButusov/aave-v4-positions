@@ -78,8 +78,9 @@ manager or gateway acts on someone's behalf, `caller` is the manager and `user` 
 position owner. **Positions must be keyed on `user`; `caller` is provenance only.** Getting
 this backwards would attribute large parts of the book to three router addresses. **[verified]**
 
-The managers also emit their **own** mirror events — `SupplyOnBehalfOf`, `BorrowOnBehalfOf`,
-`RepayOnBehalfOf`, `SetUsingAsCollateralOnBehalfOf`, at 2–7 logs per 10k blocks. **[verified]**
+The managers also emit their **own** mirror events — [`SupplyOnBehalfOf`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/position-manager/interfaces/IGiverPositionManager.sol#L17-L24),
+[`BorrowOnBehalfOf`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/position-manager/interfaces/ITakerPositionManager.sol#L100-L107), [`RepayOnBehalfOf`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/position-manager/interfaces/IGiverPositionManager.sol#L33-L40),
+[`SetUsingAsCollateralOnBehalfOf`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/position-manager/interfaces/IConfigPositionManager.sol#L106-L112), at 2–7 logs per 10k blocks. **[verified]**
 These are provenance records, not authoritative state; the Spoke's own events remain the source
 of truth. The hazard is therefore **double-counting, not missing data** — an indexer that
 matched position-like events across every Aave address would book each action twice. Ingest
@@ -136,14 +137,14 @@ topics computed with `keccak256`, then **cross-checked against 38,580 real Main 
 
 | topic0 | signature | observed |
 |---|---|---|
-| `0xd986db228cb1fe8392c5f45ff5f2c639b7db6cbd9ca7d1fe70b2de90c2c8c961` | `Supply(uint256,address,address,uint256,uint256)` | 10,006 |
-| `0xef18174796a5d2f91d51dc5e907a4d7867bbd6e800f6225168e0453d581d0dcd` | `Borrow(uint256,address,address,uint256,uint256)` | 5,282 |
-| `0xfe7813e2866053d5c3938554e517b554fce6666a6561bed9eaa7419b29fa9b68` | `Withdraw(uint256,address,address,uint256,uint256)` | 4,128 |
-| `0xd765a0263e8a360da8dd4fdb8c0dc5553adec12a96f29a462cdb45e5bea407dd` | `Repay(uint256,address,address,uint256,uint256,(int256,int256,uint256))` | 2,548 |
-| `0x2a1f12d996f530f89d8038aa293f9fde81cac44b6dfd6225e3358d09b78a4a37` | `LiquidationCall(uint256,uint256,address,address,bool,uint256,uint256,(int256,int256,uint256),uint256,uint256,uint256)` | 90 |
-| `0x4763df430bc5274807f8ab4ce0734e7898513638418d6eec0c5285ef85f7f51f` | `SetUsingAsCollateral(uint256,address,address,bool)` | 3,198 |
-| `0x59932f333b3a5e3fec86e662babe8dd767529ed207420e7468bd220cdfb3f076` | `ReportDeficit(uint256,address,uint256,(int256,int256,uint256))` | 0 |
-| `0x4fd0c5440d5b8c1dd712c65f039f54384c59e81a139427b0a9155260d974a9a7` | `RefreshPremiumDebt(uint256,address,(int256,int256,uint256))` | 0 |
+| `0xd986db228cb1fe8392c5f45ff5f2c639b7db6cbd9ca7d1fe70b2de90c2c8c961` | [`Supply(uint256,address,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L197-L203) | 10,006 |
+| `0xef18174796a5d2f91d51dc5e907a4d7867bbd6e800f6225168e0453d581d0dcd` | [`Borrow(uint256,address,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L225-L231) | 5,282 |
+| `0xfe7813e2866053d5c3938554e517b554fce6666a6561bed9eaa7419b29fa9b68` | [`Withdraw(uint256,address,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L211-L217) | 4,128 |
+| `0xd765a0263e8a360da8dd4fdb8c0dc5553adec12a96f29a462cdb45e5bea407dd` | [`Repay(uint256,address,address,uint256,uint256,(int256,int256,uint256))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L240-L247) | 2,548 |
+| `0x2a1f12d996f530f89d8038aa293f9fde81cac44b6dfd6225e3358d09b78a4a37` | [`LiquidationCall(uint256,uint256,address,address,bool,uint256,uint256,(int256,int256,uint256),uint256,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L261-L273) | 90 |
+| `0x4763df430bc5274807f8ab4ce0734e7898513638418d6eec0c5285ef85f7f51f` | [`SetUsingAsCollateral(uint256,address,address,bool)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L292-L297) | 3,198 |
+| `0x59932f333b3a5e3fec86e662babe8dd767529ed207420e7468bd220cdfb3f076` | [`ReportDeficit(uint256,address,uint256,(int256,int256,uint256))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L280-L285) | 0 |
+| `0x4fd0c5440d5b8c1dd712c65f039f54384c59e81a139427b0a9155260d974a9a7` | [`RefreshPremiumDebt(uint256,address,(int256,int256,uint256))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L323-L327) | 0 |
 
 Field layout of the four hot events is identical and convenient:
 `(uint256 indexed reserveId, address indexed caller, address indexed user, uint256 shares, uint256 amount)`.
@@ -214,10 +215,10 @@ liquidator with nothing in the logs to indicate a problem.
 
 | topic0 | signature | observed |
 |---|---|---|
-| `0x837314749a8459031ad895d39a13552d1627fddc93d64b404bab0ae5f0798da7` | `RefreshAllUserDynamicConfig(address)` | 8,696 |
-| `0x5790b5f096c9cfee6b98a4e2d4f54ff3fc4ca306df5bc2093d93a36496d917b8` | `RefreshSingleUserDynamicConfig(address,uint256)` | 3,165 |
-| `0x413bea992b9956f4f10f6c819bf7a6c8ed5baa119a2901fe221ae03171d52277` | `SetUserPositionManager(address,address,bool)` | 1,388 |
-| `0x9a9082fd74a00ac52b567642a2d8fd3383cb2bd8690f6b2a3b7b37aaf489dac1` | `UpdateUserRiskPremium(address,uint256)` | 0 |
+| `0x837314749a8459031ad895d39a13552d1627fddc93d64b404bab0ae5f0798da7` | [`RefreshAllUserDynamicConfig(address)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L306) | 8,696 |
+| `0x5790b5f096c9cfee6b98a4e2d4f54ff3fc4ca306df5bc2093d93a36496d917b8` | [`RefreshSingleUserDynamicConfig(address,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L311) | 3,165 |
+| `0x413bea992b9956f4f10f6c819bf7a6c8ed5baa119a2901fe221ae03171d52277` | [`SetUserPositionManager(address,address,bool)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L317) | 1,388 |
+| `0x9a9082fd74a00ac52b567642a2d8fd3383cb2bd8690f6b2a3b7b37aaf489dac1` | [`UpdateUserRiskPremium(address,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L302) | 0 |
 
 `RefreshAllUserDynamicConfig` is the **single most frequent event on the Spoke** (8,696 —
 more than `Supply`). It is emitted on config refresh and carries no amounts, but it changes
@@ -227,14 +228,14 @@ which risk parameters apply to the user, so it must be ingested even though it m
 
 | topic0 | signature | observed |
 |---|---|---|
-| `0xb2d3221c3db1eb0d586556ae23399acdfe3e52ff0fcd184c19069c730f9ca2e9` | `AddReserve(uint256,uint256,address)` | 14 |
-| `0x18a45d070f507b6387b78837652d7468e733927acc7f9a13d9cc308675735c08` | `UpdateReservePriceSource(uint256,address)` | 25 |
-| `0xe9495512a0eb05fe0cbdd52286bdeb54cb8e5a8d50e7e17d75f75903a98e2af8` | `UpdateReserveConfig(uint256,(uint24,bool,bool,bool,bool))` | 14 |
-| `0xfcede5501ba87e3766118ae6ed360a87ee9b6570156ae9cac52d35ff0de0403b` | `AddDynamicReserveConfig(uint256,uint32,(uint16,uint32,uint16))` | 14 |
-| `0x2d4f2760aaff0dfa53526a8fdd306864689a7d5e43f44ddfeece0f38315c298d` | `UpdateDynamicReserveConfig(uint256,uint32,(uint16,uint32,uint16))` | 0 |
-| `0x8e04e916c2b397f8ab1cf9a55e94728a44837b3751f72369339ad991d371edc4` | `UpdatePositionManager(address,bool)` | 5 |
-| `0x9062eec1933c38394d82dc926d7ddcd777a5cd08e1ae6baa94e90047338d3459` | `UpdateLiquidationConfig((uint128,uint64,uint16))` | 2 |
-| `0x6d87c7e547bc13244d61719fa011b6947b26036a16d69a607c1cf72a77d052bc` | `SetSpokeImmutables(address,uint16)` | 1 |
+| `0xb2d3221c3db1eb0d586556ae23399acdfe3e52ff0fcd184c19069c730f9ca2e9` | [`AddReserve(uint256,uint256,address)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L152) | 14 |
+| `0x18a45d070f507b6387b78837652d7468e733927acc7f9a13d9cc308675735c08` | [`UpdateReservePriceSource(uint256,address)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L162) | 25 |
+| `0xe9495512a0eb05fe0cbdd52286bdeb54cb8e5a8d50e7e17d75f75903a98e2af8` | [`UpdateReserveConfig(uint256,(uint24,bool,bool,bool,bool))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L157) | 14 |
+| `0xfcede5501ba87e3766118ae6ed360a87ee9b6570156ae9cac52d35ff0de0403b` | [`AddDynamicReserveConfig(uint256,uint32,(uint16,uint32,uint16))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L170-L174) | 14 |
+| `0x2d4f2760aaff0dfa53526a8fdd306864689a7d5e43f44ddfeece0f38315c298d` | [`UpdateDynamicReserveConfig(uint256,uint32,(uint16,uint32,uint16))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L180-L184) | 0 |
+| `0x8e04e916c2b397f8ab1cf9a55e94728a44837b3751f72369339ad991d371edc4` | [`UpdatePositionManager(address,bool)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L189) | 5 |
+| `0x9062eec1933c38394d82dc926d7ddcd777a5cd08e1ae6baa94e90047338d3459` | [`UpdateLiquidationConfig((uint128,uint64,uint16))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L146) | 2 |
+| `0x6d87c7e547bc13244d61719fa011b6947b26036a16d69a607c1cf72a77d052bc` | [`SetSpokeImmutables(address,uint16)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L142) | 1 |
 
 The 14 `AddReserve` events are the authoritative reserve registry — **the indexer can
 bootstrap `reserveId → (hub, assetId, underlying)` purely from logs, with no `eth_call`.**
@@ -252,18 +253,18 @@ interest index itself — see §5.3. **Ingest them.**
 
 | topic0 | signature |
 |---|---|
-| `0xa1facf110ded5028ee267fa3d5986f2aa4dc14230b79ffd27e95760f14883350` | `UpdateAsset(uint256,uint256,uint256,uint256)` |
-| `0xb233dd05ed21346e144167b35a6213bcf04768dbdffdc8339e8b027b94b9f305` | `Add(uint256,address,uint256,uint256)` |
-| `0x535be2ff85ab4c5d0991e10dc057a4951ea2bac426ffb036eded23036a3942b2` | `Remove(uint256,address,uint256,uint256)` |
-| `0xe2497bc41b1fa7c4ba996f24dc2affdffb2a5571584db6db0eed8fbbf1dc8517` | `Draw(uint256,address,uint256,uint256)` |
-| `0x119e7f996dc987b3ae79eb3735f1620c4292f6a7761a1e0f834c445f7798b912` | `Restore(uint256,address,uint256,(int256,int256,uint256),uint256,uint256)` |
-| `0x3fa96ecf17429fddfbb919a64196f4e43f71b57f0c5c38c49a21c8e1e763d18c` | `RefreshPremium(uint256,address,(int256,int256,uint256))` |
-| `0x4845ee5c72bde2b62defc8a1ca2f0fc3313b2d9e799997ce4f6776da9773bcbf` | `ReportDeficit(uint256,address,uint256,(int256,int256,uint256),uint256)` |
-| `0xe97b8576ac531cdc817b933309d0518ca3d26c6b46d490f3ae9fa39426a141ee` | `EliminateDeficit(uint256,address,address,uint256,uint256)` |
-| `0xafd21228e21de4a3f779e1cc3617e12672c3da091dcf3812a931036aa0bf633c` | `MintFeeShares(uint256,address,uint256,uint256)` |
-| `0x69bb3893073d7a893f3933f3871309fc25acfc72e365b71f554d439a85b20e8b` | `Sweep(uint256,address,uint256)` |
-| `0x566111831db1f090374baff3c3f9fc512084f5a9b8f5b199fb475d9c43a8013f` | `Reclaim(uint256,address,uint256)` |
-| `0x0d93b0e8579bc9db73c85a1fb79d785ffc47f8e20d346253f809cc98c48292a0` | `TransferShares(uint256,address,address,uint256)` |
+| `0xa1facf110ded5028ee267fa3d5986f2aa4dc14230b79ffd27e95760f14883350` | [`UpdateAsset(uint256,uint256,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHub.sol#L113-L118) |
+| `0xb233dd05ed21346e144167b35a6213bcf04768dbdffdc8339e8b027b94b9f305` | [`Add(uint256,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L23) |
+| `0x535be2ff85ab4c5d0991e10dc057a4951ea2bac426ffb036eded23036a3942b2` | [`Remove(uint256,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L30) |
+| `0xe2497bc41b1fa7c4ba996f24dc2affdffb2a5571584db6db0eed8fbbf1dc8517` | [`Draw(uint256,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L37-L42) |
+| `0x119e7f996dc987b3ae79eb3735f1620c4292f6a7761a1e0f834c445f7798b912` | [`Restore(uint256,address,uint256,(int256,int256,uint256),uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L51-L58) |
+| `0x3fa96ecf17429fddfbb919a64196f4e43f71b57f0c5c38c49a21c8e1e763d18c` | [`RefreshPremium(uint256,address,(int256,int256,uint256))`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L64) |
+| `0x4845ee5c72bde2b62defc8a1ca2f0fc3313b2d9e799997ce4f6776da9773bcbf` | [`ReportDeficit(uint256,address,uint256,(int256,int256,uint256),uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L72-L78) |
+| `0xe97b8576ac531cdc817b933309d0518ca3d26c6b46d490f3ae9fa39426a141ee` | [`EliminateDeficit(uint256,address,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHub.sol#L166-L172) |
+| `0xafd21228e21de4a3f779e1cc3617e12672c3da091dcf3812a931036aa0bf633c` | [`MintFeeShares(uint256,address,uint256,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHub.sol#L141-L146) |
+| `0x69bb3893073d7a893f3933f3871309fc25acfc72e365b71f554d439a85b20e8b` | [`Sweep(uint256,address,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHub.sol#L152) |
+| `0x566111831db1f090374baff3c3f9fc512084f5a9b8f5b199fb475d9c43a8013f` | [`Reclaim(uint256,address,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHub.sol#L158) |
+| `0x0d93b0e8579bc9db73c85a1fb79d785ffc47f8e20d346253f809cc98c48292a0` | [`TransferShares(uint256,address,address,uint256)`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/interfaces/IHubBase.sol#L85-L90) |
 
 Volume is modest: 868 Core Hub logs per 10k blocks, half of them `UpdateAsset`. **[verified]**
 
@@ -496,19 +497,16 @@ until the mirror is trusted.
 
 All on the Spoke unless noted; all confirmed callable at `latest`. **[verified]**
 
-```solidity
-getUserAccountData(address) returns (UserAccountData)   // riskPremium, avgCollateralFactor,
-                                                        // healthFactor, totalCollateralValue,
-                                                        // totalDebtValueRay,
-                                                        // activeCollateralCount, borrowCount
-getUserPosition(uint256 reserveId, address user)
-getUserSuppliedShares / getUserSuppliedAssets(uint256, address)
-getUserDebt / getUserTotalDebt / getUserPremiumDebtRay(uint256, address)
-getUserReserveStatus(uint256, address) returns (bool, bool)
-getReserveCount / getReserve / getReserveConfig / getDynamicReserveConfig(uint256, uint32)
-getReserveSuppliedAssets / getReserveTotalDebt(uint256)
-getLiquidationConfig() / getLiquidationBonus(...)
-```
+| purpose | function | returns |
+|---|---|---|
+| user account | [`getUserAccountData`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L745) | risk premium, avg collateral factor, **health factor**, total collateral value, total debt value, active-collateral and borrow counts |
+| user position | [`getUserPosition`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L736-L739) | raw `UserPosition` struct — the folded ledger compares against this |
+| user supply | [`getUserSuppliedShares`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L705) · [`getUserSuppliedAssets`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L698) | shares, and shares converted to assets |
+| user debt | [`getUserDebt`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L714) · [`getUserTotalDebt`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L722) · [`getUserPremiumDebtRay`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L729) | drawn and premium components, and their sum |
+| user flags | [`getUserReserveStatus`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L691) | `(isUsingAsCollateral, isBorrowing)` for one reserve |
+| reserve registry | [`getReserveCount`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L626) · [`getReserve`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L665) · [`getReserveConfig`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L671) · [`getDynamicReserveConfig`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L679-L682) | the reserve table and its versioned risk config |
+| reserve totals | [`getReserveSuppliedAssets`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L631) · [`getReserveTotalDebt`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L652) | per-reserve aggregates |
+| liquidation | [`getLiquidationConfig`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L622) · [`getLiquidationBonus`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/interfaces/ISpoke.sol#L758-L762) | spoke-wide thresholds (§12.4) and the bonus at a given health factor |
 
 Given §5, these are **not on the read path** — they are the reconciliation oracle (§9). The
 indexer computes values arithmetically and uses these calls to prove it stayed correct.
@@ -620,7 +618,7 @@ The feeds are *not* uniform. Probing all 14 **[verified]**:
 | Fixed price (168-byte contract) | GHO | **yes** — constant |
 | Chainlink × on-chain LST ratio | wstETH (`RATIO_PROVIDER` = stETH `0xae7a…`), weETH (`RATIO_PROVIDER` = weETH `0xCd5f…`) | **yes, at rebase granularity** — see 7.4.2 |
 
-`AnswerUpdated(int256,uint256,uint256)` fires **36× per 10k blocks** on the ETH/USD aggregator
+[`AnswerUpdated(int256,uint256,uint256)`](https://etherscan.io/address/0x7c7FdFCa295a787ded12Bb5c1A49A8D2cC20E3F8#code) fires **36× per 10k blocks** on the ETH/USD aggregator
 `0x7c7FdFCa295a787ded12Bb5c1A49A8D2cC20E3F8`, so the Chainlink half is a normal indexing job.
 **[verified]**
 
@@ -673,7 +671,7 @@ wstETH/USD = ETH/USD × stEthPerToken() / 1e18
 ```
 
 And `stEthPerToken()` is not a continuous function. It moves on Lido's oracle report, which
-emits `TokenRebased` — measured at **~1.2 per day** (5 events in 30k blocks). Between reports,
+emits [`TokenRebased`](https://etherscan.io/address/0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84#code) — measured at **~1.2 per day** (5 events in 30k blocks). Between reports,
 submits and withdrawals mint or burn shares *proportionally*, leaving the ratio intact.
 
 Better still, `TokenRebased` carries `postTotalShares` and `postTotalEther`, so the exact
