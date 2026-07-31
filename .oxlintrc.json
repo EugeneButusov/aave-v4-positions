@@ -1,0 +1,76 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "oxc", "unicorn", "import", "promise", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "off",
+    "style": "off"
+  },
+  "ignorePatterns": ["**/dist/**", "**/coverage/**", "docs/**"],
+  "rules": {
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-return": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/require-await": "error",
+    "typescript/no-base-to-string": "error",
+    "typescript/restrict-plus-operands": "error",
+    "typescript/unbound-method": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/only-throw-error": "error",
+    "typescript/prefer-promise-reject-errors": "error",
+
+    "typescript/restrict-template-expressions": ["error", { "allowNumber": true }],
+    "typescript/no-extraneous-class": ["error", { "allowWithDecorator": true }],
+    "typescript/no-unused-vars": [
+      "error",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ],
+    "typescript/no-explicit-any": "error",
+
+    "no-console": ["error", { "allow": ["warn", "error"] }],
+
+    // A side-effect polyfill import is the correct pattern, not a mistake.
+    "import/no-unassigned-import": ["error", { "allow": ["reflect-metadata"] }],
+
+    // Off deliberately. It is not emitDecoratorMetadata-aware, so it rewrites Nest's
+    // constructor-injected imports to `import type` and erases them, breaking DI at
+    // runtime. Verified: the autofix produces "Nest can't resolve dependencies".
+    "typescript/consistent-type-imports": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.spec.ts", "**/*.e2e-spec.ts", "**/test/**/*.ts"],
+      "rules": {
+        "typescript/unbound-method": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-argument": "off",
+
+        // Tests narrow library-owned shapes (OpenAPI nodes) to local interfaces on purpose.
+        "typescript/no-unsafe-type-assertion": "off",
+
+        // supertest's chained .expect(status) IS the assertion; without this the rule
+        // only recognises a bare expect() call and reports the test as assertionless.
+        "vitest/expect-expect": [
+          "error",
+          {
+            "assertFunctionNames": [
+              "expect",
+              "expectTypeOf",
+              "assert",
+              "assertType",
+              "request.**.expect"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

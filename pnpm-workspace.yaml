@@ -1,0 +1,31 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 10+ requires postinstall scripts to be allow-listed explicitly.
+allowBuilds:
+  # Fetches its prebuilt binary on install.
+  lefthook: true
+  # Analytics phone-home, pulled in transitively by @nestjs/swagger. Denied
+  # explicitly so it does not prompt on every install.
+  '@scarf/scarf': false
+  # Reaches the tree only as an optional peer of @nestjs/cli. Builds run through
+  # the tsc builder, so nothing here uses it; flip to true if that ever changes.
+  '@swc/core': false
+
+# Single source of truth for dependency versions across every workspace package.
+# Packages reference these with `"<name>": "catalog:"`.
+catalog:
+  '@nestjs/common': ^11.1.28
+  '@nestjs/config': ^4.0.4
+  '@nestjs/core': ^11.1.28
+  '@nestjs/platform-express': ^11.1.28
+  '@nestjs/swagger': ^11.4.6
+  '@nestjs/testing': ^11.1.28
+  '@types/supertest': ^7.2.1
+  nestjs-pino: ^4.6.1
+  pino-http: ^11.0.0
+  reflect-metadata: ^0.2.2
+  rxjs: ^7.8.2
+  supertest: ^7.2.2
+  zod: ^4.4.3

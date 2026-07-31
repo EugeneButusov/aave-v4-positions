@@ -1,0 +1,29 @@
+# Git hooks. Installed by `pnpm install` (the `prepare` script runs `lefthook install`).
+# Bypass a single commit with LEFTHOOK=0, or a single job with LEFTHOOK_EXCLUDE=<name>.
+
+pre-commit:
+  parallel: true
+  jobs:
+    # Type-aware rules need the whole program, so this is not as cheap as a
+    # syntax-only pass — but oxlint does the repo in ~250ms, so scoping to
+    # staged files keeps it well inside a commit's patience budget.
+    - name: oxlint
+      glob: '*.{ts,mts,cts,js,mjs,cjs}'
+      run: pnpm exec oxlint --type-aware --fix {staged_files}
+      stage_fixed: true
+
+    - name: prettier
+      glob: '*.{ts,mts,cts,js,mjs,cjs,json,md,yml,yaml}'
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+# Type checking and tests are whole-project operations, so they run once before
+# the push rather than on every commit.
+pre-push:
+  parallel: false
+  jobs:
+    - name: typecheck
+      run: pnpm run typecheck
+
+    - name: test
+      run: pnpm run test
