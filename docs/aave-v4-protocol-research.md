@@ -587,7 +587,14 @@ ever broke.
 
 #### 7.4.2 LST ratios are a daily step function, not continuous drift
 
-These rates do not drift continuously, and treating them as if they did would rule out
+Two reserves are **liquid staking tokens** — wstETH and weETH. These represent staked ETH plus
+accrued rewards, in *wrapped* form: the holder's balance is fixed and each token grows in value,
+rather than the balance rebasing upward. So they are not 1:1 with ETH — wstETH is currently
+`1.2406` stETH — and pricing them needs an exchange rate on top of ETH/USD. That rate lives in
+a token contract rather than in a Chainlink feed, which is what makes these two the awkward
+case.
+
+The rates do not drift continuously, though, and treating them as if they did would rule out
 indexing them unnecessarily.
 
 The adapter arithmetic is simple and exact — verified at the wei level: **[verified]**
