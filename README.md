@@ -52,7 +52,8 @@ surface consumers see.
 
 ## Prerequisites
 
-- **Node 24** — see [`.nvmrc`](.nvmrc). `engine-strict` is on, so an older major fails at install.
+- **Node 22.12+** — enforced by `engines` in the root `package.json` with `engine-strict` on, so an
+  older runtime fails at install rather than at runtime. Developed on 24.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
 
 ## Getting started
