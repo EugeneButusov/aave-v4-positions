@@ -19,16 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    strategy:
-      fail-fast: false
-      matrix:
-        # The floor declared in `engines` and the version development uses.
-        # Testing both is what keeps that declaration from being a guess — it
-        # already caught a floor of 22.12 that pnpm could not actually run on.
-        node: ['22.13', '24']
-
-    name: check (node ${{ matrix.node }})
-
     steps:
       - uses: actions/checkout@v7
 
@@ -38,7 +28,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          # The single version this project supports; `engines` declares the same,
+          # so what CI proves and what install enforces cannot drift apart.
+          node-version: '24'
           cache: pnpm
 
       # --frozen-lockfile fails on a lockfile that does not match package.json
