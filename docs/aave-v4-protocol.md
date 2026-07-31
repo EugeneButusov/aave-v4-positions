@@ -34,8 +34,9 @@ Two consequences that drive the whole indexer design:
    position exists only as a struct in Spoke storage, mutated by Spoke events. Reconstructing
    it means folding the Spoke's event stream — there is no ERC-20 shortcut. **[verified]**
 2. **User state lives on the Spoke; valuation lives on the Hub.** The Spoke knows a user's
-   *shares*; converting shares to asset amounts needs the Hub's index, which accrues with
-   time rather than with events. See §5 — this is the single biggest correctness trap here.
+   *shares*; converting shares to asset amounts needs Hub state that accrues with time rather
+   than with events. This is the central correctness problem — and it is solvable entirely
+   off-chain, because the Hub emits its own interest index. See §5.
 
 A user's position is keyed by **(spoke, reserveId, user)**. `reserveId` is a per-Spoke index,
 *not* a protocol-wide asset id, so it must never be used as a global key. **[verified]**
@@ -176,13 +177,32 @@ The 14 `AddReserve` events are the authoritative reserve registry — **the inde
 bootstrap `reserveId → (hub, assetId, underlying)` purely from logs, with no `eth_call`.**
 That matters: it keeps backfill archive-free (§7).
 
-### 4.4 Hub events (not needed for iteration 1)
+### 4.4 Hub events — required for valuation
 
-`Add` / `Remove` / `Draw` / `Restore` / `RefreshPremium` / `ReportDeficit` / `TransferShares`,
-all keyed `(assetId, spoke)`, plus configurator events. **[verified]**
+`Add` / `Remove` / `Draw` / `Restore` / `RefreshPremium` / `ReportDeficit` / `TransferShares` /
+`MintFeeShares` / `Sweep` / `Reclaim` / `EliminateDeficit`, all keyed `(assetId, spoke)`, plus
+`UpdateAsset` and configurator events. **[verified]**
 
-These are Spoke-aggregate flows, not per-user, so they are not required to reconstruct user
-positions. They become relevant for share→asset conversion (§5) and for cross-spoke views.
+None of these are per-user, so they are not needed to reconstruct *share* balances. But they
+carry the Hub asset state that share→asset conversion depends on, and `UpdateAsset` carries the
+interest index itself — see §5.3. **Ingest them.**
+
+| topic0 | signature |
+|---|---|
+| `0xa1facf110ded5028ee267fa3d5986f2aa4dc14230b79ffd27e95760f14883350` | `UpdateAsset(uint256,uint256,uint256,uint256)` |
+| `0xb233dd05ed21346e144167b35a6213bcf04768dbdffdc8339e8b027b94b9f305` | `Add(uint256,address,uint256,uint256)` |
+| `0x535be2ff85ab4c5d0991e10dc057a4951ea2bac426ffb036eded23036a3942b2` | `Remove(uint256,address,uint256,uint256)` |
+| `0xe2497bc41b1fa7c4ba996f24dc2affdffb2a5571584db6db0eed8fbbf1dc8517` | `Draw(uint256,address,uint256,uint256)` |
+| `0x119e7f996dc987b3ae79eb3735f1620c4292f6a7761a1e0f834c445f7798b912` | `Restore(uint256,address,uint256,(int256,int256,uint256),uint256,uint256)` |
+| `0x3fa96ecf17429fddfbb919a64196f4e43f71b57f0c5c38c49a21c8e1e763d18c` | `RefreshPremium(uint256,address,(int256,int256,uint256))` |
+| `0x4845ee5c72bde2b62defc8a1ca2f0fc3313b2d9e799997ce4f6776da9773bcbf` | `ReportDeficit(uint256,address,uint256,(int256,int256,uint256),uint256)` |
+| `0xe97b8576ac531cdc817b933309d0518ca3d26c6b46d490f3ae9fa39426a141ee` | `EliminateDeficit(uint256,address,address,uint256,uint256)` |
+| `0xafd21228e21de4a3f779e1cc3617e12672c3da091dcf3812a931036aa0bf633c` | `MintFeeShares(uint256,address,uint256,uint256)` |
+| `0x69bb3893073d7a893f3933f3871309fc25acfc72e365b71f554d439a85b20e8b` | `Sweep(uint256,address,uint256)` |
+| `0x566111831db1f090374baff3c3f9fc512084f5a9b8f5b199fb475d9c43a8013f` | `Reclaim(uint256,address,uint256)` |
+| `0x0d93b0e8579bc9db73c85a1fb79d785ffc47f8e20d346253f809cc98c48292a0` | `TransferShares(uint256,address,address,uint256)` |
+
+Volume is modest: 868 Core Hub logs per 10k blocks, half of them `UpdateAsset`. **[verified]**
 
 Two `ReportDeficit` events exist with **different signatures** — the Spoke's 4-arg form
 (`0x59932f…`) and the Hub's 5-arg form (`0x4845ee…`). Decoding must be scoped by emitting
@@ -196,34 +216,116 @@ never by topic0 alone across a merged stream.
 
 ---
 
-## 5. The shares problem — the main correctness risk
+## 5. Shares → assets: closed-form, and reproducible off-chain
 
-Events carry **shares** and the **amount at that moment**. Balances are stored as shares.
-Between two events a user's debt grows because the Hub's `drawnIndex` accrues with *time*,
-and that accrual **emits no event**.
+Balances are stored as shares. Between events, debt grows because the Hub's `drawnIndex`
+accrues with *time*, and that accrual emits no event. So summing `Supply.amount −
+Withdraw.amount` gives *net principal flow*, **not** current balance.
 
-So: summing `Supply.amount − Withdraw.amount` gives *net principal flow*, **not** the current
-balance. A pure event-fold yields correct **share** balances and correct **historical flows**,
-but current asset balances require the Hub index.
+The question is whether we must `eth_call` for the conversion. **We don't.** The math is a
+closed form over Hub asset state, and that state is fully available from logs. Verified
+wei-exact against mainnet (see below).
 
-Three options, in increasing cost:
+### 5.1 Debt side — index-based
 
-1. **Store shares as the source of truth; convert on read.** Fold events to
-   `suppliedShares` / `drawnShares` (exact, event-only, archive-free), then convert to assets
-   at query time using the *current* Hub index via one `eth_call` at `latest`. Correct, cheap,
-   and never needs historical state. **Recommended.**
-2. **Periodic snapshot.** Additionally call `getUserSuppliedAssets` / `getUserTotalDebt` /
-   `getUserAccountData` on a cadence, store as enriched rows. Gives point-in-time asset values
-   and a natural **reconciliation check** against the folded shares — a strong correctness story.
-3. **Reimplement the index accrual** off-chain from the interest-rate strategy. Highest
-   fidelity for historical valuation, high effort, easy to get subtly wrong. Out of scope.
+```
+drawnIndex(t) = rayMulUp(drawnIndex_ckpt, RAY + drawnRate * (t - t_ckpt) / SECONDS_PER_YEAR)
+debt(user)    = rayMulUp(user.drawnShares, drawnIndex(t))
+```
 
-Plan: **(1) as the ledger + (2) as enrichment and drift detection.** Any invariant test should
-assert folded shares equal `getUserSuppliedShares` / on-chain shares, *not* asset amounts.
+Interest is **linear between checkpoints, compounding only when a checkpoint lands** —
+`MathUtils.calculateLinearInterest`. `SECONDS_PER_YEAR = 365 days`, leap years ignored.
+Rounding is **up** (`rayMulUp`) and must be replicated exactly. **[verified]**
 
-`premiumShares` / `premiumOffsetRay` (the risk-premium component) add a second accrual track
-on top of this. **[open]** — worth confirming whether premium can be reconstructed from
-`PremiumDelta` alone before promising premium-accurate debt in the API.
+### 5.2 Supply side — ERC4626-style virtual shares
+
+Not an index. `SharesMath` uses virtual assets/shares (`1e6` each) as anti-manipulation
+padding:
+
+```
+assets = shares * (totalAddedAssets + 1e6) / (addedShares + 1e6)     // floor
+
+totalAddedAssets = liquidity + swept + ceilRay(aggregatedOwedRay)
+                   - realizedFees - unrealizedFees(drawnIndex)
+aggregatedOwedRay = drawnShares * drawnIndex + premiumRay + deficitRay
+premiumRay        = premiumShares * drawnIndex - premiumOffsetRay
+unrealizedFees    = (ceilRay(aggAfter) - ceilRay(aggBefore)) * liquidityFee / 10000
+```
+
+Note the supply side depends on the **debt** index — suppliers are paid out of accrued debt,
+so the two sides are coupled through `drawnIndex`. **[verified]**
+
+### 5.3 The key finding: the Hub emits its own index
+
+`AssetLogic.updateDrawnRate` emits:
+
+```solidity
+emit IHub.UpdateAsset(assetId, drawnIndex, newDrawnRate, asset.realizedFees);
+```
+
+topic0 `0xa1facf110ded5028ee267fa3d5986f2aa4dc14230b79ffd27e95760f14883350`, `assetId` indexed.
+
+Checked against live Hub state for 8 assets: the last `UpdateAsset` log's `drawnIndex` and
+`drawnRate` **exactly equal** the Hub's stored values, and the log's block timestamp **equals**
+`lastUpdateTimestamp`. **[verified]**
+
+So the index is handed to us as an authoritative checkpoint — we never derive it. Two
+consequences:
+
+- **We do not model the interest-rate strategy at all.** `drawnRate` arrives in the event;
+  we only apply linear interest for the tail since the last checkpoint. This removes the
+  single largest source of "reimplement the protocol and get it subtly wrong" risk.
+- **Valuation works at any historical `t`**, not just `latest`, with no archive node — because
+  a checkpoint stream plus linear interpolation reconstructs the index at any point in time.
+
+Checkpoint density on the Core Hub: **434 `UpdateAsset` events per 10k blocks** (half of all
+Hub logs), spread across 15 active assets. Dense enough that interpolation gaps stay short.
+**[verified]**
+
+### 5.4 Numerical validation
+
+Implemented both formulas in JS and compared against the contracts for 20 real
+(reserve, user) pairs sampled from recent `Supply` / `Borrow` logs:
+
+| side | method compared against | result |
+|---|---|---|
+| debt | `getUserDebt(reserveId, user)` | **10 / 10 exact** |
+| supply | `getUserSuppliedAssets(reserveId, user)` | **10 / 10 exact** |
+
+Zero wei of drift on either side. Balances spanned 0 to 243,354 tokens across WETH, AAVE,
+USDC, USDG and cbBTC, including dust (`0.00000011` cbBTC) and zero balances.
+
+Caveat on coverage: across **all 17 Core Hub assets**, `premiumShares`, `premiumOffsetRay`,
+`deficitRay` and `swept` are currently **all zero**. So the supply-side validation exercised
+the `premiumRay = 0`, `deficitRay = 0` path only. The general formulas above are transcribed
+from source and believed correct, but the premium and deficit branches are **not yet
+empirically confirmed** — the local Anvil deployment (§7) is the way to force those states
+and test them.
+
+### 5.5 Resulting design
+
+**Fold logs → shares as the ledger; compute assets on read via the formulas above.**
+
+- Source of truth: `suppliedShares` / `drawnShares` per `(spoke, reserveId, user)`, plus a
+  per-`(hub, assetId)` mirror of Hub asset state.
+- The API needs **no RPC on the read path** — valuation is arithmetic over indexed state.
+- `eth_call` is demoted from *required* to a **reconciliation job**: periodically compare
+  computed values against `getUserDebt` / `getUserSuppliedAssets` and alert on drift. That is
+  a much better use of it, and it turns the wei-exact match above into a standing invariant
+  rather than a one-off check.
+
+The cost: the Hub asset mirror must be folded from the Hub's own events (`Add`, `Remove`,
+`Draw`, `Restore`, `MintFeeShares`, `Sweep`, `Reclaim`, `ReportDeficit`, `EliminateDeficit`,
+`UpdateAsset`) to keep `liquidity`, `addedShares`, `drawnShares`, `swept`, `realizedFees`,
+`deficitRay` and the premium fields current. **This is now the highest-risk part of the
+ingestion logic** — one mis-folded transition silently corrupts every supply valuation for
+that asset. It is also exactly what the reconciliation job is there to catch.
+
+This supersedes §4.4: **Hub events are required after all**, not optional.
+
+Staged fallback if the Hub mirror proves troublesome: ship debt valuation first (§5.1 needs
+only `UpdateAsset` + user shares — far less state), and use `eth_call` at `latest` for supply
+until the mirror is trusted.
 
 ---
 
@@ -245,7 +347,10 @@ getReserveSuppliedAssets / getReserveTotalDebt(uint256)
 getLiquidationConfig() / getLiquidationBonus(...)
 ```
 
-`getUserAccountData` is the highest-value single call: **health factor** in WAD plus
+Given §5, these are **not on the read path** — they are the reconciliation oracle. The
+indexer computes values arithmetically and uses these calls to prove it stayed correct.
+
+`getUserAccountData` remains the highest-value single call: **health factor** in WAD plus
 aggregate collateral/debt value, computed by the protocol itself. Sampled on real borrowers:
 
 | user | HF | activeCollateral | borrows |
@@ -273,8 +378,10 @@ Worth separating clearly, because public RPCs blur it commercially:
 - **historical logs** (`eth_getLogs` over old ranges) → retained by any full node; not an
   archive feature.
 
-The design in §5 (fold logs for history; `eth_call` only at `latest`) satisfies this: backfill
-touches **logs only**, so no archive node is ever needed. This is a deliberate constraint to
+The design in §5 satisfies this and then some: because the Hub emits its own index
+(§5.3), **the entire pipeline — backfill, valuation, and historical queries — reads logs
+only.** No archive node, and no `eth_call` on the critical path at all. `eth_call` is used
+solely by the reconciliation job, and only at `latest`. This is a deliberate constraint to
 state in the README, not an accident.
 
 Caveat: some providers gate `eth_getLogs` history behind an "archive" plan anyway. That is a
@@ -377,12 +484,21 @@ as a second, on-chain enrichment.
 ## 10. Open questions
 
 1. Unit of `Value` in `getUserAccountData` (§6) — blocks any USD figure derived from it.
-2. Whether premium debt is fully reconstructable from `PremiumDelta` deltas alone (§5).
-3. Do position managers ever emit position events from *their own* address, or always via the
+2. **Premium and deficit branches of the supply formula are unvalidated** (§5.4) — all 17 Core
+   Hub assets currently have `premiumShares = deficitRay = swept = 0`, so mainnet cannot
+   exercise them. Force these states on local Anvil before trusting supply valuation.
+3. Whether the Hub asset mirror can be folded from Hub events with zero drift over a full
+   backfill (§5.5). The reconciliation job answers this empirically — run it over history
+   before relying on computed supply values.
+4. Do position managers ever emit position events from *their own* address, or always via the
    Spoke? Assumed Spoke-only; affects whether we watch >1 address.
-4. Exact `Reserve.flags` bit order in `ReserveFlagsMap.sol` — needed to decode paused/frozen.
-5. Whether `TransferShares` on the Hub can move a *user's* position between spokes. If yes,
-   it is position-affecting and §4.4's "Hub events not needed" is wrong.
+5. Exact `Reserve.flags` bit order in `ReserveFlagsMap.sol` — needed to decode paused/frozen.
+6. Whether `TransferShares` on the Hub can move a *user's* position between spokes. If yes it
+   is position-affecting, not just valuation-affecting.
+
+*Resolved during this pass:* whether off-chain valuation is possible without archive access
+(§5 — yes, wei-exact) and whether the interest-rate strategy must be reimplemented (§5.3 — no,
+`drawnRate` is emitted).
 
 ---
 
