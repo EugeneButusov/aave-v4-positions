@@ -655,9 +655,9 @@ Deferring it buys nothing and leaves an `eth_call` on the read path — the one 
 eliminate. Price feeds are simply another log source, subscribed the same way, folded into the
 same store.
 
-That makes **all 14 reserves** event-derivable, subject to the two `[open]` items: the
-cap-adapter variant (7.4.3) and between-rebase ratio invariance (7.4.2). Both are narrow, and
-neither blocks starting.
+That makes **all 14 reserves** event-derivable with no residual `[open]` items in the price
+layer. The one untested edge is the cap clamp itself (§7.4.3): no feed is currently at its cap,
+so the `min` branch has never fired against real data.
 
 Two properties still worth stating in the API contract:
 
