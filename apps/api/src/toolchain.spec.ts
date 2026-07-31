@@ -2,8 +2,7 @@ import 'reflect-metadata';
 
 import { describe, expect, it } from 'vitest';
 
-import { HealthController } from './health/health.controller';
-import { HealthService } from './health/health.service';
+import { HealthController, HealthService } from '@aave-v4-positions/platform';
 
 /**
  * Guard on the test toolchain itself, not on application behaviour.

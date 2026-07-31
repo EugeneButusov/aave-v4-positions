@@ -6,7 +6,7 @@ import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
 import type { Env } from './config/env';
-import { installGracefulShutdown } from './lifecycle/graceful-shutdown';
+import { installGracefulShutdown } from '@aave-v4-positions/platform';
 import { setupOpenApi } from './openapi/openapi';
 
 async function bootstrap(): Promise<void> {

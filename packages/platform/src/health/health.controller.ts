@@ -6,7 +6,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { LivenessResponseDto, ReadinessResponseDto } from './dto/health.dto';
+import { LivenessResponseDto, ReadinessResponseDto } from './health.dto';
 import { HealthService } from './health.service';
 
 /**

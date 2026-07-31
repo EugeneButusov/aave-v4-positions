@@ -5,7 +5,7 @@ import type { App } from 'supertest/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
-import { HealthService } from '../src/health/health.service';
+import { HealthService } from '@aave-v4-positions/platform';
 
 describe('api (e2e)', () => {
   let app: INestApplication<App>;

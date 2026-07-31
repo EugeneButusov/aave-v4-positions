@@ -28,7 +28,8 @@ positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
 │   └── indexer/             worker — ingests Spoke/Hub events and folds them into state
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
-├── packages/                (empty; shared code lands here when there is some)
+├── packages/
+│   └── platform/            cross-service Nest infrastructure (probes, shutdown)
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -37,6 +38,11 @@ positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
 
 Both services are NestJS applications. The API serves HTTP; the indexer is a worker that also
 listens, purely so Kubernetes has a probe target — no business endpoints are mounted on it.
+
+`packages/platform` holds what both services use identically — the probes, readiness indicators and
+shutdown sequence. It carries no Aave domain logic; it would look the same in any Kubernetes-deployed
+Nest service. `pnpm -r` walks the workspace in topological order, so it builds before its consumers
+with no extra wiring.
 
 ## Prerequisites
 
@@ -148,15 +154,16 @@ manifests do not move when the API is versioned.
 **Readiness fails before the server closes.** `enableShutdownHooks()` closes the server the moment
 SIGTERM lands, which races the endpoints controller — the pod can still be receiving traffic it is no
 longer listening for. Instead
-[`graceful-shutdown.ts`](apps/api/src/lifecycle/graceful-shutdown.ts) fails readiness first, holds for
+[`graceful-shutdown.ts`](packages/platform/src/lifecycle/graceful-shutdown.ts) fails readiness first, holds for
 `SHUTDOWN_GRACE_SECONDS` so the removal propagates, and only then closes.
 
 **Logs are one JSON object per line** (pino), with a request id propagated from `x-request-id` or
 minted per request and echoed back on the response. Probe traffic is excluded from request logging so
 it does not bury everything else. `LOG_PRETTY=true` is for local use only.
 
-**Adding a dependency check is a provider binding.** Implement `HealthIndicator` and bind it to the
-`HEALTH_INDICATORS` token; readiness picks it up. The database check will be the first real one.
+**Adding a dependency check is a provider binding.** Implement `HealthIndicator` from
+`@aave-v4-positions/platform` and bind it to the `HEALTH_INDICATORS` token; readiness picks it up in
+both services. The database check will be the first real one.
 
 **Adding a data source is likewise a binding.** `EventSource` in
 [`event-source.ts`](apps/indexer/src/ingestion/event-source.ts) is the seam — one source owns one
@@ -232,8 +239,7 @@ Deliberate, in rough order of what comes next.
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
 - **Docker Compose, CI, and Kubernetes manifests.** `pnpm check` is written to be exactly what CI
   runs.
-- **A shared package.** The two services carry near-identical health, logging and shutdown wiring —
-  about 150 lines, now diverging slightly since only the API's probes are OpenAPI-decorated.
-  Extracting it would mean building the cross-package TypeScript topology before there is anything
-  substantial to share; the real candidates (the position maths, the database layer, the event ABIs)
-  arrive with the pipeline, and `packages/*` is already in the workspace globs for them.
+- **Sharing the logging module.** Health and shutdown now live in `packages/platform`, but the pino
+  setup is still duplicated per service — the two copies differ only in the `service` name and the
+  indexer's `chainId`. It is a `LoggingModule.forRoot({ service })` away from joining them; left
+  until the database layer lands and the package earns a second round of consolidation anyway.

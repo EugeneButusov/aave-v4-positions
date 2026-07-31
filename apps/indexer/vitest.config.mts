@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -6,6 +8,16 @@ import { defineConfig } from 'vitest/config';
  * tsconfig — no separate SWC step is needed.
  */
 export default defineConfig({
+  // Resolve the workspace package to its source, not its build output. Without
+  // this, editing packages/platform and running tests would silently exercise a
+  // stale dist — and watch mode would never see the change at all.
+  resolve: {
+    alias: {
+      '@aave-v4-positions/platform': fileURLToPath(
+        new URL('../../packages/platform/src/index.ts', import.meta.url),
+      ),
+    },
+  },
   test: {
     name: 'indexer',
     globals: true,

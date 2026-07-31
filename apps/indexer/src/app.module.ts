@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import { validateEnv } from './config/env';
-import { HealthModule } from './health/health.module';
+import { HealthModule } from '@aave-v4-positions/platform';
 import { IngestionModule } from './ingestion/ingestion.module';
 import { LoggingModule } from './logging/logging.module';
 
