@@ -188,6 +188,28 @@ The protocol's liquidation fee is the gap between `collateralSharesLiquidated` a
 `collateralSharesToLiquidator`, and settles as a Hub `TransferShares` to the treasury spoke —
 consistent with §4.4: spoke-to-spoke, never touching a user position.
 
+**How much of this mainnet actually exercises.** Decoding all 90 `LiquidationCall` events over
+full history: **[verified]**
+
+| | |
+|---|---|
+| events / distinct transactions | 90 / 88 |
+| transactions with >1 `LiquidationCall` | **2** (max 2 in one tx) |
+| `receiveShares = true` | **0 (0%)** |
+| accompanied by `ReportDeficit` | **0** — no bad debt has ever occurred here |
+| distinct liquidators / borrowers | 18 / 61 |
+
+So of the three subtleties, only the multi-event grouping is live today. **The share-receiving
+and bad-debt branches have never fired on mainnet** — they sit in the same category as premium
+and deficit (§5.4): reachable code, zero production data, exercised only on Anvil. The zero
+`ReportDeficit` count is the event-side confirmation of the `deficitRay = 0` reading across all
+34 assets.
+
+That is an argument for implementing them now rather than later. They are cheap to fold while
+the transition table is fresh, they cannot be tested against production data when they do
+appear, and the first `receiveShares` liquidation would otherwise silently under-count a
+liquidator with nothing in the logs to indicate a problem.
+
 ### 4.2 Spoke — user config
 
 | topic0 | signature | observed |
