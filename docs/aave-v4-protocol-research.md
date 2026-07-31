@@ -78,6 +78,13 @@ manager or gateway acts on someone's behalf, `caller` is the manager and `user` 
 position owner. **Positions must be keyed on `user`; `caller` is provenance only.** Getting
 this backwards would attribute large parts of the book to three router addresses. **[verified]**
 
+The managers also emit their **own** mirror events — `SupplyOnBehalfOf`, `BorrowOnBehalfOf`,
+`RepayOnBehalfOf`, `SetUsingAsCollateralOnBehalfOf`, at 2–7 logs per 10k blocks. **[verified]**
+These are provenance records, not authoritative state; the Spoke's own events remain the source
+of truth. The hazard is therefore **double-counting, not missing data** — an indexer that
+matched position-like events across every Aave address would book each action twice. Ingest
+them only if you want attribution, and never into the balance fold.
+
 ---
 
 ## 3. On-chain position storage
@@ -104,6 +111,10 @@ struct Reserve {          // per (spoke, reserveId)
   uint32  dynamicConfigKey;
 }
 ```
+**[verified]**
+
+`ReserveFlags` bit order, from [`ReserveFlagsMap.sol:11-17`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/ReserveFlagsMap.sol#L11-L17):
+`PAUSED = 0x01`, `FROZEN = 0x02`, `BORROWABLE = 0x04`, `RECEIVE_SHARES_ENABLED = 0x08`.
 **[verified]**
 
 Note `dynamicConfigKey` appears on both the reserve and the user position. Risk parameters are
@@ -203,6 +214,12 @@ interest index itself — see §5.3. **Ingest them.**
 | `0x0d93b0e8579bc9db73c85a1fb79d785ffc47f8e20d346253f809cc98c48292a0` | `TransferShares(uint256,address,address,uint256)` |
 
 Volume is modest: 868 Core Hub logs per 10k blocks, half of them `UpdateAsset`. **[verified]**
+
+`TransferShares` is **not position-affecting**.
+[`Hub._transferShares:721-728`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/Hub.sol#L721-L728) moves `addedShares` between two
+`SpokeData` records only: asset-level totals net to zero and `_userPositions` — which live on
+the Spoke, not the Hub — are untouched. It is inter-spoke rebalancing. It matters only if we
+track per-spoke share subtotals, never for a user's balance. **[verified]**
 
 Two `ReportDeficit` events exist with **different signatures** — the Spoke's 4-arg form
 (`0x59932f…`) and the Hub's 5-arg form (`0x4845ee…`). Decoding must be scoped by emitting
@@ -349,12 +366,15 @@ Implemented both formulas in JS and compared against the contracts for 20 real
 Zero wei of drift on either side. Balances spanned 0 to 243,354 tokens across WETH, AAVE,
 USDC, USDG and cbBTC, including dust (`0.00000011` cbBTC) and zero balances.
 
-Caveat on coverage: across **all 17 Core Hub assets**, `premiumShares`, `premiumOffsetRay`,
-`deficitRay` and `swept` are currently **all zero**. So the supply-side validation exercised
-the `premiumRay = 0`, `deficitRay = 0` path only. The general formulas above are transcribed
-from source and believed correct, but the premium and deficit branches are **not yet
-empirically confirmed** — the local Anvil deployment (§8) is the way to force those states
-and test them.
+Caveat on coverage: `premiumShares`, `premiumOffsetRay`, `deficitRay` and `swept` are zero on
+**all 34 assets across all four hubs** (Core 17, Plus 7, Prime 7, Global Dollar 3) —
+not merely on the Core Hub. **[verified]**
+
+So the supply-side validation exercised the `premiumRay = 0`, `deficitRay = 0` path only, and
+**no amount of mainnet sampling can change that** — the states do not exist anywhere in the
+deployment. The general formulas are transcribed from source and believed correct, but the
+premium and deficit branches remain empirically unconfirmed. The local Anvil deployment (§8) is
+the *only* way to force those states and test them.
 
 ### 5.5 Resulting design
 
@@ -371,9 +391,32 @@ and test them.
 The cost: the Hub asset mirror must be folded from the Hub's own events (`Add`, `Remove`,
 `Draw`, `Restore`, `MintFeeShares`, `Sweep`, `Reclaim`, `ReportDeficit`, `EliminateDeficit`,
 `UpdateAsset`) to keep `liquidity`, `addedShares`, `drawnShares`, `swept`, `realizedFees`,
-`deficitRay` and the premium fields current. **This is now the highest-risk part of the
-ingestion logic** — one mis-folded transition silently corrupts every supply valuation for
-that asset. It is also exactly what the reconciliation job is there to catch.
+`deficitRay` and the premium fields current. **This is the highest-risk part of the ingestion
+logic** — one mis-folded transition silently corrupts every supply valuation for that asset. It
+is also exactly what the reconciliation job is there to catch.
+
+The transitions, read from `Hub.sol`: **[verified]**
+
+| event | effect on `Asset` |
+|---|---|
+| `Add` | `addedShares += shares`, `liquidity += amount` |
+| `Remove` | `addedShares -= shares`, `liquidity -= amount` |
+| `Draw` | `drawnShares += drawnShares`, `liquidity -= drawnAmount` |
+| `Restore` | `drawnShares -= drawnShares`, `liquidity += drawnAmount + premiumAmount` |
+| `MintFeeShares` | `addedShares += shares` |
+| `Sweep` / `Reclaim` | `liquidity ∓ amount`, `swept ± amount` |
+| `UpdateAsset` | sets `drawnIndex`, `drawnRate`, `realizedFees`; `lastUpdateTimestamp` = block ts |
+| `TransferShares` | no asset-level change (§4.4) |
+
+**The fold reproduces chain state exactly.** Seeding from `getAsset` at one block, replaying 18
+Hub events, and comparing against `getAsset` 95 blocks later: **4 assets × 7 fields, all
+exact.** **[verified]**
+
+Two limits on that result. The window is 95 blocks — bounded by non-archive state access, not
+by the method — and it exercised only `Add` / `Remove` / `Draw` / `Restore` / `UpdateAsset`.
+Those are, however, the only transitions that occur in practice: a 10k-block sample contains
+906 Hub events and **every one** is one of those five. `MintFeeShares`, `Sweep` and `Reclaim`
+never fire in that window, so they remain unexercised and are best covered on Anvil.
 
 Staged fallback if the Hub mirror proves troublesome: ship debt valuation first (§5.1 needs
 only `UpdateAsset` + user shares — far less state), and use `eth_call` at `latest` for supply
@@ -533,9 +576,14 @@ in a 10k window spanning block 24,720,899). **[verified]**
 | WBTC/BTC | `0xfdFD…FBB23` | 2 | yes (1) |
 
 So **zero rotations occurred over the entire Aave v4 history**. Resolve proxy → aggregator once
-per feed and index that address. Still detect rotation defensively — a phase change mid-stream
-would silently truncate a price series — but it is not a blocker and does not need solving
-before v1.
+per feed and index that address.
+
+Detecting a future rotation is free: Chainlink packs the phase into the **high 64 bits of
+`roundId`**, so `phaseId = roundId >> 64`. On the ETH/USD proxy, `latestRound` =
+`36893488147419125619` → phase `2`, aggregator round `22387`. **[verified]** Watch that value;
+if it increments, re-resolve `aggregator()` and continue the series against the new address.
+No migration machinery needed up front — just an assertion that would fire if the assumption
+ever broke.
 
 #### 7.4.2 LST ratios are a daily step function, not continuous drift
 
@@ -556,17 +604,37 @@ submits and withdrawals mint or burn shares *proportionally*, leaving the ratio 
 Better still, `TokenRebased` carries `postTotalShares` and `postTotalEther`, so the exact
 post-rebase ratio is **in the event payload** — no call needed to learn it.
 
-That makes the LST feeds a normal indexing job too: ~1.2 events/day/asset, exact at each
-checkpoint, constant in between. **[open]** — confirm the ratio truly is invariant between
-rebases (rounding aside) rather than merely near-constant, before claiming wei-exact historical
-LST prices.
+The payload is sufficient on its own. Reconstructing the ratio as
+`postTotalEther × 1e18 / postTotalShares` from the most recent `TokenRebased` reproduces
+`stEthPerToken()` **exactly**, 189 blocks (~0.6h) later, despite ordinary Lido deposit and
+withdrawal activity in between — submits and withdrawals move `totalPooledEther` and
+`totalShares` proportionally, leaving the quotient intact. Sampling the ratio at six blocks
+across ~100 blocks likewise returns a single distinct value. **[verified]**
 
-#### 7.4.3 Cap adapters
+So the LST feeds are a normal indexing job: ~1.2 events/day/asset, exact at each checkpoint,
+constant in between, and never needing a call.
 
-`getPriceCap` currently reads as a static 1.04 with `isCapped = false`. Some Aave adapters
-instead use a *growth-rate* cap with a stored snapshot, which is stateful and would not be
-reconstructable from a constant. Confirm which variant these six are. **[open]** — the only
-genuinely unresolved item in the price layer.
+#### 7.4.3 Cap adapters apply a static cap
+
+These are the fixed-cap variant, not the stateful growth-rate kind. Verified by computing
+`min(rawChainlinkPrice, getPriceCap())` and comparing against the adapter's own
+`latestAnswer()`: **[verified]**
+
+| feed | raw | cap | adapter | `min(raw, cap)` |
+|---|---|---|---|---|
+| USDC | 99971505 | 104000000 | 99971505 | match |
+| USDT | 99899080 | 104000000 | 99899080 | match |
+| USDG | 99994851 | 104000000 | 99994851 | match |
+| frxUSD | 100014824 | 104000000 | 100014824 | match |
+| RLUSD | 99998759 | 104000000 | 99998759 | match |
+
+5/5 exact. The cap is a constant 1.04 and `isCapped = false` throughout — none is currently
+binding. So these feeds are `chainlinkPrice`, clamped by a constant we can hard-code: fully
+reconstructable from logs.
+
+One residual: because no feed is currently at its cap, the clamp branch itself is untested
+against real data. The arithmetic is a `min` against a constant, so the risk is low, but a
+depeg is the moment it would first matter.
 
 #### 7.4.4 Cost of indexing the price layer
 
@@ -743,27 +811,40 @@ rather than USD conversion.
 
 ## 11. Open questions
 
-1. **Cap-adapter variant** (§7.4) — `getPriceCap` reads as a static 1.04, but some Aave
-   adapters use a *growth-rate* cap with a stored snapshot, which is stateful and would not be
-   reconstructable from a constant. Confirm which variant the six capped feeds are.
-2. **Between-rebase ratio invariance** (§7.4.2) — `stEthPerToken` is exact at each
-   `TokenRebased`, but confirm it is genuinely invariant between reports (rounding aside)
-   before claiming wei-exact historical LST prices.
-3. **Premium and deficit branches of the supply formula are unvalidated** (§5.4) — all 17 Core
-   Hub assets currently have `premiumShares = deficitRay = swept = 0`, so mainnet cannot
-   exercise them. Force these states on local Anvil before trusting supply valuation.
-4. Whether the Hub asset mirror can be folded from Hub events with zero drift over a full
-   backfill (§5.5). The reconciliation job answers this empirically — run it over history
-   before relying on computed supply values.
-5. Chainlink aggregator rotation (§7.4.1) — measured as zero occurrences over v4's history, so
-   not blocking, but a mid-stream phase change would silently truncate a price series. Add
-   defensive detection.
-6. Do position managers ever emit position events from *their own* address, or always via the
-   Spoke? Assumed Spoke-only; affects whether we watch >1 address.
-7. Exact `Reserve.flags` bit order in `ReserveFlagsMap.sol` — needed to decode paused/frozen.
-8. Whether `TransferShares` on the Hub can move a *user's* position between spokes. If yes it
-   is position-affecting, not just valuation-affecting.
+Two remain. Both are the same shape: a code path that mainnet cannot currently exercise.
 
+1. **Premium and deficit branches of the supply formula** (§5.4). All 34 assets across all four
+   hubs have `premiumShares = premiumOffsetRay = deficitRay = swept = 0`, so these branches
+   cannot be tested against the live deployment at all. The formulas are transcribed from
+   source; they are not empirically confirmed. **Force the states on Anvil (§8) before trusting
+   supply valuation for an asset that has acquired premium or bad debt.**
+
+2. **Hub-fold coverage for the cold transitions** (§5.5). The fold is verified exact over a
+   95-block window, but only `Add` / `Remove` / `Draw` / `Restore` / `UpdateAsset` occur in
+   practice — all 906 Hub events in a 10k-block sample are those five. `MintFeeShares`,
+   `Sweep` and `Reclaim` are implemented from source and never observed. Same remedy: Anvil.
+
+Neither blocks building. Both argue for standing the Anvil harness up early rather than
+treating it as a testing nicety — it is the only way to reach roughly a third of the state
+machine, and the reconciliation job (§5.5) is what would otherwise discover these gaps in
+production.
+
+### Resolved
+
+| question | answer |
+|---|---|
+| Unit of `Value` | `1e26` = 1 USD (§7.1) |
+| Off-chain valuation without archive | yes, wei-exact (§5.4) |
+| Must the interest-rate strategy be reimplemented? | no — `drawnRate` is emitted (§5.3) |
+| Is health factor reproducible off-chain? | yes, 8/8 exact when block-pinned (§7.2) |
+| Can the price layer be indexed rather than called? | yes, all 14 feeds (§7.4) |
+| Cap-adapter variant | static `min(price, 1.04)`, 5/5 exact (§7.4.3) |
+| LST ratio between rebases | invariant; `TokenRebased` payload is sufficient (§7.4.2) |
+| Chainlink rotation detection | `phaseId = roundId >> 64` (§7.4.1) |
+| Does the Hub fold reproduce chain state? | yes on the five hot transitions (§5.5) |
+| Do position managers emit position events? | yes — provenance mirrors; risk is double-counting (§2) |
+| `Reserve.flags` bit order | `PAUSED 0x01`, `FROZEN 0x02`, `BORROWABLE 0x04`, `RECEIVE_SHARES 0x08` (§3) |
+| Can `TransferShares` move a user's position? | no — inter-spoke rebalancing only (§4.4) |
 
 ---
 
