@@ -22,4 +22,16 @@ export { HealthController } from './health/health.controller';
 export { HealthModule } from './health/health.module';
 export { HealthService } from './health/health.service';
 
+export { LoggingModule, type LoggingAsyncOptions } from './logging/logging.module';
+export {
+  LOG_LEVELS,
+  REQUEST_ID_HEADER,
+  buildLoggingParams,
+  type LoggingOptions,
+  type LogLevel,
+} from './logging/logging.options';
+
+// Re-exported so services never import nestjs-pino directly.
+export { Logger, PinoLogger } from 'nestjs-pino';
+
 export { installGracefulShutdown } from './lifecycle/graceful-shutdown';

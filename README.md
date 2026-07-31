@@ -29,7 +29,7 @@ positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
-│   └── platform/            cross-service Nest infrastructure (probes, shutdown)
+│   └── platform/            cross-service Nest infrastructure (probes, logging, shutdown)
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -39,10 +39,16 @@ positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
 Both services are NestJS applications. The API serves HTTP; the indexer is a worker that also
 listens, purely so Kubernetes has a probe target — no business endpoints are mounted on it.
 
-`packages/platform` holds what both services use identically — the probes, readiness indicators and
-shutdown sequence. It carries no Aave domain logic; it would look the same in any Kubernetes-deployed
-Nest service. `pnpm -r` walks the workspace in topological order, so it builds before its consumers
-with no extra wiring.
+`packages/platform` holds what both services use identically — the probes, readiness indicators,
+structured logging and shutdown sequence. It carries no Aave domain logic; it would look the same in
+any Kubernetes-deployed Nest service, and wrapping `nestjs-pino` there means no app depends on it
+directly.
+
+`pnpm -r` walks the workspace in topological order, so the package builds before its consumers with
+no extra wiring. Two consumers deliberately read its **source** instead of `dist`: each app's vitest
+config aliases it, so tests can never exercise a stale build. `pnpm typecheck` is the exception — it
+builds the package first and checks against the emitted `.d.ts`, which is what actually verifies the
+surface consumers see.
 
 ## Prerequisites
 
@@ -158,8 +164,23 @@ longer listening for. Instead
 `SHUTDOWN_GRACE_SECONDS` so the removal propagates, and only then closes.
 
 **Logs are one JSON object per line** (pino), with a request id propagated from `x-request-id` or
-minted per request and echoed back on the response. Probe traffic is excluded from request logging so
-it does not bury everything else. `LOG_PRETTY=true` is for local use only.
+minted per request and echoed back on the response — that header is what makes a log line traceable
+from a client-side report. Probe traffic is excluded so it does not bury everything else, and
+`authorization`/`cookie` headers are removed rather than masked. Every line is tagged with the
+service, plus the `chainId` on the indexer, so one stream can carry both. `LOG_PRETTY=true` is for
+local use only. A service declares _what it is_, not how logging works:
+
+```ts
+LoggingModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService<Env, true>) => ({
+    service: 'api',
+    level: config.get('LOG_LEVEL', { infer: true }),
+    pretty: config.get('LOG_PRETTY', { infer: true }),
+  }),
+});
+```
 
 **Adding a dependency check is a provider binding.** Implement `HealthIndicator` from
 `@aave-v4-positions/platform` and bind it to the `HEALTH_INDICATORS` token; readiness picks it up in
@@ -239,7 +260,3 @@ Deliberate, in rough order of what comes next.
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
 - **Docker Compose, CI, and Kubernetes manifests.** `pnpm check` is written to be exactly what CI
   runs.
-- **Sharing the logging module.** Health and shutdown now live in `packages/platform`, but the pino
-  setup is still duplicated per service — the two copies differ only in the `service` name and the
-  indexer's `chainId`. It is a `LoggingModule.forRoot({ service })` away from joining them; left
-  until the database layer lands and the package earns a second round of consolidation anyway.

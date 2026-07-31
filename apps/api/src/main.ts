@@ -2,11 +2,10 @@ import 'reflect-metadata';
 
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
 import type { Env } from './config/env';
-import { installGracefulShutdown } from '@aave-v4-positions/platform';
+import { Logger, installGracefulShutdown } from '@aave-v4-positions/platform';
 import { setupOpenApi } from './openapi/openapi';
 
 async function bootstrap(): Promise<void> {

@@ -1,9 +1,8 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { HealthModule, LoggingModule } from '@aave-v4-positions/platform';
 
-import { validateEnv } from './config/env';
-import { HealthModule } from '@aave-v4-positions/platform';
-import { LoggingModule } from './logging/logging.module';
+import { validateEnv, type Env } from './config/env';
 
 @Module({
   imports: [
@@ -16,7 +15,15 @@ import { LoggingModule } from './logging/logging.module';
       ignoreEnvFile: process.env['NODE_ENV'] === 'test',
       validate: validateEnv,
     }),
-    LoggingModule,
+    LoggingModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        service: 'api',
+        level: config.get('LOG_LEVEL', { infer: true }),
+        pretty: config.get('LOG_PRETTY', { infer: true }),
+      }),
+    }),
     HealthModule,
   ],
 })

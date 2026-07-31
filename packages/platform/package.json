@@ -26,10 +26,13 @@
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
     "@nestjs/swagger": "catalog:",
+    "nestjs-pino": "catalog:",
+    "pino-http": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:"
   },
   "devDependencies": {
-    "@nestjs/testing": "catalog:"
+    "@nestjs/testing": "catalog:",
+    "pino-pretty": "^13.1.3"
   }
 }

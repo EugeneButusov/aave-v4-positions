@@ -12,7 +12,7 @@
     "build": "pnpm -r build",
     "dev:api": "pnpm --filter @aave-v4-positions/api start:dev",
     "dev:indexer": "pnpm --filter @aave-v4-positions/indexer start:dev",
-    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
+    "typecheck": "pnpm --filter './packages/*' build && tsc -p tsconfig.json --noEmit && pnpm -r typecheck",
     "lint": "oxlint --type-aware",
     "lint:fix": "oxlint --type-aware --fix",
     "format": "prettier --write .",
