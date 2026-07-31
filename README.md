@@ -55,8 +55,8 @@ surface consumers see.
 
 ## Prerequisites
 
-- **Node 22.13+** — the floor pnpm 11 imposes, enforced by `engines` with `engine-strict` on, so an
-  older runtime fails at install rather than at runtime. CI runs the floor and 24, so it stays true.
+- **Node 24** — enforced by `engines` with `engine-strict` on, so an older runtime fails at install
+  rather than at runtime. It is the only version CI runs, so the declaration and the evidence match.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
 
 There is no Nest CLI. `pnpm build` is `tsc`, and `pnpm dev:*` is `tsc --watch` plus `node --watch`.
@@ -309,5 +309,5 @@ Deliberate, in rough order of what comes next.
   must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
 - **Kubernetes manifests.** The probes, drain sequence and JSON logs are already shaped for them.
-  CI covers format, lint, typecheck, test and build on Node 22.13 and 24, but does not yet build the
-  Docker images — so the `Dockerfile` can rot without anything failing.
+  CI covers format, lint, typecheck, test and build on Node 24, but does not yet build the Docker
+  images — so the `Dockerfile` can rot without anything failing.
