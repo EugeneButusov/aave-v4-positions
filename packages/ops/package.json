@@ -1,9 +1,9 @@
 {
-  "name": "@aave-v4-positions/platform",
+  "name": "@aave-v4-positions/ops",
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
-  "description": "Cross-service Nest infrastructure: probes, readiness indicators, graceful shutdown",
+  "description": "Operational concerns shared by every service: probes, structured logging, graceful shutdown",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

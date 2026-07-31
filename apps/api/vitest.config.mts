@@ -9,12 +9,12 @@ import { defineConfig } from 'vitest/config';
  */
 export default defineConfig({
   // Resolve the workspace package to its source, not its build output. Without
-  // this, editing packages/platform and running tests would silently exercise a
+  // this, editing packages/ops and running tests would silently exercise a
   // stale dist — and watch mode would never see the change at all.
   resolve: {
     alias: {
-      '@aave-v4-positions/platform': fileURLToPath(
-        new URL('../../packages/platform/src/index.ts', import.meta.url),
+      '@aave-v4-positions/ops': fileURLToPath(
+        new URL('../../packages/ops/src/index.ts', import.meta.url),
       ),
     },
   },

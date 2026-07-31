@@ -5,7 +5,7 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
 import type { Env } from './config/env';
-import { Logger, installGracefulShutdown } from '@aave-v4-positions/platform';
+import { Logger, installGracefulShutdown } from '@aave-v4-positions/ops';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });

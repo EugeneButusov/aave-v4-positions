@@ -6,17 +6,17 @@
   "description": "Ingests Aave v4 Spoke and Hub events and folds them into position state",
   "main": "dist/main.js",
   "scripts": {
-    "build": "nest build",
-    "start": "node dist/main.js",
-    "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "start": "node --enable-source-maps dist/main.js",
+    "start:dev": "pnpm run build && concurrently -k -n tsc,app -c blue,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
+    "start:debug": "pnpm run build && concurrently -k -n tsc,app -c blue,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --inspect --enable-source-maps dist/main.js\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {
-    "@aave-v4-positions/platform": "workspace:*",
+    "@aave-v4-positions/ops": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/config": "catalog:",
     "@nestjs/core": "catalog:",

@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    name: 'platform',
+    name: 'ops',
     globals: true,
     environment: 'node',
     include: ['src/**/*.spec.ts'],

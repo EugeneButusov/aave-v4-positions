@@ -1,4 +1,4 @@
-import { LOG_LEVELS } from '@aave-v4-positions/platform';
+import { LOG_LEVELS } from '@aave-v4-positions/ops';
 import { z } from 'zod';
 
 /**

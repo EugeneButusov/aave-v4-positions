@@ -8,7 +8,7 @@ import { AppModule } from '../src/app.module';
  * The indexer has no business surface yet, so the only thing worth asserting
  * here is that the module graph composes — a DI misconfiguration in AppModule
  * would otherwise pass the build and fail at boot. Probe behaviour is covered
- * where it lives, in @aave-v4-positions/platform.
+ * where it lives, in @aave-v4-positions/ops.
  */
 describe('indexer (e2e)', () => {
   let app: INestApplication;

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { HealthModule, LoggingModule } from '@aave-v4-positions/platform';
+import { HealthModule, LoggingModule } from '@aave-v4-positions/ops';
 
 import { validateEnv, type Env } from './config/env';
 

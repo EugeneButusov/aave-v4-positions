@@ -29,7 +29,7 @@ endpoints, Docker Compose, CI. The API serves one stub endpoint; the indexer is 
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
-│   └── platform/            cross-service Nest infrastructure (probes, logging, shutdown)
+│   └── ops/                 probes, logging, graceful shutdown — no domain logic
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -39,10 +39,11 @@ endpoints, Docker Compose, CI. The API serves one stub endpoint; the indexer is 
 Both services are NestJS applications. The API serves HTTP; the indexer is a worker that also
 listens, purely so Kubernetes has a probe target — no business endpoints are mounted on it.
 
-`packages/platform` holds what both services use identically — the probes, readiness indicators,
-structured logging and shutdown sequence. It carries no Aave domain logic; it would look the same in
-any Kubernetes-deployed Nest service, and wrapping `nestjs-pino` there means no app depends on it
-directly.
+`packages/ops` holds the operational concerns both services share: probes, structured logging and
+the shutdown sequence — everything an operator needs and nothing a position needs. The name is the
+boundary. It carries no Aave domain knowledge and would work in any Kubernetes-deployed Nest service,
+so the share maths and the database layer become their own packages rather than accumulating here.
+Wrapping `nestjs-pino` there also means no app depends on it directly.
 
 `pnpm -r` walks the workspace in topological order, so the package builds before its consumers with
 no extra wiring. Two consumers deliberately read its **source** instead of `dist`: each app's vitest
@@ -53,8 +54,11 @@ surface consumers see.
 ## Prerequisites
 
 - **Node 22.12+** — enforced by `engines` in the root `package.json` with `engine-strict` on, so an
-  older runtime fails at install rather than at runtime. Developed on 24.
+  older runtime fails at install rather than at runtime. Developed on 24; `node --watch` drives the
+  dev loop, so 22.12 is the practical floor.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
+
+There is no Nest CLI. `pnpm build` is `tsc`, and `pnpm dev:*` is `tsc --watch` plus `node --watch`.
 
 ## Getting started
 
@@ -132,10 +136,10 @@ bump changes the package and must not imply anything about the shape of the resp
 
 Two decisions worth knowing about before adding endpoints:
 
-**Response types are decorated by hand, not by the `@nestjs/swagger` CLI plugin.** The plugin infers
-`@ApiProperty` from TypeScript types, but it only runs through the Nest CLI build — under Vitest the
-generated document would silently lose properties, so the contract test would be asserting something
-the running service does not produce. Explicit decorators keep the two identical.
+**Response types are decorated by hand.** The `@nestjs/swagger` CLI plugin can infer `@ApiProperty`
+from TypeScript types, but it only runs through the Nest CLI build — which this repo no longer uses,
+and which never applied under Vitest anyway, so the generated document would have differed between
+the test suite and the running service. Explicit decorators keep the two identical.
 
 **A drift guard is part of the test suite.** A route added without `@ApiOkResponse` still routes and
 still appears in the document, but with an empty response and no schema — the contract quietly stops
@@ -161,7 +165,7 @@ manifests do not move when the API is versioned.
 **Readiness fails before the server closes.** `enableShutdownHooks()` closes the server the moment
 SIGTERM lands, which races the endpoints controller — the pod can still be receiving traffic it is no
 longer listening for. Instead
-[`graceful-shutdown.ts`](packages/platform/src/lifecycle/graceful-shutdown.ts) fails readiness first, holds for
+[`graceful-shutdown.ts`](packages/ops/src/lifecycle/graceful-shutdown.ts) fails readiness first, holds for
 `SHUTDOWN_GRACE_SECONDS` so the removal propagates, and only then closes.
 
 **Logs are one JSON object per line** (pino), with a request id propagated from `x-request-id` or
@@ -223,10 +227,20 @@ Two consequences of that choice:
   above it is silent, and it makes the same DI-breaking `useImportType` call (its own docs recommend
   disabling that rule for NestJS).
 
-**TypeScript 5.9 for now.** Nothing blocks 7 any more — the tsconfig is already free of the options
-it removed, and TS 7 compiles this codebase clean. What holds it back is that `@nestjs/cli` pins
-`typescript: 5.9.3` exactly, so bumping the root would leave `pnpm typecheck` on one compiler and
-`nest build` on another. Worth one version, not two compilers.
+**TypeScript 7, and no Nest CLI.** TS 7 is the native compiler: typechecking this workspace drops
+from ~620ms to ~180ms, and that gap widens with the codebase. It cost the Nest CLI — TS 7.0 ships
+only the `tsc` executable, with no programmatic compiler API until 7.1, so `nest build` and
+`nest start --watch` both refuse to run. Neither was earning its place. `nest build` was `tsc` plus
+`deleteOutDir`, reproduced exactly by `rimraf dist && tsc -p tsconfig.build.json` — verified as an
+identical output file set, with both services booting from it. Dev watch is `tsc --watch` alongside
+`node --watch`.
+
+Dropping `@nestjs/cli` also left **one** TypeScript in the tree. It pinned `typescript: 5.9.3`
+exactly, so every other option — staying on 5.9, or moving to 6 — meant `pnpm typecheck` and
+`nest build` running different compilers over the same code.
+
+TS 6.0.3 was the alternative and does keep the CLI working, but it is still the JavaScript compiler:
+measured at ~590ms, no faster than 5.9. It buys a version number, not a property.
 
 **Vitest with no SWC step.** The usual Nest recipe adds `unplugin-swc` because esbuild does not emit
 decorator metadata, which is exactly what Nest's injector reads. Vite's current transform _does_ emit
