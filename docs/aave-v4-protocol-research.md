@@ -1030,6 +1030,96 @@ rather than USD conversion.
 
 ---
 
+## 12. Conclusion — serving a portfolio view
+
+Target output, DeBank-shaped: a list of positions, each with a type, a token, an amount and a
+USD value; plus portfolio-level health and net worth.
+
+Everything below is derivable from indexed logs and arithmetic. **No `eth_call` on the read
+path**, at any timestamp, without an archive node.
+
+### 12.1 Position identity and type
+
+A position is keyed `(chain, spoke, reserveId, user)` and exists while `suppliedShares > 0` or
+`drawnShares > 0`. Keying on `user`, never `caller` (§2).
+
+| type | condition |
+|---|---|
+| `borrow` | `drawnShares > 0` |
+| `collateral` | `suppliedShares > 0`, flagged as collateral, **and** `collateralFactor > 0` |
+| `supply` | `suppliedShares > 0` otherwise |
+
+The third condition is not pedantry. Five of the Main Spoke's fourteen reserves have
+`collateralFactor = 0` (§10) — a user can flag them as collateral and they still contribute
+nothing to borrowing power. Reporting them as collateral would overstate the user's position.
+The collateral factor is the user's pinned `dynamicConfigKey` version, not the reserve's
+current one (§3).
+
+### 12.2 Where each output field comes from
+
+| field | source | from logs? |
+|---|---|---|
+| position list | fold `Supply`/`Withdraw`/`Borrow`/`Repay`/`LiquidationCall`/`ReportDeficit` (§4.1) | yes |
+| position type | `SetUsingAsCollateral` + borrow state + `collateralFactor` (§4.1–4.3) | yes |
+| token address | Hub `AddAsset(assetId, underlying, decimals)` | yes |
+| decimals | same event — 17 observed, one per Core Hub asset **[verified]** | yes |
+| name, symbol | ERC-20 `name()` / `symbol()` — in no Aave event | **no — §12.4** |
+| amount, supply side | virtual-share formula (§5.2) | yes |
+| amount, debt side | index formula + premium (§5.1) | yes |
+| USD price | Chainlink `AnswerUpdated` + adapter arithmetic (§7.4), 8 dp | yes |
+| USD value | `amount × price`, where `1e26` = 1 USD (§7.1) | yes |
+| health factor | §7.1 formula, validated 8/8 exact (§7.2) | yes |
+| portfolio totals | summed from the above | yes |
+
+### 12.3 Portfolio aggregates
+
+Two conclusions here matter more than the arithmetic.
+
+**Health factor is per-Spoke, never per-user.** Spokes are isolated: each carries its own
+liquidation config, collateral factors and oracle (§1, §7.4). A user with positions on the Main
+and Bluechip spokes has **two independent health factors**, and can be liquidated on one while
+comfortably healthy on the other. A portfolio view must report HF per spoke. Blending them into
+a single number is not a simplification — it is wrong in the one direction that matters, hiding
+an imminent liquidation behind unrelated collateral.
+
+**Net worth is not `totalCollateralValue`.** That field counts only reserves that are flagged
+collateral *and* have `collateralFactor > 0`. A portfolio balance counts everything supplied.
+With five of fourteen reserves at `CF = 0`, the two diverge materially — do not reuse one for
+the other.
+
+```
+supplied(USD) = Σ over supply+collateral positions of value(amount, decimals, price) / 1e26
+debt(USD)     = Σ over borrow positions      of value(amount, decimals, price) / 1e26
+netWorth      = supplied − debt
+healthFactor  = per spoke, §7.1
+```
+
+### 12.4 Out of scope
+
+- **Token name and symbol.** Not present in any Aave event. A one-time ERC-20 read per reserve
+  (14 calls, immutable, cached forever) or a static token list. Cheap, but it is enrichment,
+  not indexed data.
+- **Market price and oracle deviation.** The protocol's own oracle answers "what is this worth
+  *to Aave*", which is what drives liquidation and is therefore the right price for a position
+  view. An independent market price (§11) is a separate enrichment concern.
+- Logos, protocol branding, cross-protocol aggregation, and anything else DeBank shows that is
+  not Aave state.
+
+### 12.5 What is computed when
+
+| lifetime | data | refreshed by |
+|---|---|---|
+| immutable | `underlying`, `decimals`, `hub`, `assetId` per reserve | `AddAsset` / `AddReserve`, once |
+| versioned | reserve config, dynamic config per `dynamicConfigKey` | config events, never overwritten in place (§3) |
+| per block | `drawnIndex` (checkpoint + linear interpolation), prices | `UpdateAsset`, `AnswerUpdated` (§5.3, §7.4) |
+| per request | amounts, USD values, health factor | pure arithmetic over the rows above |
+
+Two contract details that belong in the response, not just the implementation: every payload is
+**block-stamped**, since HF and amounts are per-block quantities (§7.2); and every `uint256` is
+serialised **as a string**, because float64 silently corrupts share balances (§7.5).
+
+---
+
 ## Sources
 
 - [aave/aave-v4](https://github.com/aave/aave-v4) @ [`2524fe4`](https://github.com/aave/aave-v4/tree/2524fe4018a42750300e114f2a8c4355df62a878)
