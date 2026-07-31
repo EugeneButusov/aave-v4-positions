@@ -22,9 +22,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 22.12 is the floor declared in `engines`; 24 is what development uses.
-        # Testing both is what keeps that declaration from being a guess.
-        node: ['22.12', '24']
+        # The floor declared in `engines` and the version development uses.
+        # Testing both is what keeps that declaration from being a guess — it
+        # already caught a floor of 22.12 that pnpm could not actually run on.
+        node: ['22.13', '24']
 
     name: check (node ${{ matrix.node }})
 
