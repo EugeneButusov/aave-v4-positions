@@ -421,10 +421,14 @@ The whole of `getUserAccountData` is reproducible off-chain — see §7.
 
 ---
 
-## 7. Health factor — the math is reproducible, prices are the caveat
+## 7. Health factor — reproducible off-chain, prices included
 
-Short answer: **the HF computation is exactly reproducible off-chain, and 12 of 14 price feeds
-are event-reconstructable. Two are not, without a contract read.**
+Short answer: **yes — both the HF arithmetic and every price it depends on are reproducible
+from logs.** The computation matches the contract exactly (8/8, §7.2), and all 14 price feeds
+are event-derivable (§7.4). No `eth_call` is required to serve health factor.
+
+An earlier draft of this section concluded 12/14 and staged the rest behind an `eth_call`. That
+was based on three unmeasured assumptions; §7.4.1–7.4.2 record what measuring them changed.
 
 ### 7.1 The formula
 
@@ -489,10 +493,9 @@ API response should state the block it was computed at.
 | `collateralFactor` at the user's config version | `AddDynamicReserveConfig` / `UpdateDynamicReserveConfig` + user's `dynamicConfigKey` | yes (§4.2, §4.3) |
 | collateral / borrowing flags | `SetUsingAsCollateral` + borrow/repay transitions | yes (§4.1) |
 | `decimals` | `AddReserve` / reserve registry | yes (§4.3) |
-| **price per reserve** | `AaveOracle.getReservePrice` → `IPriceFeed.latestAnswer()` | **partly — see 7.4** |
+| **price per reserve** | Chainlink `AnswerUpdated` + adapter arithmetic (§7.4) | yes — all 14 feeds |
 
-Everything except price is already in the pipeline. So HF costs us the price layer and nothing
-else.
+So HF costs us one additional log source — the price feeds — and no calls.
 
 ### 7.4 The price layer
 
@@ -643,10 +646,23 @@ gracefully (halve the range on "range too large"). Ranges from 50 to 10,000 all 
 
 ### Volume — backfill is cheap
 
-Main Spoke, genesis `24,720,899` → `25,652,464` (931,565 blocks): **38,580 logs**, retrieved
-in **101 requests** of 10k blocks. Full backfill is minutes, not hours, and fits comfortably
-in a free tier. No need for a bulk-data provider or a parallel-partition backfiller in
-iteration 1 — a sequential chunked backfill is genuinely sufficient. **[verified]**
+Three log sources, over genesis `24,720,899` → `25,652,464` (931,565 blocks):
+
+| source | volume over full history | basis |
+|---|---|---|
+| Main Spoke | **38,580 logs** in 101 requests | measured end-to-end **[verified]** |
+| Core Hub | ~81,000 logs | extrapolated from 868/10k blocks **[verified]** |
+| Price feeds (~8 aggregators + 2 LST) | ~25–30,000 logs | extrapolated from 36/10k per feed **[verified]** |
+| **total** | **~145,000 logs** | ~300 chunked requests |
+
+Full backfill is minutes, not hours, and fits comfortably in a free tier. No need for a
+bulk-data provider or a parallel-partition backfiller in iteration 1 — a sequential chunked
+backfill is genuinely sufficient, even with the price layer included.
+
+Note the three streams are **independently chunkable and have no ordering dependency between
+them** during backfill: positions need Hub state only at *query* time, not at ingest time. They
+can be fetched in parallel and joined afterwards, which is the easy win if backfill ever does
+get slow.
 
 ### Reorgs
 
@@ -702,20 +718,35 @@ Two things to design for, visible in this table:
 
 The brief needs ≥1 additional source, exposed alongside indexed data.
 
-- **Off-chain USD prices — DefiLlama** (`coins.llama.fi`): keyless, batch, returns
+Indexing the oracle layer (§7.4) changes what makes a *good* enrichment here. We now get USD
+values from the protocol's own price feeds, so an off-chain price API is no longer needed to
+answer "what is this position worth" — which was the original pitch.
+
+The more interesting use is comparison rather than conversion:
+
+- **Independent market price — DefiLlama** (`coins.llama.fi`): keyless, batch, returns
   `{price, decimals, symbol, confidence, timestamp}` per `ethereum:0x…`. Tested working.
-  Turns share balances into USD position values. **[verified]**
+  **[verified]** Exposed *alongside* the oracle price, it surfaces **oracle deviation** —
+  how far the protocol's view of an asset has drifted from the market's.
+
+  That is a genuinely useful signal rather than a decorative one: deviation is what makes
+  positions liquidatable, and it is exactly what the capped feeds (§7.4.3) exist to bound. A
+  position at HF 1.05 priced by an oracle that is 2% away from market is a materially
+  different risk from the same HF with the feeds in agreement.
+
+  It also exercises everything the brief is probing for — separate source, separate cadence,
+  separate failure mode, needs caching and staleness handling — while being an actual product
+  feature rather than a bolt-on.
   - CoinGecko's free tier now allows **1 contract address per request** — unusable for batch
     pricing without a paid key. **[verified]** DefiLlama is the better default.
-- **On-chain health factor** via `getUserAccountData` — protocol-computed risk, cheap, exact.
-  Arguably "the same source" rather than an additional one, so best as a *second* enrichment
-  rather than the headline one.
 - ENS / address labels — nice-to-have, low value here.
 
-Recommendation: **DefiLlama prices as the headline enrichment** (clearly a separate source,
-separate cadence, separate failure mode, needs caching + staleness handling — all of which
-demonstrate the pipeline design the brief is asking about), with `getUserAccountData` sampling
-as a second, on-chain enrichment.
+`getUserAccountData` is deliberately *not* listed. Now that HF is computed off-chain (§7.2),
+it is the reconciliation oracle, not an enrichment source — calling it "additional data" would
+be double-counting the protocol as its own second source.
+
+Recommendation: **DefiLlama as the headline enrichment, framed as oracle-vs-market deviation**
+rather than USD conversion.
 
 ---
 
