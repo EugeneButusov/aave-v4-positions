@@ -175,7 +175,7 @@ which risk parameters apply to the user, so it must be ingested even though it m
 
 The 14 `AddReserve` events are the authoritative reserve registry — **the indexer can
 bootstrap `reserveId → (hub, assetId, underlying)` purely from logs, with no `eth_call`.**
-That matters: it keeps backfill archive-free (§7).
+That matters: it keeps backfill archive-free (§8).
 
 ### 4.4 Hub events — required for valuation
 
@@ -355,7 +355,7 @@ Caveat on coverage: across **all 17 Core Hub assets**, `premiumShares`, `premium
 `deficitRay` and `swept` are currently **all zero**. So the supply-side validation exercised
 the `premiumRay = 0`, `deficitRay = 0` path only. The general formulas above are transcribed
 from source and believed correct, but the premium and deficit branches are **not yet
-empirically confirmed** — the local Anvil deployment (§7) is the way to force those states
+empirically confirmed** — the local Anvil deployment (§8) is the way to force those states
 and test them.
 
 ### 5.5 Resulting design
@@ -416,14 +416,139 @@ aggregate collateral/debt value, computed by the protocol itself. Sampled on rea
 | `0xd7AD196009fBe5c4210DB626719AF5439D43e5B9` | 1.962 | 1 | 1 |
 | `0x03BD789D919e47D7759E9Cbb5f8A565bc293FcD3` | 2.586 | 1 | 1 |
 
-**[open]** — `totalCollateralValue` and `totalDebtValueRay` are in "units of Value" with
-`totalDebtValueRay` RAY-scaled. The exact base unit of `Value` is not yet pinned down; my
-sample decode suggests 8-decimal USD-ish for collateral, but **do not ship a USD figure from
-these until the unit is confirmed** — read `AaveOracle` / `SpokeUtils` to settle it.
+`totalCollateralValue` and `totalDebtValueRay` are in "units of Value", the latter RAY-scaled.
+**`1e26` = 1 USD** — settled in §7.1 from `SpokeUtils.toValue`. **[verified]**
+
+The whole of `getUserAccountData` is reproducible off-chain — see §7.
 
 ---
 
-## 7. Ingestion constraints
+## 7. Health factor — the math is reproducible, prices are the caveat
+
+Short answer: **the HF computation is exactly reproducible off-chain, and 12 of 14 price feeds
+are event-reconstructable. Two are not, without a contract read.**
+
+### 7.1 The formula
+
+From [`Spoke._processUserAccountData`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L706-L790)
+`:706-790`, iterating only the reserves flagged in the user's `PositionStatus`:
+
+```
+value(amount, dec, price) = amount * price * 10^(18 - dec)        // SpokeUtils.toValue
+
+# per collateral reserve, only if collateralFactor > 0 and suppliedShares > 0
+collValue_i        = value(previewRemoveByShares(suppliedShares_i), dec_i, price_i)
+totalCollateral   += collValue_i
+weightedColl      += collateralFactor_i * collValue_i             # Value × BPS
+
+# per borrowed reserve
+debtRay_j          = drawnShares_j * drawnIndex + premiumDebtRay_j
+totalDebtValueRay += value(debtRay_j, dec_j, price_j)
+
+healthFactor = floor( bpsToWad(weightedColl) * RAY / totalDebtValueRay )
+             = type(uint256).max   if totalDebtValueRay == 0
+```
+
+`bpsToWad(a) = a * (WAD / 1e4) = a * 1e14`
+([`WadRayMath.sol:177-185`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/WadRayMath.sol#L177-L185)).
+HF is WAD-scaled: `1e18` = 1.00.
+
+**This resolves the `Value` unit question.**
+[`SpokeUtils.toValue`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/SpokeUtils.sol#L28-L40)
+`:28-40` documents it outright: **`1e26` represents 1 USD** — an 18-decimal-normalised amount
+times an 8-decimal price (`ORACLE_DECIMALS = 8`, `SpokeUtils.sol:13`). So
+`totalCollateralValue / 1e26` is USD, and `totalDebtValueRay / 1e26 / 1e27` is USD.
+
+Note HF uses `collateralFactor`, which is **per-user-config-version** — `_dynamicConfig[reserveId][userPosition.dynamicConfigKey]`, not the reserve's current key. This is the §3 versioning
+requirement showing up where it bites.
+
+### 7.2 Validated exactly
+
+Computed HF off-chain from shares + Hub state + per-user collateral factors + oracle prices,
+compared against `getUserAccountData` for 8 real borrowers, **all calls pinned to block
+25652782**:
+
+| field | result |
+|---|---|
+| `healthFactor` | **8 / 8 exact** |
+| `totalCollateralValue` | **8 / 8 exact** |
+| `totalDebtValueRay` | **8 / 8 exact** |
+| `activeCollateralCount` / `borrowCount` | **8 / 8 exact** |
+
+HF values spanned 1.167 → 4883.2, plus a no-debt user returning `type(uint256).max`.
+
+**Pin the block or the check is meaningless.** An unpinned first attempt showed HF agreeing to
+~6 dp but `totalCollateralValue` and `totalDebtValueRay` disagreeing, purely because each
+`eth_call` landed on a different block and `drawnIndex` accrues per second. HF is a
+*per-block* quantity. Any reconciliation job must pin `blockNumber` across all reads, and any
+API response should state the block it was computed at.
+
+### 7.3 Inputs — where each comes from
+
+| input | source | from events? |
+|---|---|---|
+| `suppliedShares`, `drawnShares`, `premiumShares`, `premiumOffsetRay` | Spoke position events | yes (§4.1) |
+| `drawnIndex` | Hub `UpdateAsset` + linear interpolation | yes (§5.3) |
+| Hub asset state for the supply ratio | Hub event fold | yes (§5.5) |
+| `collateralFactor` at the user's config version | `AddDynamicReserveConfig` / `UpdateDynamicReserveConfig` + user's `dynamicConfigKey` | yes (§4.2, §4.3) |
+| collateral / borrowing flags | `SetUsingAsCollateral` + borrow/repay transitions | yes (§4.1) |
+| `decimals` | `AddReserve` / reserve registry | yes (§4.3) |
+| **price per reserve** | `AaveOracle.getReservePrice` → `IPriceFeed.latestAnswer()` | **partly — see 7.4** |
+
+Everything except price is already in the pipeline. So HF costs us the price layer and nothing
+else.
+
+### 7.4 The price layer
+
+`AaveOracle` is **per-Spoke** (it indexes by `reserveId`) and is a thin wrapper: it just calls
+`latestAnswer()` on a per-reserve feed and reverts on zero
+([`AaveOracle.sol:79-88`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/AaveOracle.sol#L79-L88)).
+Main Spoke oracle: `0x99B2B6CEa9C3D2fd8F4d90f86741C44B212a6127`, 8 decimals.
+
+The feeds are *not* uniform. Probing all 14 **[verified]**:
+
+| class | reserves | reconstructable from logs? |
+|---|---|---|
+| Plain Chainlink proxy (`aggregator()`) | WETH, cbBTC, AAVE, LINK | **yes** — `AnswerUpdated` |
+| Capped Chainlink (`ASSET_TO_USD_AGGREGATOR` + static `getPriceCap` = 1.04) | USDC, USDT, RLUSD, USDG, frxUSD | **yes** — feed + constant |
+| Two Chainlink feeds composed | WBTC (`ASSET_TO_PEG` × `PEG_TO_BASE`), EURC (`ASSET_TO_USD` × `BASE_TO_USD`) | **yes** — two feeds |
+| Fixed price (168-byte contract) | GHO | **yes** — constant |
+| Chainlink × on-chain LST ratio | wstETH (`RATIO_PROVIDER` = stETH `0xae7a…`), weETH (`RATIO_PROVIDER` = weETH `0xCd5f…`) | **no** — ratio is contract state |
+
+`AnswerUpdated(int256,uint256,uint256)` fires **36× per 10k blocks** on the ETH/USD aggregator
+`0x7c7FdFCa295a787ded12Bb5c1A49A8D2cC20E3F8`, so the Chainlink half is a normal indexing job.
+**[verified]**
+
+Three wrinkles worth planning for:
+
+1. **Proxy vs aggregator.** `AnswerUpdated` is emitted by the *aggregator*, not the proxy the
+   oracle points at. Aggregators rotate (Chainlink phases), so historical reconstruction must
+   follow that migration rather than watching one fixed address.
+2. **LST ratios.** wstETH and weETH multiply ETH/USD by an exchange rate read from the token
+   contract. That rate drifts continuously with staking rewards and is not a log. Options:
+   sample it periodically and interpolate, or accept `eth_call` for these two.
+3. **Cap adapters.** `getPriceCap` currently reads as a static 1.04 with `isCapped = false`.
+   Some Aave adapters instead use a *growth-rate* cap with a stored snapshot, which is stateful.
+   Confirm which variant these are before assuming a constant. **[open]**
+
+### 7.5 Recommendation
+
+HF is worth serving, but stage it:
+
+- **v1 — HF at `latest`, computed from indexed positions + a price read.** All the
+  position-side inputs come free from the pipeline; only prices need an `eth_call`. Cheap,
+  exact, and the §7.2 check becomes a standing invariant.
+- **v2 — historical HF**, once Chainlink `AnswerUpdated` is indexed. Gets 12/14 reserves
+  exactly; wstETH and weETH need sampled ratios, so flag those as approximate rather than
+  quietly serving a slightly-wrong number.
+
+The honest framing for the API: HF is **derived and block-stamped**, not indexed. Return the
+block it was computed at, and treat the on-chain `getUserAccountData` as the reconciliation
+oracle rather than the serving path.
+
+---
+
+## 8. Ingestion constraints
 
 ### Archive is not required — as long as we never read historical *state*
 
@@ -484,7 +609,7 @@ rollback path. Requires Foundry, which is **not currently installed** on this ma
 
 ---
 
-## 8. Live state — Main Spoke, block 25652535 **[verified]**
+## 9. Live state — Main Spoke, block 25652535 **[verified]**
 
 14 reserves, all on the Core Hub.
 
@@ -516,7 +641,7 @@ Two things to design for, visible in this table:
 
 ---
 
-## 9. Enrichment candidates
+## 10. Enrichment candidates
 
 The brief needs ≥1 additional source, exposed alongside indexed data.
 
@@ -537,24 +662,32 @@ as a second, on-chain enrichment.
 
 ---
 
-## 10. Open questions
+## 11. Open questions
 
-1. Unit of `Value` in `getUserAccountData` (§6) — blocks any USD figure derived from it.
-2. **Premium and deficit branches of the supply formula are unvalidated** (§5.4) — all 17 Core
+1. **Cap-adapter variant** (§7.4) — `getPriceCap` reads as a static 1.04, but some Aave
+   adapters use a *growth-rate* cap with a stored snapshot, which is stateful and would not be
+   reconstructable from a constant. Confirm which variant the six capped feeds are.
+2. **LST exchange rates** (§7.4) — wstETH and weETH prices multiply ETH/USD by a ratio read
+   from token contract state, which is not a log. Decide between periodic sampling with
+   interpolation and accepting an `eth_call` for those two reserves.
+3. **Premium and deficit branches of the supply formula are unvalidated** (§5.4) — all 17 Core
    Hub assets currently have `premiumShares = deficitRay = swept = 0`, so mainnet cannot
    exercise them. Force these states on local Anvil before trusting supply valuation.
-3. Whether the Hub asset mirror can be folded from Hub events with zero drift over a full
+4. Whether the Hub asset mirror can be folded from Hub events with zero drift over a full
    backfill (§5.5). The reconciliation job answers this empirically — run it over history
    before relying on computed supply values.
-4. Do position managers ever emit position events from *their own* address, or always via the
+5. Chainlink aggregator rotation (§7.4) — `AnswerUpdated` comes from the aggregator, not the
+   proxy. Confirm how phase migrations surface before backfilling historical prices.
+6. Do position managers ever emit position events from *their own* address, or always via the
    Spoke? Assumed Spoke-only; affects whether we watch >1 address.
-5. Exact `Reserve.flags` bit order in `ReserveFlagsMap.sol` — needed to decode paused/frozen.
-6. Whether `TransferShares` on the Hub can move a *user's* position between spokes. If yes it
+7. Exact `Reserve.flags` bit order in `ReserveFlagsMap.sol` — needed to decode paused/frozen.
+8. Whether `TransferShares` on the Hub can move a *user's* position between spokes. If yes it
    is position-affecting, not just valuation-affecting.
 
-*Resolved during this pass:* whether off-chain valuation is possible without archive access
-(§5 — yes, wei-exact) and whether the interest-rate strategy must be reimplemented (§5.3 — no,
-`drawnRate` is emitted).
+*Resolved during this pass:* off-chain valuation without archive access (§5 — yes, wei-exact);
+whether the interest-rate strategy must be reimplemented (§5.3 — no, `drawnRate` is emitted);
+the unit of `Value` (§7.1 — `1e26` = 1 USD); and whether health factor is reproducible
+off-chain (§7.2 — yes, 8/8 exact when block-pinned).
 
 ---
 
