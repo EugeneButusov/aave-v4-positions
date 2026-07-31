@@ -1,12 +1,11 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 
 import {
-  HEALTH_INDICATORS,
-  type CheckResult,
-  type HealthIndicator,
-  type LivenessReport,
-  type ReadinessReport,
-} from './health-indicator';
+  type CheckResultDto,
+  type LivenessResponseDto,
+  type ReadinessResponseDto,
+} from './dto/health.dto';
+import { HEALTH_INDICATORS, type HealthIndicator } from './health-indicator';
 
 @Injectable()
 export class HealthService {
@@ -23,11 +22,11 @@ export class HealthService {
    * dependencies — a database outage should drain traffic, not have kubelet
    * restart every replica.
    */
-  liveness(): LivenessReport {
+  liveness(): LivenessResponseDto {
     return { status: 'ok', uptimeSeconds: Math.floor(process.uptime()) };
   }
 
-  async readiness(): Promise<ReadinessReport> {
+  async readiness(): Promise<ReadinessResponseDto> {
     const checks = await Promise.all(this.indicators.map((i) => this.run(i)));
 
     if (this.shuttingDown) return { status: 'shutting_down', checks };
@@ -50,7 +49,7 @@ export class HealthService {
     return this.shuttingDown;
   }
 
-  private async run(indicator: HealthIndicator): Promise<CheckResult> {
+  private async run(indicator: HealthIndicator): Promise<CheckResultDto> {
     try {
       await indicator.check();
       return { name: indicator.name, status: 'up' };

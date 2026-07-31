@@ -13,10 +13,11 @@ This is the **scaffold**. It stands up the workspace, both services, the test an
 the operational shape a Kubernetes deployment expects.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
-logging, liveness/readiness probes, graceful drain, Vitest, ESLint + Prettier, lefthook.
+logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, ESLint + Prettier,
+lefthook.
 
 **Not yet:** database and migrations, the ingestion pipeline itself, the enrichment source, the
-positions API surface, Docker Compose, CI. See [Not here yet](#not-here-yet).
+positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -70,6 +71,8 @@ The API listens on `:3000`, the indexer on `:3001`. Check them:
 curl -s localhost:3000/health/ready && curl -s localhost:3001/health/ready
 ```
 
+Browse the API contract at **<http://localhost:3000/docs>**.
+
 ## Commands
 
 | command                             | what it does                                     |
@@ -95,7 +98,8 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **Shared** — `NODE_ENV`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_GRACE_SECONDS`.
 
-**API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`).
+**API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_ENABLED` (true),
+`API_DOCS_PATH` (`docs`).
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), `CHAIN_ID` (1), and `RPC_URL`, the one variable
 with no default. Ingestion reads logs only, so a **full node is sufficient**; historical _state_ is
@@ -103,6 +107,33 @@ what would need an archive node, and nothing on the read path calls `eth_call` (
 that some public endpoints gate log history behind a paid tier.
 
 See each service's `.env.example` for the annotated list.
+
+## API documentation
+
+Swagger UI is at `/docs`, with the raw document at `/docs/openapi.json` and `/docs/openapi.yaml`.
+Like the probes, it sits outside the global API prefix — operational surface rather than part of the
+versioned API — and it can be switched off entirely with `API_DOCS_ENABLED=false`.
+
+`info.version` is the **API contract version**, deliberately not the package version. A dependency
+bump changes the package and must not imply anything about the shape of the responses.
+
+Two decisions worth knowing about before adding endpoints:
+
+**Response types are decorated by hand, not by the `@nestjs/swagger` CLI plugin.** The plugin infers
+`@ApiProperty` from TypeScript types, but it only runs through the Nest CLI build — under Vitest the
+generated document would silently lose properties, so the contract test would be asserting something
+the running service does not produce. Explicit decorators keep the two identical.
+
+**A drift guard is part of the test suite.** A route added without `@ApiOkResponse` still routes and
+still appears in the document, but with an empty response and no schema — the contract quietly stops
+describing what the service returns, and nothing else fails.
+[`openapi.e2e-spec.ts`](apps/api/test/openapi.e2e-spec.ts) walks every operation and fails if any
+lacks a typed success response.
+
+**Request validation is still an open choice.** There are no request DTOs yet. Configuration uses
+Zod, so `nestjs-zod` (one schema driving both validation and the OpenAPI document) is the coherent
+option; `class-validator` with `@ApiProperty` is the more conventional one. Worth deciding with the
+first real endpoint rather than now.
 
 ## Operational shape
 
@@ -172,11 +203,13 @@ Deliberate, in rough order of what comes next.
   That mirror is the highest-risk component — one mishandled transition silently corrupts every
   supply valuation for that asset, with no error, just wrong numbers.
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.
-- **Enrichment** and the positions API surface, per the §12 conclusion.
+- **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
+  must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
+  past it. The failure mode is a few wei of drift that reads as a rounding bug.
 - **Docker Compose, CI, and Kubernetes manifests.** `pnpm check` is written to be exactly what CI
   runs.
-- **A shared package.** The two services currently duplicate their health, logging and shutdown
-  wiring — about 150 lines. Extracting it now would mean building the cross-package TypeScript
-  topology before there is anything substantial to share; the real candidates (the position maths, the
-  database layer, the event ABIs) arrive with the pipeline, and `packages/*` is already in the
-  workspace globs for them.
+- **A shared package.** The two services carry near-identical health, logging and shutdown wiring —
+  about 150 lines, now diverging slightly since only the API's probes are OpenAPI-decorated.
+  Extracting it would mean building the cross-package TypeScript topology before there is anything
+  substantial to share; the real candidates (the position maths, the database layer, the event ABIs)
+  arrive with the pipeline, and `packages/*` is already in the workspace globs for them.

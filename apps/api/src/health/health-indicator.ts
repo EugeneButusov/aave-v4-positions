@@ -9,21 +9,3 @@ export interface HealthIndicator {
 
 /** Multi-provider token. Bind with `{ provide: HEALTH_INDICATORS, useValue: [...] }`. */
 export const HEALTH_INDICATORS = Symbol('HEALTH_INDICATORS');
-
-export type CheckStatus = 'up' | 'down';
-
-export interface CheckResult {
-  name: string;
-  status: CheckStatus;
-  error?: string;
-}
-
-export interface ReadinessReport {
-  status: 'ok' | 'degraded' | 'shutting_down';
-  checks: CheckResult[];
-}
-
-export interface LivenessReport {
-  status: 'ok';
-  uptimeSeconds: number;
-}

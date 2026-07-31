@@ -35,6 +35,9 @@ export default tseslint.config(
       // stringification of an object is a real defect here, not style.
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
       'no-console': ['error', { allow: ['warn', 'error'] }],
+      // tsconfig sets `noPropertyAccessFromIndexSignature`, which *requires* the
+      // bracket form this rule would otherwise rewrite. Without this they fight.
+      '@typescript-eslint/dot-notation': ['error', { allowIndexSignaturePropertyAccess: true }],
     },
   },
 
