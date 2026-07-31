@@ -366,15 +366,20 @@ Implemented both formulas in JS and compared against the contracts for 20 real
 Zero wei of drift on either side. Balances spanned 0 to 243,354 tokens across WETH, AAVE,
 USDC, USDG and cbBTC, including dust (`0.00000011` cbBTC) and zero balances.
 
-Caveat on coverage: `premiumShares`, `premiumOffsetRay`, `deficitRay` and `swept` are zero on
-**all 34 assets across all four hubs** (Core 17, Plus 7, Prime 7, Global Dollar 3) —
-not merely on the Core Hub. **[verified]**
+Coverage note: `premiumShares`, `premiumOffsetRay`, `deficitRay` and `swept` are zero on **all
+34 assets across all four hubs** (Core 17, Plus 7, Prime 7, Global Dollar 3), so mainnet cannot
+exercise the premium or deficit branches at any sampling density. **[verified]**
 
-So the supply-side validation exercised the `premiumRay = 0`, `deficitRay = 0` path only, and
-**no amount of mainnet sampling can change that** — the states do not exist anywhere in the
-deployment. The general formulas are transcribed from source and believed correct, but the
-premium and deficit branches remain empirically unconfirmed. The local Anvil deployment (§8) is
-the *only* way to force those states and test them.
+Those branches were instead validated on a **local Anvil deployment** of v4 (§8), driving the
+states mainnet never reaches: **[verified]**
+
+| scenario | forced state | result |
+|---|---|---|
+| risk premium | `premiumShares = 10e18` | `suppliedAssets`, `drawnDebt`, `premiumDebt` all exact |
+| bad debt | `deficitRay = 2.95e45` | all three exact |
+
+6/6 exact against `getUserSuppliedAssets` / `getUserDebt`. Combined with the 20/20 on mainnet,
+every branch of the §5.1–5.2 formulas is now covered.
 
 ### 5.5 Resulting design
 
@@ -412,11 +417,15 @@ The transitions, read from `Hub.sol`: **[verified]**
 Hub events, and comparing against `getAsset` 95 blocks later: **4 assets × 7 fields, all
 exact.** **[verified]**
 
-Two limits on that result. The window is 95 blocks — bounded by non-archive state access, not
-by the method — and it exercised only `Add` / `Remove` / `Draw` / `Restore` / `UpdateAsset`.
-Those are, however, the only transitions that occur in practice: a 10k-block sample contains
-906 Hub events and **every one** is one of those five. `MintFeeShares`, `Sweep` and `Reclaim`
-never fire in that window, so they remain unexercised and are best covered on Anvil.
+That mainnet window is 95 blocks — bounded by non-archive state access, not by the method — and
+covers only `Add` / `Remove` / `Draw` / `Restore` / `UpdateAsset`. Those are the only
+transitions that occur in practice: a 10k-block sample contains 906 Hub events and **every one**
+is one of those five.
+
+The remaining three were exercised on Anvil (§8), where they can be forced. Replaying
+`MintFeeShares`, `Sweep`, `Reclaim` — and the premium/deficit-bearing `Restore` and
+`ReportDeficit` — reproduced all **10 mirror fields** exactly in every scenario. **[verified]**
+The transition table above is therefore validated end to end, not just on its hot paths.
 
 Staged fallback if the Hub mirror proves troublesome: ship debt valuation first (§5.1 needs
 only `UpdateAsset` + user shares — far less state), and use `eth_call` at `latest` for supply
@@ -666,12 +675,18 @@ That makes **all 14 reserves** event-derivable with no residual `[open]` items i
 layer. The one untested edge is the cap clamp itself (§7.4.3): no feed is currently at its cap,
 so the `min` branch has never fired against real data.
 
-Two properties still worth stating in the API contract:
+Three properties worth stating in the API contract:
 
 - HF is **derived and block-stamped**, not stored. Return the block it was computed at.
 - Price and position data have **independent freshness**. A price feed with no update for an
   hour is normal Chainlink behaviour, not staleness — but HF computed from it should carry the
   price timestamp so consumers can judge for themselves.
+- **Every `uint256` must be serialised as a JSON string, never a bare number.** IEEE-754 has
+  53 bits of mantissa, so any value above ~9.007e15 is silently rounded on parse — and share
+  balances, RAY-scaled debt and `Value` amounts are all far above that. This bit the validation
+  harness: an unquoted `301369863013698631` came back as `...624`, a 7-wei error that looked
+  exactly like a rounding bug in the formula until the JSON was inspected. Silent, plausible,
+  and wrong in the last few digits — the worst failure shape for a financial API.
 
 `getUserAccountData` stays the reconciliation oracle, never the serving path.
 
@@ -745,9 +760,19 @@ treating position balances as a derived projection.
 
 `scripts/deploy/examples/AaveV4DeployAnvil.s.sol` in `aave/aave-v4` deploys the **whole
 protocol to a local Anvil** (chainId 31337, 2 hubs, 3 spokes) with documented steps.
-**[verified — script read, not yet executed]** This is the strongest option for tests: real
-contracts, real events, deterministic, no rate limits, and Anvil can force reorgs to test the
-rollback path. Requires Foundry, which is **not currently installed** on this machine.
+**[verified — executed]** Real contracts, real events, deterministic, no rate limits, and Anvil
+can force reorgs to test the rollback path. It is also the only way to reach premium, deficit
+and the cold Hub transitions (§5.4, §5.5).
+
+Two practical notes for standing it up:
+
+- The deploy script leaves **bare hubs and spokes — zero assets, zero reserves**. Driving
+  scenarios means configuring assets first; the repo's own `tests/setup/Base.t.sol` fixture does
+  this and is the faster starting point than the deploy script for validation work.
+- Tests build `SpokeInstance` from raw artifact bytecode via `vm.getCode`, which **leaves the
+  `LiquidationLogic` library placeholder unlinked**, so any liquidation reverts with
+  *"delegatecall to non-contract address"*. This affects the repo's own liquidation suite in a
+  clean checkout. Fix: deploy the library and `vm.etch` it at `ISpoke.getLiquidationLogic()`.
 
 ---
 
@@ -818,25 +843,8 @@ rather than USD conversion.
 
 ## 11. Open questions
 
-Two remain. Both are the same shape: a code path that mainnet cannot currently exercise.
-
-1. **Premium and deficit branches of the supply formula** (§5.4). All 34 assets across all four
-   hubs have `premiumShares = premiumOffsetRay = deficitRay = swept = 0`, so these branches
-   cannot be tested against the live deployment at all. The formulas are transcribed from
-   source; they are not empirically confirmed. **Force the states on Anvil (§8) before trusting
-   supply valuation for an asset that has acquired premium or bad debt.**
-
-2. **Hub-fold coverage for the cold transitions** (§5.5). The fold is verified exact over a
-   95-block window, but only `Add` / `Remove` / `Draw` / `Restore` / `UpdateAsset` occur in
-   practice — all 906 Hub events in a 10k-block sample are those five. `MintFeeShares`,
-   `Sweep` and `Reclaim` are implemented from source and never observed. Same remedy: Anvil.
-
-Neither blocks building. Both argue for standing the Anvil harness up early rather than
-treating it as a testing nicety — it is the only way to reach roughly a third of the state
-machine, and the reconciliation job (§5.5) is what would otherwise discover these gaps in
-production.
-
-### Resolved
+None blocking. Every question raised during this research has been closed, the last two on a
+local Anvil deployment (§8) because mainnet cannot reach the states involved.
 
 | question | answer |
 |---|---|
@@ -848,10 +856,21 @@ production.
 | Cap-adapter variant | static `min(price, 1.04)`, 5/5 exact (§7.4.3) |
 | LST ratio between rebases | invariant; `TokenRebased` payload is sufficient (§7.4.2) |
 | Chainlink rotation detection | `phaseId = roundId >> 64` (§7.4.1) |
-| Does the Hub fold reproduce chain state? | yes on the five hot transitions (§5.5) |
+| Premium / deficit branches of the supply formula | validated on Anvil, 6/6 exact (§5.4) |
+| Cold fold transitions (`MintFeeShares`/`Sweep`/`Reclaim`) | validated on Anvil, all 10 fields (§5.5) |
+| Does the Hub fold reproduce chain state? | yes, on every transition (§5.5) |
 | Do position managers emit position events? | yes — provenance mirrors; risk is double-counting (§2) |
 | `Reserve.flags` bit order | `PAUSED 0x01`, `FROZEN 0x02`, `BORROWABLE 0x04`, `RECEIVE_SHARES 0x08` (§3) |
 | Can `TransferShares` move a user's position? | no — inter-spoke rebalancing only (§4.4) |
+
+Residual risks worth carrying forward, none of which need answering before building:
+
+- The cap clamp (§7.4.3) has never fired against real data, since no feed is currently at its
+  cap. A depeg is when that branch first matters.
+- Anvil scenarios prove the formulas at specific points, not across the whole input domain.
+  Property-based fuzzing against `AssetLogic` would be the stronger follow-up.
+- Mainnet's premium and deficit state is zero *today*. When it becomes nonzero the
+  reconciliation job is what should confirm these findings still hold in production.
 
 ---
 
