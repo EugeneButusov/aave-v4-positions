@@ -45,10 +45,6 @@ export class HealthService {
     this.shuttingDown = true;
   }
 
-  get isShuttingDown(): boolean {
-    return this.shuttingDown;
-  }
-
   private async run(indicator: HealthIndicator): Promise<CheckResultDto> {
     try {
       await indicator.check();

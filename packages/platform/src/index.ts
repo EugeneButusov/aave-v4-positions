@@ -9,10 +9,8 @@
 export { HEALTH_INDICATORS, type HealthIndicator } from './health/health-indicator';
 
 export {
-  CHECK_STATUSES,
   CheckResultDto,
   LivenessResponseDto,
-  READINESS_STATUSES,
   ReadinessResponseDto,
   type CheckStatus,
   type ReadinessStatus,
@@ -32,6 +30,6 @@ export {
 } from './logging/logging.options';
 
 // Re-exported so services never import nestjs-pino directly.
-export { Logger, PinoLogger } from 'nestjs-pino';
+export { Logger } from 'nestjs-pino';
 
 export { installGracefulShutdown } from './lifecycle/graceful-shutdown';

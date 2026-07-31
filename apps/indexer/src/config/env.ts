@@ -1,3 +1,4 @@
+import { LOG_LEVELS } from '@aave-v4-positions/platform';
 import { z } from 'zod';
 
 /**
@@ -10,7 +11,7 @@ import { z } from 'zod';
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   LOG_PRETTY: z
     .enum(['true', 'false', '1', '0'])
     .default('false')
