@@ -242,13 +242,13 @@ totalDebt     = debt(user) + ceilRay(premiumRay)
 
 | element | source |
 |---|---|
-| index accrual, incl. the `drawnShares == 0 && premiumShares == 0` short-circuit | [`AssetLogic.getDrawnIndex`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L153-L165) `:153-165` |
-| linear interest term | [`MathUtils.calculateLinearInterest`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/MathUtils.sol#L20-L31) `:20-31` |
-| `RAY = 1e27`, `SECONDS_PER_YEAR = 365 days` | `MathUtils.sol:11`, `:13` |
-| `drawnShares × index` | [`UserPositionUtils.getDebt`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/UserPositionUtils.sol#L127-L133) `:127-133` |
-| premium term | [`Premium.calculatePremiumRay`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/Premium.sol#L17-L23) `:17-23`, called from `UserPositionUtils.sol:154-164` |
-| `rayMulUp` = `ceil(a*b/RAY)` | [`WadRayMath.sol`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/WadRayMath.sol#L88-L98) `:88-98` |
-| `ceilRay` = `fromRayUp` = `ceil(a/RAY)` | `WadRayMath.sol:167-172` |
+| index accrual, incl. the `drawnShares == 0 && premiumShares == 0` short-circuit | [`AssetLogic.getDrawnIndex:153-165`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L153-L165) |
+| linear interest term | [`MathUtils.calculateLinearInterest:20-31`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/MathUtils.sol#L20-L31) |
+| `RAY = 1e27`, `SECONDS_PER_YEAR = 365 days` | [`MathUtils.sol:11`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/MathUtils.sol#L11), [`:13`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/MathUtils.sol#L13) |
+| `drawnShares × index` | [`UserPositionUtils.getDebt:127-133`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/UserPositionUtils.sol#L127-L133) |
+| premium term | [`Premium.calculatePremiumRay:17-23`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/Premium.sol#L17-L23), called from [`UserPositionUtils.sol:154-164`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/UserPositionUtils.sol#L154-L164) |
+| `rayMulUp` = `ceil(a*b/RAY)` | [`WadRayMath.rayMulUp:88-98`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/WadRayMath.sol#L88-L98) |
+| `ceilRay` = `fromRayUp` = `ceil(a/RAY)` | [`WadRayMath.fromRayUp:167-172`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/WadRayMath.sol#L167-L172) |
 
 Interest is **linear between checkpoints, compounding only when a checkpoint lands**.
 `SECONDS_PER_YEAR = 365 days`, leap years ignored. Rounding is **up** throughout and must be
@@ -271,13 +271,13 @@ unrealizedFees    = (ceilRay(aggAfter) - ceilRay(aggBefore)) * liquidityFee / 10
 
 | element | source |
 |---|---|
-| virtual-share conversion, `Math.Rounding.Floor` | [`SharesMath.toAssetsDown`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/SharesMath.sol#L31-L42) `:31-42` |
-| `VIRTUAL_ASSETS = VIRTUAL_SHARES = 1e6` | `SharesMath.sol:13-14` |
-| wrapper supplying `totalAddedAssets` / `addedShares` | [`AssetLogic.toAddedAssetsDown`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L107-L112) `:107-112` |
-| `totalAddedAssets` | [`AssetLogic.totalAddedAssets`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L79-L96) `:79-96` |
-| `aggregatedOwedRay` | [`AssetLogic._calculateAggregatedOwedRay`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L229-L242) `:229-242` |
-| `unrealizedFees` | [`AssetLogic.getUnrealizedFees`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L187-L226) `:187-226` |
-| `* liquidityFee / 10000`, floor | [`PercentageMath.percentMulDown`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/PercentageMath.sol#L15-L27) `:15-27`, `PERCENTAGE_FACTOR = 1e4` at `:10` |
+| virtual-share conversion, `Math.Rounding.Floor` | [`SharesMath.toAssetsDown:31-42`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/SharesMath.sol#L31-L42) |
+| `VIRTUAL_ASSETS = VIRTUAL_SHARES = 1e6` | [`SharesMath.sol:13-14`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/SharesMath.sol#L13-L14) |
+| wrapper supplying `totalAddedAssets` / `addedShares` | [`AssetLogic.toAddedAssetsDown:107-112`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L107-L112) |
+| `totalAddedAssets` | [`AssetLogic.totalAddedAssets:79-96`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L79-L96) |
+| `aggregatedOwedRay` | [`AssetLogic._calculateAggregatedOwedRay:229-242`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L229-L242) |
+| `unrealizedFees` | [`AssetLogic.getUnrealizedFees:187-226`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L187-L226) |
+| `* liquidityFee / 10000`, floor | [`PercentageMath.percentMulDown:15-27`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/PercentageMath.sol#L15-L27), `PERCENTAGE_FACTOR = 1e4` at [`:10`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/libraries/math/PercentageMath.sol#L10) |
 
 Note the supply side depends on the **debt** index — suppliers are paid out of accrued debt,
 so the two sides are coupled through `drawnIndex`. **[verified]**
@@ -287,16 +287,16 @@ so the two sides are coupled through `drawnIndex`. **[verified]**
 Worth recording, because it is what makes the reconciliation job meaningful: our off-chain
 code and the on-chain getters must bottom out in the same primitives.
 
-**Supply** — `Spoke.getUserSuppliedAssets` `Spoke.sol:573-580`
-→ `Hub.previewRemoveByShares` `Hub.sol:471-473`
-→ `AssetLogic.toAddedAssetsDown` `:107-112`
-→ `SharesMath.toAssetsDown` `:31-42`
+**Supply** — [`Spoke.getUserSuppliedAssets:573-580`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L573-L580)
+→ [`Hub.previewRemoveByShares:471-473`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/Hub.sol#L471-L473)
+→ [`AssetLogic.toAddedAssetsDown:107-112`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L107-L112)
+→ [`SharesMath.toAssetsDown:31-42`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/SharesMath.sol#L31-L42)
 
-**Debt** — `Spoke.getUserDebt` `Spoke.sol:589-597`
-→ `UserPositionUtils.getDebt(hub, assetId)` `:114-120`
-→ `Hub.getAssetDrawnIndex` `Hub.sol:508-510`
-→ `AssetLogic.getDrawnIndex` `:153-165`
-→ back to `UserPositionUtils.getDebt(drawnIndex)` `:127-133`
+**Debt** — [`Spoke.getUserDebt:589-597`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L589-L597)
+→ [`UserPositionUtils.getDebt(hub, assetId):114-120`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/UserPositionUtils.sol#L114-L120)
+→ [`Hub.getAssetDrawnIndex:508-510`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/Hub.sol#L508-L510)
+→ [`AssetLogic.getDrawnIndex:153-165`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L153-L165)
+→ back to [`UserPositionUtils.getDebt(drawnIndex):127-133`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/UserPositionUtils.sol#L127-L133)
 
 Both entry points read `_userPositions[user][reserveId]` on the Spoke and divide against
 **Hub-global** totals — confirming that user shares and Hub `addedShares` share one unit,
@@ -304,8 +304,7 @@ with no per-spoke scaling. This is what the wei-exact match in §5.4 independent
 
 ### 5.3 The key finding: the Hub emits its own index
 
-[`AssetLogic.updateDrawnRate`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L132-L138)
-`:132-138` emits, at `:137`:
+[`AssetLogic.updateDrawnRate:132-138`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L132-L138) emits, at [`:137`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L137):
 
 ```solidity
 emit IHub.UpdateAsset(assetId, drawnIndex, newDrawnRate, asset.realizedFees);
@@ -314,10 +313,9 @@ emit IHub.UpdateAsset(assetId, drawnIndex, newDrawnRate, asset.realizedFees);
 topic0 `0xa1facf110ded5028ee267fa3d5986f2aa4dc14230b79ffd27e95760f14883350`, `assetId` indexed.
 
 Why the emitted value is the *settled* index rather than a stale one:
-[`AssetLogic.accrue`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L141-L150)
-`:141-150` writes `asset.drawnIndex = getDrawnIndex()` and sets
+[`AssetLogic.accrue:141-150`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L141-L150) writes `asset.drawnIndex = getDrawnIndex()` and sets
 `lastUpdateTimestamp = block.timestamp` *before* `updateDrawnRate` reads it — see the
-`:131` docstring, "Uses last stored index; asset accrual should have already occurred."
+[`:131`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/hub/libraries/AssetLogic.sol#L131) docstring, "Uses last stored index; asset accrual should have already occurred."
 That ordering is what makes `(drawnIndex, drawnRate, block.timestamp)` from the log a
 self-consistent checkpoint, and it is what the empirical check below confirms.
 
@@ -430,8 +428,7 @@ are event-reconstructable. Two are not, without a contract read.**
 
 ### 7.1 The formula
 
-From [`Spoke._processUserAccountData`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L706-L790)
-`:706-790`, iterating only the reserves flagged in the user's `PositionStatus`:
+From [`Spoke._processUserAccountData:706-790`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L706-L790), iterating only the reserves flagged in the user's `PositionStatus`:
 
 ```
 value(amount, dec, price) = amount * price * 10^(18 - dec)        // SpokeUtils.toValue
@@ -454,9 +451,8 @@ healthFactor = floor( bpsToWad(weightedColl) * RAY / totalDebtValueRay )
 HF is WAD-scaled: `1e18` = 1.00.
 
 **This resolves the `Value` unit question.**
-[`SpokeUtils.toValue`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/SpokeUtils.sol#L28-L40)
-`:28-40` documents it outright: **`1e26` represents 1 USD** — an 18-decimal-normalised amount
-times an 8-decimal price (`ORACLE_DECIMALS = 8`, `SpokeUtils.sol:13`). So
+[`SpokeUtils.toValue:28-40`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/SpokeUtils.sol#L28-L40) documents it outright: **`1e26` represents 1 USD** — an 18-decimal-normalised amount
+times an 8-decimal price ([`ORACLE_DECIMALS = 8`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/libraries/SpokeUtils.sol#L13)). So
 `totalCollateralValue / 1e26` is USD, and `totalDebtValueRay / 1e26 / 1e27` is USD.
 
 Note HF uses `collateralFactor`, which is **per-user-config-version** — `_dynamicConfig[reserveId][userPosition.dynamicConfigKey]`, not the reserve's current key. This is the §3 versioning
