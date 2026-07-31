@@ -1,0 +1,26 @@
+# Git hooks. Installed by `pnpm install` (the `prepare` script runs `lefthook install`).
+# Bypass a single commit with LEFTHOOK=0, or a single job with LEFTHOOK_EXCLUDE=<name>.
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: eslint
+      glob: '*.{ts,mts,cts,js,mjs,cjs}'
+      run: pnpm exec eslint --fix --no-warn-ignored {staged_files}
+      stage_fixed: true
+
+    - name: prettier
+      glob: '*.{ts,mts,cts,js,mjs,cjs,json,md,yml,yaml}'
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+# Type checking and tests are whole-project operations, so they run once before
+# the push rather than on every commit.
+pre-push:
+  parallel: false
+  jobs:
+    - name: typecheck
+      run: pnpm run typecheck
+
+    - name: test
+      run: pnpm run test

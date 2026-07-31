@@ -1,0 +1,25 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 10+ requires postinstall scripts to be allow-listed explicitly.
+# Both of these ship prebuilt native binaries that the install script fetches.
+allowBuilds:
+  '@swc/core': true
+  lefthook: true
+
+# Single source of truth for dependency versions across every workspace package.
+# Packages reference these with `"<name>": "catalog:"`.
+catalog:
+  '@nestjs/common': ^11.1.28
+  '@nestjs/config': ^4.0.4
+  '@nestjs/core': ^11.1.28
+  '@nestjs/platform-express': ^11.1.28
+  '@nestjs/testing': ^11.1.28
+  '@types/supertest': ^7.2.1
+  nestjs-pino: ^4.6.1
+  pino-http: ^11.0.0
+  reflect-metadata: ^0.2.2
+  rxjs: ^7.8.2
+  supertest: ^7.2.2
+  zod: ^4.4.3

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# The protocol analysis is hand-formatted (wide reference tables); leave it alone.
+docs/
