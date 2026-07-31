@@ -509,38 +509,99 @@ The feeds are *not* uniform. Probing all 14 **[verified]**:
 | Capped Chainlink (`ASSET_TO_USD_AGGREGATOR` + static `getPriceCap` = 1.04) | USDC, USDT, RLUSD, USDG, frxUSD | **yes** — feed + constant |
 | Two Chainlink feeds composed | WBTC (`ASSET_TO_PEG` × `PEG_TO_BASE`), EURC (`ASSET_TO_USD` × `BASE_TO_USD`) | **yes** — two feeds |
 | Fixed price (168-byte contract) | GHO | **yes** — constant |
-| Chainlink × on-chain LST ratio | wstETH (`RATIO_PROVIDER` = stETH `0xae7a…`), weETH (`RATIO_PROVIDER` = weETH `0xCd5f…`) | **no** — ratio is contract state |
+| Chainlink × on-chain LST ratio | wstETH (`RATIO_PROVIDER` = stETH `0xae7a…`), weETH (`RATIO_PROVIDER` = weETH `0xCd5f…`) | **yes, at rebase granularity** — see 7.4.2 |
 
 `AnswerUpdated(int256,uint256,uint256)` fires **36× per 10k blocks** on the ETH/USD aggregator
 `0x7c7FdFCa295a787ded12Bb5c1A49A8D2cC20E3F8`, so the Chainlink half is a normal indexing job.
 **[verified]**
 
-Three wrinkles worth planning for:
+#### 7.4.1 Aggregator rotation is a non-issue in our window
 
-1. **Proxy vs aggregator.** `AnswerUpdated` is emitted by the *aggregator*, not the proxy the
-   oracle points at. Aggregators rotate (Chainlink phases), so historical reconstruction must
-   follow that migration rather than watching one fixed address.
-2. **LST ratios.** wstETH and weETH multiply ETH/USD by an exchange rate read from the token
-   contract. That rate drifts continuously with staking rewards and is not a log. Options:
-   sample it periodically and interpolate, or accept `eth_call` for these two.
-3. **Cap adapters.** `getPriceCap` currently reads as a static 1.04 with `isCapped = false`.
-   Some Aave adapters instead use a *growth-rate* cap with a stored snapshot, which is stateful.
-   Confirm which variant these are before assuming a constant. **[open]**
+`AnswerUpdated` is emitted by the *aggregator*, not by the proxy the oracle points at, and
+aggregators rotate across Chainlink "phases" — so in principle a historical backfill must
+follow that migration rather than watching one fixed address.
+
+Measured, rather than assumed: every feed our reserves depend on is on **phase 2**, and in each
+case that phase-2 aggregator was **already live at our genesis block** (`AnswerUpdated` present
+in a 10k window spanning block 24,720,899). **[verified]**
+
+| feed | proxy | phase | aggregator live at genesis |
+|---|---|---|---|
+| ETH/USD | `0x5424…5215e` | 2 | yes (78 updates in window) |
+| BTC/USD | `0xb41E…C8B0A` | 2 | yes (57) |
+| AAVE/USD | `0xF02C…e4a85` | 2 | yes (44) |
+| LINK/USD | `0xC7e9…28C183` | 2 | yes (45) |
+| USDC/USD | `0xEa67…b496b` | 2 | yes (2) |
+| WBTC/BTC | `0xfdFD…FBB23` | 2 | yes (1) |
+
+So **zero rotations occurred over the entire Aave v4 history**. Resolve proxy → aggregator once
+per feed and index that address. Still detect rotation defensively — a phase change mid-stream
+would silently truncate a price series — but it is not a blocker and does not need solving
+before v1.
+
+#### 7.4.2 LST ratios are a daily step function, not continuous drift
+
+I previously wrote that these rates "drift continuously". **That was wrong.**
+
+The adapter arithmetic is simple and exact — verified at the wei level: **[verified]**
+
+```
+wstETH/USD = ETH/USD × stEthPerToken() / 1e18
+# 187522000000 × 1240624545593819793 / 1e18 = 232644396038  == latestAnswer()  (exact)
+```
+
+And `stEthPerToken()` is not a continuous function. It moves on Lido's oracle report, which
+emits `TokenRebased` — measured at **~1.2 per day** (5 events in 30k blocks). Between reports,
+submits and withdrawals mint or burn shares *proportionally*, leaving the ratio intact.
+
+Better still, `TokenRebased` carries `postTotalShares` and `postTotalEther`, so the exact
+post-rebase ratio is **in the event payload** — no call needed to learn it.
+
+That makes the LST feeds a normal indexing job too: ~1.2 events/day/asset, exact at each
+checkpoint, constant in between. **[open]** — confirm the ratio truly is invariant between
+rebases (rounding aside) rather than merely near-constant, before claiming wei-exact historical
+LST prices.
+
+#### 7.4.3 Cap adapters
+
+`getPriceCap` currently reads as a static 1.04 with `isCapped = false`. Some Aave adapters
+instead use a *growth-rate* cap with a stored snapshot, which is stateful and would not be
+reconstructable from a constant. Confirm which variant these six are. **[open]** — the only
+genuinely unresolved item in the price layer.
+
+#### 7.4.4 Cost of indexing the price layer
+
+~8 distinct Chainlink aggregators at roughly 36 updates per 10k blocks each, over 931,565
+blocks of history: **order 25–30k logs**, comparable to the Main Spoke's 38,580. Plus ~2
+LST rebase events per day. This is the same machinery as everything else in the pipeline, at
+the same order of magnitude. There is no scaling reason to defer it.
 
 ### 7.5 Recommendation
 
-HF is worth serving, but stage it:
+**Index the price layer from the start.** An earlier draft of this section staged Chainlink
+into a "v2" and served v1 HF from an `eth_call`. Once 7.4.1–7.4.4 were actually measured rather
+than assumed, that staging stopped being justified:
 
-- **v1 — HF at `latest`, computed from indexed positions + a price read.** All the
-  position-side inputs come free from the pipeline; only prices need an `eth_call`. Cheap,
-  exact, and the §7.2 check becomes a standing invariant.
-- **v2 — historical HF**, once Chainlink `AnswerUpdated` is indexed. Gets 12/14 reserves
-  exactly; wstETH and weETH need sampled ratios, so flag those as approximate rather than
-  quietly serving a slightly-wrong number.
+- rotation: zero occurrences across all of v4's history, so no migration logic is needed to ship
+- LST ratios: ~1.2 events/day with the exact ratio in the event payload, not continuous drift
+- volume: ~25–30k logs, the same order as the Spoke stream we already ingest
 
-The honest framing for the API: HF is **derived and block-stamped**, not indexed. Return the
-block it was computed at, and treat the on-chain `getUserAccountData` as the reconciliation
-oracle rather than the serving path.
+Deferring it would have bought nothing and left an `eth_call` on the read path — the one thing
+§5 went to some trouble to eliminate. Price feeds are simply another log source, subscribed the
+same way, folded into the same store.
+
+That makes **all 14 reserves** event-derivable, subject to the two `[open]` items: the
+cap-adapter variant (7.4.3) and between-rebase ratio invariance (7.4.2). Both are narrow, and
+neither blocks starting.
+
+Two properties still worth stating in the API contract:
+
+- HF is **derived and block-stamped**, not stored. Return the block it was computed at.
+- Price and position data have **independent freshness**. A price feed with no update for an
+  hour is normal Chainlink behaviour, not staleness — but HF computed from it should carry the
+  price timestamp so consumers can judge for themselves.
+
+`getUserAccountData` stays the reconciliation oracle, never the serving path.
 
 ---
 
@@ -663,17 +724,18 @@ as a second, on-chain enrichment.
 1. **Cap-adapter variant** (§7.4) — `getPriceCap` reads as a static 1.04, but some Aave
    adapters use a *growth-rate* cap with a stored snapshot, which is stateful and would not be
    reconstructable from a constant. Confirm which variant the six capped feeds are.
-2. **LST exchange rates** (§7.4) — wstETH and weETH prices multiply ETH/USD by a ratio read
-   from token contract state, which is not a log. Decide between periodic sampling with
-   interpolation and accepting an `eth_call` for those two reserves.
+2. **Between-rebase ratio invariance** (§7.4.2) — `stEthPerToken` is exact at each
+   `TokenRebased`, but confirm it is genuinely invariant between reports (rounding aside)
+   before claiming wei-exact historical LST prices.
 3. **Premium and deficit branches of the supply formula are unvalidated** (§5.4) — all 17 Core
    Hub assets currently have `premiumShares = deficitRay = swept = 0`, so mainnet cannot
    exercise them. Force these states on local Anvil before trusting supply valuation.
 4. Whether the Hub asset mirror can be folded from Hub events with zero drift over a full
    backfill (§5.5). The reconciliation job answers this empirically — run it over history
    before relying on computed supply values.
-5. Chainlink aggregator rotation (§7.4) — `AnswerUpdated` comes from the aggregator, not the
-   proxy. Confirm how phase migrations surface before backfilling historical prices.
+5. Chainlink aggregator rotation (§7.4.1) — measured as zero occurrences over v4's history, so
+   not blocking, but a mid-stream phase change would silently truncate a price series. Add
+   defensive detection.
 6. Do position managers ever emit position events from *their own* address, or always via the
    Spoke? Assumed Spoke-only; affects whether we watch >1 address.
 7. Exact `Reserve.flags` bit order in `ReserveFlagsMap.sol` — needed to decode paused/frozen.
@@ -682,8 +744,10 @@ as a second, on-chain enrichment.
 
 *Resolved during this pass:* off-chain valuation without archive access (§5 — yes, wei-exact);
 whether the interest-rate strategy must be reimplemented (§5.3 — no, `drawnRate` is emitted);
-the unit of `Value` (§7.1 — `1e26` = 1 USD); and whether health factor is reproducible
-off-chain (§7.2 — yes, 8/8 exact when block-pinned).
+the unit of `Value` (§7.1 — `1e26` = 1 USD); whether health factor is reproducible
+off-chain (§7.2 — yes, 8/8 exact when block-pinned); and whether the price layer can be indexed
+rather than called (§7.4 — yes, all 14 reserves, with rotation measured at zero and LST ratios
+turning out to be a ~daily step function rather than continuous drift).
 
 ---
 
