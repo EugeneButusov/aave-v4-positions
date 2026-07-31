@@ -2,6 +2,7 @@
   "name": "@aave-v4-positions/indexer",
   "version": "0.0.0",
   "private": true,
+  "type": "commonjs",
   "description": "Ingests Aave v4 Spoke and Hub events and folds them into position state",
   "main": "dist/main.js",
   "scripts": {

@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "baseUrl": ".",
     "outDir": "dist",
     "types": ["node"],
     "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tsbuildinfo"

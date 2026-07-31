@@ -3,8 +3,11 @@
   "compilerOptions": {
     "target": "ES2023",
     "lib": ["ES2023"],
-    "module": "commonjs",
-    "moduleResolution": "node",
+    /* `nodenext` models Node's real resolution, including package.json
+       `exports`. The legacy `node10` this replaced was removed outright in
+       TypeScript 7, and is what blocked every type-aware tool built on it. */
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
 
     /* NestJS relies on both of these: decorators are the DI surface, and the
        emitted metadata is what lets the injector resolve constructor types. */

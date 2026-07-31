@@ -2,6 +2,7 @@
   "name": "@aave-v4-positions/api",
   "version": "0.0.0",
   "private": true,
+  "type": "commonjs",
   "description": "Read API serving indexed and enriched Aave v4 positions",
   "main": "dist/main.js",
   "scripts": {
