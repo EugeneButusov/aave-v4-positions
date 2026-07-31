@@ -26,8 +26,7 @@ async function bootstrap(): Promise<void> {
   // Registered after the global prefix so the document reports the paths the
   // service actually serves, and before listen() so the UI is up with the port.
   const docsPath = config.get('API_DOCS_PATH', { infer: true });
-  const docsEnabled = config.get('API_DOCS_ENABLED', { infer: true });
-  if (docsEnabled) setupOpenApi(app, { path: docsPath });
+  setupOpenApi(app, { path: docsPath });
 
   installGracefulShutdown(app, {
     graceSeconds: config.get('SHUTDOWN_GRACE_SECONDS', { infer: true }),
@@ -39,7 +38,7 @@ async function bootstrap(): Promise<void> {
 
   const logger = app.get(Logger);
   logger.log(`api listening on http://${host}:${port}`, 'Bootstrap');
-  if (docsEnabled) logger.log(`openapi docs at http://${host}:${port}/${docsPath}`, 'Bootstrap');
+  logger.log(`openapi docs at http://${host}:${port}/${docsPath}`, 'Bootstrap');
 }
 
 void bootstrap();

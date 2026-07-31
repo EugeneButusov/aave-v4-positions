@@ -98,8 +98,7 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **Shared** — `NODE_ENV`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_GRACE_SECONDS`.
 
-**API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_ENABLED` (true),
-`API_DOCS_PATH` (`docs`).
+**API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`).
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), `CHAIN_ID` (1), and `RPC_URL`, the one variable
 with no default. Ingestion reads logs only, so a **full node is sufficient**; historical _state_ is
@@ -112,7 +111,8 @@ See each service's `.env.example` for the annotated list.
 
 Swagger UI is at `/docs`, with the raw document at `/docs/openapi.json` and `/docs/openapi.yaml`.
 Like the probes, it sits outside the global API prefix — operational surface rather than part of the
-versioned API — and it can be switched off entirely with `API_DOCS_ENABLED=false`.
+versioned API. It is always served: the docs are the API's contract, not a debug affordance, and a
+contract that is absent in the environment people actually call is not much of a contract.
 
 `info.version` is the **API contract version**, deliberately not the package version. A dependency
 bump changes the package and must not imply anything about the shape of the responses.

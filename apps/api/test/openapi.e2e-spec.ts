@@ -121,23 +121,3 @@ describe('openapi', () => {
     });
   });
 });
-
-describe('openapi when disabled', () => {
-  let app: INestApplication<App>;
-
-  beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-
-    app = moduleRef.createNestApplication({ logger: false });
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('exposes nothing at the docs path', async () => {
-    await request(app.getHttpServer()).get(`/${DOCS_PATH}`).expect(404);
-    await request(app.getHttpServer()).get(`/${DOCS_PATH}/openapi.json`).expect(404);
-  });
-});

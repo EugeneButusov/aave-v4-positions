@@ -21,15 +21,10 @@ export const envSchema = z.object({
   API_GLOBAL_PREFIX: z.string().default('api'),
 
   /**
-   * Swagger UI and the raw OpenAPI document. On by default — the docs are the
-   * API's contract, not a debug affordance — but switchable for a deployment
-   * that must not expose its surface.
+   * Where Swagger UI and the raw OpenAPI document are mounted. Always served —
+   * the docs are the API's contract, not a debug affordance. Sits outside the
+   * global prefix, so this is a root-level path.
    */
-  API_DOCS_ENABLED: z
-    .enum(['true', 'false', '1', '0'])
-    .default('true')
-    .transform((value) => value === 'true' || value === '1'),
-  /** Served outside the global prefix, so this is a root-level path. */
   API_DOCS_PATH: z
     .string()
     .min(1)
