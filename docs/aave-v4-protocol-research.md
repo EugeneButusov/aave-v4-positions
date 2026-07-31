@@ -154,9 +154,39 @@ index maths** — the accrual problem in §5 applies to *balances over time*, no
 the others have 5. Every topic above is confirmed against real logs; deriving these signatures
 by hand rather than from source is an easy way to get `Repay` wrong and match nothing.
 
+#### Liquidations
+
 `LiquidationCall` is indexed on `(collateralReserveId, debtReserveId, user)` — note the
 **liquidator is not indexed**, so "positions liquidated by X" cannot be served by a topic
 filter and needs a DB index.
+
+The event itself is complete: borrower, liquidator, both reserves, debt restored, collateral
+removed, and the share deltas on both sides. Detecting and attributing a liquidation from logs
+alone is straightforward. Three details are not obvious from the signature, all confirmed by
+replaying real liquidations on Anvil: **[verified]**
+
+1. **One liquidation is not one event.** `liquidationCall` operates on a single
+   `(collateral, debt)` pair, so liquidating a user with several collaterals or debts emits
+   several `LiquidationCall` logs in one transaction. A user-facing "liquidation" is a group
+   keyed by `(txHash, user)`, not a row per log.
+
+2. **Bad debt is a *separate* event.** When collateral is exhausted and debt remains, the Spoke
+   emits `ReportDeficit(reserveId, user, drawnShares, premiumDelta)` alongside the
+   `LiquidationCall`, and that is what removes the written-off `drawnShares` from the position.
+   An indexer folding only `LiquidationCall` leaves the borrower carrying phantom debt forever.
+   Observed: a `LiquidationCall` clearing `4.95e16` drawn shares, immediately followed by
+   `ReportDeficit` writing off the remaining `2.95e18`.
+
+3. **When `receiveShares` is true, the liquidator's position grows with no `Supply` event.**
+   The collateral never leaves the Hub; ownership moves inside the Spoke, and the only record
+   is `collateralSharesToLiquidator` on the `LiquidationCall` itself. Verified: after such a
+   liquidation the liquidator's `suppliedShares` equalled `collateralSharesToLiquidator`
+   exactly, with no `Supply` log anywhere in the trace. **Crediting supplied shares only on
+   `Supply` silently under-counts every liquidator.**
+
+The protocol's liquidation fee is the gap between `collateralSharesLiquidated` and
+`collateralSharesToLiquidator`, and settles as a Hub `TransferShares` to the treasury spoke —
+consistent with §4.4: spoke-to-spoke, never touching a user position.
 
 ### 4.2 Spoke — user config
 
