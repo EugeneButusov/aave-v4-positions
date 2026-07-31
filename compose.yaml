@@ -1,41 +1,55 @@
 name: aave-v4-positions
 
-# Ports are overridable so a busy 3000 does not block you:
-#   API_PORT=4000 docker compose up
-x-common: &common
-  build:
-    context: .
-    dockerfile: Dockerfile
+# `x-` keys are Compose extension fields: ignored by Compose itself, so they
+# exist only to hold a YAML anchor that services merge in with `<<:`.
+#
+# Note that `<<:` is a *shallow* merge — a key redeclared on a service replaces
+# the anchor's version of it outright rather than merging into it. So `build`
+# lives on each service, not here: both need their own `args`, which would
+# override an inherited `build` block completely.
+x-service: &service
   init: true
   restart: unless-stopped
-  environment: &common-env
-    NODE_ENV: production
-    LOG_LEVEL: ${LOG_LEVEL:-info}
-    # One JSON object per line. `docker compose logs | jq` if you want it pretty —
-    # turning it on here would change what the service emits in a deployment.
-    LOG_PRETTY: 'false'
-    SHUTDOWN_GRACE_SECONDS: '5'
   # Must exceed SHUTDOWN_GRACE_SECONDS, or Docker SIGKILLs the container
   # mid-drain and the readiness-first shutdown never completes.
   stop_grace_period: 20s
 
+x-env: &env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  # One JSON object per line. `docker compose logs | jq` if you want it pretty —
+  # turning it on here would change what the service emits in a deployment.
+  LOG_PRETTY: 'false'
+  SHUTDOWN_GRACE_SECONDS: '5'
+
+# Only `test` differs between the services, so the timings are shared and the
+# command is not.
+x-healthcheck: &healthcheck
+  interval: 10s
+  timeout: 3s
+  retries: 3
+  start_period: 15s
+
+# Ports are overridable so a busy 3000 does not block you:
+#   API_PORT=4000 docker compose up
 services:
   api:
-    <<: *common
+    <<: *service
     build:
       context: .
       dockerfile: Dockerfile
       args:
         APP: api
     environment:
-      <<: *common-env
+      <<: *env
       API_HOST: 0.0.0.0
       API_PORT: '3000'
     ports:
       - '${API_PORT:-3000}:3000'
     healthcheck:
-      # The image has no curl, and adding one to ship a health check is a poor
-      # trade; Node's own fetch is already there.
+      <<: *healthcheck
+      # The image has no curl, and adding one purely to run a health check is a
+      # poor trade; Node's own fetch is already there.
       test:
         [
           'CMD',
@@ -43,25 +57,22 @@ services:
           '-e',
           "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 15s
 
   indexer:
-    <<: *common
+    <<: *service
     build:
       context: .
       dockerfile: Dockerfile
       args:
         APP: indexer
     environment:
-      <<: *common-env
+      <<: *env
       INDEXER_HOST: 0.0.0.0
       INDEXER_PORT: '3001'
     ports:
       - '${INDEXER_PORT:-3001}:3001'
     healthcheck:
+      <<: *healthcheck
       test:
         [
           'CMD',
@@ -69,7 +80,3 @@ services:
           '-e',
           "fetch('http://127.0.0.1:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 15s
