@@ -1032,8 +1032,8 @@ rather than USD conversion.
 
 ## 12. Conclusion — serving a portfolio view
 
-Target output, DeBank-shaped: a list of positions, each with a type, a token, an amount and a
-USD value; plus portfolio-level health and net worth.
+Target output: a list of positions, each with a type, a token, an amount and a USD value; plus
+portfolio-level health and net worth.
 
 Everything below is derivable from indexed logs and arithmetic. **No `eth_call` on the read
 path**, at any timestamp, without an archive node.
@@ -1163,8 +1163,8 @@ which is a strictly better alert than a price trigger.
 - **Market price and oracle deviation.** The protocol's own oracle answers "what is this worth
   *to Aave*", which is what drives liquidation and is therefore the right price for a position
   view. An independent market price (§11) is a separate enrichment concern.
-- Logos, protocol branding, cross-protocol aggregation, and anything else DeBank shows that is
-  not Aave state.
+- Logos, protocol branding, cross-protocol aggregation, and any other presentation data that
+  is not Aave state.
 
 ### 12.6 What is computed when
 
