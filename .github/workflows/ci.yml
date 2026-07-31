@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to a branch makes the in-flight run for it obsolete. main is
+# exempt: those runs record whether a merged commit was actually green.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor declared in `engines` and the version development uses.
+        # Testing both is what keeps that declaration from being a guess — it
+        # already caught a floor of 22.12 that pnpm could not actually run on.
+        node: ['22.13', '24']
+
+    name: check (node ${{ matrix.node }})
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Reads the `packageManager` field, so the version can never drift from
+      # what contributors run locally.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      # --frozen-lockfile fails on a lockfile that does not match package.json
+      # rather than silently resolving something else. The `prepare` script also
+      # builds the workspace packages here, which lint and typecheck both need.
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Separate steps rather than `pnpm check`, so a failure names itself in the
+      # job summary instead of hiding behind one composite command.
+      - name: Format
+        run: pnpm run format:check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      # Emit is not covered by `pnpm check`: typecheck runs --noEmit, so a fault
+      # that only appears when writing output would otherwise reach main.
+      - name: Build
+        run: pnpm run build

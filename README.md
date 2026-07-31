@@ -53,9 +53,8 @@ surface consumers see.
 
 ## Prerequisites
 
-- **Node 22.12+** — enforced by `engines` in the root `package.json` with `engine-strict` on, so an
-  older runtime fails at install rather than at runtime. Developed on 24; `node --watch` drives the
-  dev loop, so 22.12 is the practical floor.
+- **Node 22.13+** — the floor pnpm 11 imposes, enforced by `engines` with `engine-strict` on, so an
+  older runtime fails at install rather than at runtime. CI runs the floor and 24, so it stays true.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
 
 There is no Nest CLI. `pnpm build` is `tsc`, and `pnpm dev:*` is `tsc --watch` plus `node --watch`.
