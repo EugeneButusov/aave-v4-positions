@@ -1,5 +1,7 @@
 # aave-v4-positions
 
+[![CI](https://github.com/EugeneButusov/aave-v4-positions/actions/workflows/ci.yml/badge.svg)](https://github.com/EugeneButusov/aave-v4-positions/actions/workflows/ci.yml)
+
 An indexer and read API for **Aave v4 user positions** on the Hub-and-Spoke architecture.
 
 The protocol groundwork is in [`docs/aave-v4-protocol-analysis.md`](docs/aave-v4-protocol-analysis.md):
@@ -91,17 +93,17 @@ Browse the API contract at **<http://localhost:3000/docs>**.
 
 ## Commands
 
-| command                             | what it does                                     |
-| ----------------------------------- | ------------------------------------------------ |
-| `pnpm build`                        | compile both services to `apps/*/dist`           |
-| `pnpm dev:api` / `pnpm dev:indexer` | watch mode                                       |
-| `pnpm test`                         | every app's tests in one run                     |
-| `pnpm test:watch` / `pnpm test:cov` | watch mode / V8 coverage                         |
-| `pnpm typecheck`                    | `tsc --noEmit` across the workspace              |
-| `pnpm lint` / `pnpm lint:fix`       | oxlint, type-aware                               |
-| `pnpm format` / `pnpm format:check` | Prettier                                         |
-| `pnpm check`                        | format, lint, typecheck, test — what CI will run |
-| `pnpm clean`                        | remove build output                              |
+| command                             | what it does                                 |
+| ----------------------------------- | -------------------------------------------- |
+| `pnpm build`                        | compile both services to `apps/*/dist`       |
+| `pnpm dev:api` / `pnpm dev:indexer` | watch mode                                   |
+| `pnpm test`                         | every app's tests in one run                 |
+| `pnpm test:watch` / `pnpm test:cov` | watch mode / V8 coverage                     |
+| `pnpm typecheck`                    | `tsc --noEmit` across the workspace          |
+| `pnpm lint` / `pnpm lint:fix`       | oxlint, type-aware                           |
+| `pnpm format` / `pnpm format:check` | Prettier                                     |
+| `pnpm check`                        | format, lint, typecheck, test — what CI runs |
+| `pnpm clean`                        | remove build output                          |
 
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
 
@@ -274,5 +276,5 @@ Deliberate, in rough order of what comes next.
 - **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
   must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
-- **Docker Compose, CI, and Kubernetes manifests.** `pnpm check` is written to be exactly what CI
-  runs.
+- **Docker Compose and Kubernetes manifests.** CI is in place: format, lint, typecheck, test and
+  build, on Node 22.13 and 24.
