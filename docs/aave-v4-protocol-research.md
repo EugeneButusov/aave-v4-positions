@@ -140,8 +140,8 @@ Both `shares` and `amount` are emitted, so **per-event asset amounts are exact a
 index maths** — the accrual problem in §5 applies to *balances over time*, not to the events.
 
 `Repay` inserts `totalAmountRepaid` before the `PremiumDelta` tuple — a 6-field event where
-the others have 5. An early version of these notes had this wrong and the topic did not match
-any real log; the table above is the corrected, log-verified form.
+the others have 5. Every topic above is confirmed against real logs; deriving these signatures
+by hand rather than from source is an easy way to get `Repay` wrong and match nothing.
 
 `LiquidationCall` is indexed on `(collateralReserveId, debtReserveId, user)` — note the
 **liquidator is not indexed**, so "positions liquidated by X" cannot be served by a topic
@@ -375,8 +375,6 @@ The cost: the Hub asset mirror must be folded from the Hub's own events (`Add`, 
 ingestion logic** — one mis-folded transition silently corrupts every supply valuation for
 that asset. It is also exactly what the reconciliation job is there to catch.
 
-This supersedes §4.4: **Hub events are required after all**, not optional.
-
 Staged fallback if the Hub mirror proves troublesome: ship debt valuation first (§5.1 needs
 only `UpdateAsset` + user shares — far less state), and use `eth_call` at `latest` for supply
 until the mirror is trusted.
@@ -427,9 +425,6 @@ Short answer: **yes — both the HF arithmetic and every price it depends on are
 from logs.** The computation matches the contract exactly (8/8, §7.2), and all 14 price feeds
 are event-derivable (§7.4). No `eth_call` is required to serve health factor.
 
-An earlier draft of this section concluded 12/14 and staged the rest behind an `eth_call`. That
-was based on three unmeasured assumptions; §7.4.1–7.4.2 record what measuring them changed.
-
 ### 7.1 The formula
 
 From [`Spoke._processUserAccountData:706-790`](https://github.com/aave/aave-v4/blob/2524fe4018a42750300e114f2a8c4355df62a878/src/spoke/Spoke.sol#L706-L790), iterating only the reserves flagged in the user's `PositionStatus`:
@@ -477,11 +472,11 @@ compared against `getUserAccountData` for 8 real borrowers, **all calls pinned t
 
 HF values spanned 1.167 → 4883.2, plus a no-debt user returning `type(uint256).max`.
 
-**Pin the block or the check is meaningless.** An unpinned first attempt showed HF agreeing to
-~6 dp but `totalCollateralValue` and `totalDebtValueRay` disagreeing, purely because each
-`eth_call` landed on a different block and `drawnIndex` accrues per second. HF is a
-*per-block* quantity. Any reconciliation job must pin `blockNumber` across all reads, and any
-API response should state the block it was computed at.
+**Every read in a comparison must be pinned to one `blockNumber`.** `drawnIndex` accrues per
+second, so calls landing on different blocks produce a characteristic false signal: HF agrees
+to ~6 dp while `totalCollateralValue` and `totalDebtValueRay` disagree, because the ratio
+partly cancels the skew. HF is a *per-block* quantity. Reconciliation must pin the block across
+all reads, and API responses should state the block they were computed at.
 
 ### 7.3 Inputs — where each comes from
 
@@ -524,8 +519,8 @@ The feeds are *not* uniform. Probing all 14 **[verified]**:
 aggregators rotate across Chainlink "phases" — so in principle a historical backfill must
 follow that migration rather than watching one fixed address.
 
-Measured, rather than assumed: every feed our reserves depend on is on **phase 2**, and in each
-case that phase-2 aggregator was **already live at our genesis block** (`AnswerUpdated` present
+In practice every feed our reserves depend on is on **phase 2**, and in each case that
+phase-2 aggregator was **already live at our genesis block** (`AnswerUpdated` present
 in a 10k window spanning block 24,720,899). **[verified]**
 
 | feed | proxy | phase | aggregator live at genesis |
@@ -544,7 +539,8 @@ before v1.
 
 #### 7.4.2 LST ratios are a daily step function, not continuous drift
 
-I previously wrote that these rates "drift continuously". **That was wrong.**
+These rates do not drift continuously, and treating them as if they did would rule out
+indexing them unnecessarily.
 
 The adapter arithmetic is simple and exact — verified at the wei level: **[verified]**
 
@@ -581,17 +577,15 @@ the same order of magnitude. There is no scaling reason to defer it.
 
 ### 7.5 Recommendation
 
-**Index the price layer from the start.** An earlier draft of this section staged Chainlink
-into a "v2" and served v1 HF from an `eth_call`. Once 7.4.1–7.4.4 were actually measured rather
-than assumed, that staging stopped being justified:
+**Index the price layer from the start.** Nothing about it justifies deferral:
 
 - rotation: zero occurrences across all of v4's history, so no migration logic is needed to ship
 - LST ratios: ~1.2 events/day with the exact ratio in the event payload, not continuous drift
-- volume: ~25–30k logs, the same order as the Spoke stream we already ingest
+- volume: ~25–30k logs, the same order as the Spoke stream already ingested
 
-Deferring it would have bought nothing and left an `eth_call` on the read path — the one thing
-§5 went to some trouble to eliminate. Price feeds are simply another log source, subscribed the
-same way, folded into the same store.
+Deferring it buys nothing and leaves an `eth_call` on the read path — the one thing §5 exists to
+eliminate. Price feeds are simply another log source, subscribed the same way, folded into the
+same store.
 
 That makes **all 14 reserves** event-derivable, subject to the two `[open]` items: the
 cap-adapter variant (7.4.3) and between-rebase ratio invariance (7.4.2). Both are narrow, and
@@ -718,11 +712,8 @@ Two things to design for, visible in this table:
 
 The brief needs ≥1 additional source, exposed alongside indexed data.
 
-Indexing the oracle layer (§7.4) changes what makes a *good* enrichment here. We now get USD
-values from the protocol's own price feeds, so an off-chain price API is no longer needed to
-answer "what is this position worth" — which was the original pitch.
-
-The more interesting use is comparison rather than conversion:
+USD values already come from the protocol's own price feeds (§7.4), so an off-chain price API
+adds nothing as a currency converter. Its value here is comparison, not conversion:
 
 - **Independent market price — DefiLlama** (`coins.llama.fi`): keyless, batch, returns
   `{price, decimals, symbol, confidence, timestamp}` per `ethereum:0x…`. Tested working.
@@ -741,9 +732,9 @@ The more interesting use is comparison rather than conversion:
     pricing without a paid key. **[verified]** DefiLlama is the better default.
 - ENS / address labels — nice-to-have, low value here.
 
-`getUserAccountData` is deliberately *not* listed. Now that HF is computed off-chain (§7.2),
-it is the reconciliation oracle, not an enrichment source — calling it "additional data" would
-be double-counting the protocol as its own second source.
+`getUserAccountData` is deliberately *not* listed. It is the reconciliation oracle (§7.2), not
+an enrichment source — counting it as "additional data" would be counting the protocol as its
+own second source.
 
 Recommendation: **DefiLlama as the headline enrichment, framed as oracle-vs-market deviation**
 rather than USD conversion.
@@ -773,12 +764,6 @@ rather than USD conversion.
 8. Whether `TransferShares` on the Hub can move a *user's* position between spokes. If yes it
    is position-affecting, not just valuation-affecting.
 
-*Resolved during this pass:* off-chain valuation without archive access (§5 — yes, wei-exact);
-whether the interest-rate strategy must be reimplemented (§5.3 — no, `drawnRate` is emitted);
-the unit of `Value` (§7.1 — `1e26` = 1 USD); whether health factor is reproducible
-off-chain (§7.2 — yes, 8/8 exact when block-pinned); and whether the price layer can be indexed
-rather than called (§7.4 — yes, all 14 reserves, with rotation measured at zero and LST ratios
-turning out to be a ~daily step function rather than continuous drift).
 
 ---
 
