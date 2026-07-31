@@ -24,14 +24,6 @@ export const envSchema = z.object({
   INDEXER_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
 
   SHUTDOWN_GRACE_SECONDS: z.coerce.number().int().min(0).max(300).default(10),
-
-  /**
-   * Ingestion reads logs only, so a full node is enough — historical *state*
-   * would need an archive node, historical *logs* do not.
-   * See docs/aave-v4-protocol-analysis.md §8.
-   */
-  RPC_URL: z.url({ protocol: /^https?|wss?$/ }),
-  CHAIN_ID: z.coerce.number().int().positive().default(1),
 });
 
 export type Env = z.infer<typeof envSchema>;

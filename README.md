@@ -16,16 +16,16 @@ the operational shape a Kubernetes deployment expects.
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook.
 
-**Not yet:** database and migrations, the ingestion pipeline itself, the enrichment source, the
-positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
+**Not yet:** database and migrations, the ingestion pipeline, the enrichment source, the positions
+endpoints, Docker Compose, CI. The API serves one stub endpoint; the indexer is a probe-serving shell. See [Not here yet](#not-here-yet).
 
 ## Layout
 
 ```
 .
 ├── apps/
-│   ├── api/                 read API — serves indexed and enriched positions
-│   └── indexer/             worker — ingests Spoke/Hub events and folds them into state
+│   ├── api/                 read API — indexed and enriched positions
+│   └── indexer/             worker — Spoke/Hub event ingestion
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
@@ -33,7 +33,7 @@ positions endpoints, Docker Compose, CI. See [Not here yet](#not-here-yet).
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
-└── vitest.config.mts        aggregates every app into one test run
+└── vitest.config.mts        aggregates every workspace project into one test run
 ```
 
 Both services are NestJS applications. The API serves HTTP; the indexer is a worker that also
@@ -113,10 +113,10 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`).
 
-**Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), `CHAIN_ID` (1), and `RPC_URL`, the one variable
-with no default. Ingestion reads logs only, so a **full node is sufficient**; historical _state_ is
-what would need an archive node, and nothing on the read path calls `eth_call` (analysis §8). Note
-that some public endpoints gate log history behind a paid tier.
+**Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001). Chain and deployment configuration lands with
+the ingestion pipeline. Worth stating now, because it shapes that config: ingestion reads logs only,
+so a **full node is sufficient** — historical _state_ is what would need an archive node, and nothing
+on the read path calls `eth_call` (analysis §8).
 
 See each service's `.env.example` for the annotated list.
 
@@ -183,16 +183,18 @@ LoggingModule.forRootAsync({
 });
 ```
 
-**Adding a dependency check is a provider binding.** Implement `HealthIndicator` from
-`@aave-v4-positions/platform` and bind it to the `HEALTH_INDICATORS` token; readiness picks it up in
-both services. The database check will be the first real one.
+**Adding a dependency check is one line.** Implement `HealthIndicator` and register it; each is
+resolved through DI, so an indicator can inject a connection or a client, and readiness aggregates
+the results:
 
-**Adding a data source is likewise a binding.** `EventSource` in
-[`event-source.ts`](apps/indexer/src/ingestion/event-source.ts) is the seam — one source owns one
-stream (a Spoke's position events, the Hub's asset events, a Chainlink aggregator's feed).
-`IngestionService` starts each on bootstrap and aborts them on shutdown, so SIGTERM stops ingestion at
-a known point rather than mid-batch; a source that throws is contained and logged rather than taking
-the pod down with it. Nothing is registered yet, and the service says so at boot.
+```ts
+HealthModule.forRoot({
+  imports: [DatabaseModule],
+  indicators: [DatabaseHealthIndicator],
+});
+```
+
+The database check will be the first real one.
 
 ## Toolchain notes
 
@@ -229,10 +231,10 @@ it removed, and TS 7 compiles this codebase clean. What holds it back is that `@
 **Vitest with no SWC step.** The usual Nest recipe adds `unplugin-swc` because esbuild does not emit
 decorator metadata, which is exactly what Nest's injector reads. Vite's current transform _does_ emit
 it, so the plugin and `@swc/core` are unnecessary — two fewer dependencies and roughly a 9× faster
-transform. Because that is an implicit guarantee,
-[`toolchain.spec.ts`](apps/api/src/toolchain.spec.ts) asserts `design:paramtypes` is present. If it
-ever stops being emitted, that test fails first and says why, instead of every DI-backed test failing
-at once with an opaque resolution error.
+transform. Worth knowing how that fails, because the symptom does not point at the cause: with
+metadata missing, `@nestjs/swagger` reports `A circular dependency has been detected (property key:
+"uptimeSeconds")` on a DTO that has no cycle, plus a wall of 500s. If that ever appears, check
+`emitDecoratorMetadata` before anything else.
 
 **Strict compiler settings**, including `noUncheckedIndexedAccess` and
 `noPropertyAccessFromIndexSignature`. Financial arithmetic is the whole point of this service; an

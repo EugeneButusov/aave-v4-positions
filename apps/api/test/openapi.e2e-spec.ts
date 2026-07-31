@@ -49,7 +49,11 @@ describe('openapi', () => {
     });
 
     it('exposes exactly the routes we expect', () => {
-      expect(Object.keys(document.paths).toSorted()).toEqual(['/health/live', '/health/ready']);
+      expect(Object.keys(document.paths).toSorted()).toEqual([
+        '/api/hello',
+        '/health/live',
+        '/health/ready',
+      ]);
     });
 
     /**
@@ -75,8 +79,11 @@ describe('openapi', () => {
       expect(missing).toEqual([]);
     });
 
-    it('documents probe paths outside the global prefix, as deployed', () => {
-      expect(Object.keys(document.paths).every((p) => !p.startsWith('/api'))).toBe(true);
+    it('documents paths as deployed — probes outside the prefix, business inside', () => {
+      const paths = Object.keys(document.paths);
+
+      expect(paths.filter((p) => p.startsWith('/health/'))).toHaveLength(2);
+      expect(paths.filter((p) => p.startsWith('/api/'))).toEqual(['/api/hello']);
     });
 
     it('describes both readiness outcomes, not just the happy path', () => {

@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HealthModule, LoggingModule } from '@aave-v4-positions/platform';
 
 import { validateEnv, type Env } from './config/env';
+import { HelloModule } from './hello/hello.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { validateEnv, type Env } from './config/env';
       }),
     }),
     HealthModule,
+    HelloModule,
   ],
 })
 export class AppModule {}

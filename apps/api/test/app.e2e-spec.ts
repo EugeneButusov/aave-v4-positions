@@ -2,11 +2,14 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
-import { HealthService } from '@aave-v4-positions/platform';
 
+/**
+ * Covers the api's own surface and how it is mounted. Probe behaviour is tested
+ * where it lives, in @aave-v4-positions/platform.
+ */
 describe('api (e2e)', () => {
   let app: INestApplication<App>;
 
@@ -22,30 +25,18 @@ describe('api (e2e)', () => {
     await app.close();
   });
 
-  it('serves liveness outside the global prefix', async () => {
-    const res = await request(app.getHttpServer()).get('/health/live').expect(200);
-
-    expect(res.body).toMatchObject({ status: 'ok' });
-    expect(res.body.uptimeSeconds).toBeGreaterThanOrEqual(0);
-  });
-
-  it('serves readiness with no dependencies registered yet', async () => {
+  it('serves the stub endpoint under the global prefix', async () => {
     await request(app.getHttpServer())
-      .get('/health/ready')
+      .get('/api/hello')
       .expect(200)
-      .expect({ status: 'ok', checks: [] });
+      .expect({ message: 'aave-v4-positions api' });
   });
 
-  it('answers 503 on readiness once draining begins', async () => {
-    app.get(HealthService).beginShutdown();
-
-    await request(app.getHttpServer())
-      .get('/health/ready')
-      .expect(503)
-      .expect({ status: 'shutting_down', checks: [] });
+  it('does not serve it unprefixed', async () => {
+    await request(app.getHttpServer()).get('/hello').expect(404);
   });
 
-  it('does not expose probes under the prefix', async () => {
-    await request(app.getHttpServer()).get('/api/health/live').expect(404);
+  it('answers 404 for an unknown route rather than hanging', async () => {
+    await request(app.getHttpServer()).get('/api/nope').expect(404);
   });
 });

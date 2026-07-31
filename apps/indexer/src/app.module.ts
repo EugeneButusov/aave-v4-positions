@@ -3,7 +3,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HealthModule, LoggingModule } from '@aave-v4-positions/platform';
 
 import { validateEnv, type Env } from './config/env';
-import { IngestionModule } from './ingestion/ingestion.module';
 
 @Module({
   imports: [
@@ -23,12 +22,9 @@ import { IngestionModule } from './ingestion/ingestion.module';
         service: 'indexer',
         level: config.get('LOG_LEVEL', { infer: true }),
         pretty: config.get('LOG_PRETTY', { infer: true }),
-        // Every line carries the chain, so one stream can hold several.
-        base: { chainId: config.get('CHAIN_ID', { infer: true }) },
       }),
     }),
     HealthModule,
-    IngestionModule,
   ],
 })
 export class AppModule {}
