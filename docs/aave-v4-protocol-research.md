@@ -9,9 +9,9 @@ single configured pair.
 
 Verified against mainnet on **2026-07-31** at block `25652535`. Facts are tagged:
 
-- **[verified]** — read from `aave/aave-v4` source or confirmed by an RPC call made during this research
+- **[verified]** — read from `aave/aave-v4` source, or confirmed by an RPC call or a local
+  Anvil deployment during this research
 - **[docs]** — from official docs/blog, not independently checked
-- **[open]** — needs confirmation before we depend on it
 
 ---
 
@@ -381,6 +381,13 @@ states mainnet never reaches: **[verified]**
 6/6 exact against `getUserSuppliedAssets` / `getUserDebt`. Combined with the 20/20 on mainnet,
 every branch of the §5.1–5.2 formulas is now covered.
 
+Two limits on how far that evidence reaches. Scenario tests prove the formulas at specific
+points, not across the input domain — **property-based fuzzing against `AssetLogic` would be
+the stronger follow-up**, exercising the overflow and rounding edges no hand-built scenario
+thinks to construct. And these branches are validated against a *local* deployment; when
+mainnet premium or deficit first becomes nonzero, the reconciliation job (§9) is what confirms
+the finding still holds in production. That transition has a known signature — see §9.1.
+
 ### 5.5 Resulting design
 
 **Fold logs → shares as the ledger; compute assets on read via the formulas above.**
@@ -671,9 +678,9 @@ Deferring it buys nothing and leaves an `eth_call` on the read path — the one 
 eliminate. Price feeds are simply another log source, subscribed the same way, folded into the
 same store.
 
-That makes **all 14 reserves** event-derivable with no residual `[open]` items in the price
-layer. The one untested edge is the cap clamp itself (§7.4.3): no feed is currently at its cap,
-so the `min` branch has never fired against real data.
+That makes **all 14 reserves** event-derivable. The one untested edge is the cap clamp itself
+(§7.4.3): no feed is currently at its cap, so the `min` branch has never fired against real
+data.
 
 Three properties worth stating in the API contract:
 
@@ -968,39 +975,6 @@ own second source.
 
 Recommendation: **DefiLlama as the headline enrichment, framed as oracle-vs-market deviation**
 rather than USD conversion.
-
----
-
-## 12. Open questions
-
-None blocking. Every question raised during this research has been closed, the last two on a
-local Anvil deployment (§8) because mainnet cannot reach the states involved.
-
-| question | answer |
-|---|---|
-| Unit of `Value` | `1e26` = 1 USD (§7.1) |
-| Off-chain valuation without archive | yes, wei-exact (§5.4) |
-| Must the interest-rate strategy be reimplemented? | no — `drawnRate` is emitted (§5.3) |
-| Is health factor reproducible off-chain? | yes, 8/8 exact when block-pinned (§7.2) |
-| Can the price layer be indexed rather than called? | yes, all 14 feeds (§7.4) |
-| Cap-adapter variant | static `min(price, 1.04)`, 5/5 exact (§7.4.3) |
-| LST ratio between rebases | invariant; `TokenRebased` payload is sufficient (§7.4.2) |
-| Chainlink rotation detection | `phaseId = roundId >> 64` (§7.4.1) |
-| Premium / deficit branches of the supply formula | validated on Anvil, 6/6 exact (§5.4) |
-| Cold fold transitions (`MintFeeShares`/`Sweep`/`Reclaim`) | validated on Anvil, all 10 fields (§5.5) |
-| Does the Hub fold reproduce chain state? | yes, on every transition (§5.5) |
-| Do position managers emit position events? | yes — provenance mirrors; risk is double-counting (§2) |
-| `Reserve.flags` bit order | `PAUSED 0x01`, `FROZEN 0x02`, `BORROWABLE 0x04`, `RECEIVE_SHARES 0x08` (§3) |
-| Can `TransferShares` move a user's position? | no — inter-spoke rebalancing only (§4.4) |
-
-Residual risks worth carrying forward, none of which need answering before building:
-
-- The cap clamp (§7.4.3) has never fired against real data, since no feed is currently at its
-  cap. A depeg is when that branch first matters.
-- Anvil scenarios prove the formulas at specific points, not across the whole input domain.
-  Property-based fuzzing against `AssetLogic` would be the stronger follow-up.
-- Mainnet's premium and deficit state is zero *today*. When it becomes nonzero the
-  reconciliation job (§9) is what should confirm these findings still hold in production.
 
 ---
 
