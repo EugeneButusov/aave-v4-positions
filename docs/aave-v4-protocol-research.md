@@ -1114,7 +1114,48 @@ netWorth      = supplied − debt
 healthFactor  = per spoke, §7.1
 ```
 
-### 12.4 Out of scope
+### 12.4 Distance to liquidation
+
+`healthFactor` is WAD-scaled (`1e18` = 1.00) and `type(uint256).max` with no debt. Serving it
+needs no call — §7.2 reproduces it exactly. It is per-spoke (§12.3), so distance-to-liquidation
+is per-spoke too.
+
+Risk is banded, not binary. Live Main Spoke config plus the hardcoded threshold: **[verified]**
+
+| value | source | meaning |
+|---|---|---|
+| `1.00` | `HEALTH_FACTOR_LIQUIDATION_THRESHOLD = 1e18` — a **constant**, not configurable | below this, liquidatable |
+| `1.24` | `targetHealthFactor` | liquidation restores the position to *here*, not to 1.0 |
+| `0.90` | `healthFactorForMaxBonus` | at or below, the liquidator's bonus is maxed |
+| `9000 bps` | `liquidationBonusFactor` | minimum bonus is 90% of maximum |
+| `105.55%` / `105.00%` | `maxLiquidationBonus` per reserve | WETH, WBTC / USDC, USDT |
+| `$1,000` | `DUST_LIQUIDATION_THRESHOLD = 1000e26` (§7.1 units) | a liquidation may not leave less behind |
+
+The bonus interpolates linearly between the bands — for WETH, 4.99% at HF 1.00 rising to 5.55%
+at HF ≤ 0.90. A position between 1.00 and 1.24 is not at risk, but sits below where a
+liquidation would have left it.
+
+**Report headroom, not just the ratio.** HF is linear in collateral value, so it reaches 1.0
+after a collateral drawdown of `1 − 1/HF`:
+
+| HF | collateral | debt | drawdown to HF 1.0 |
+|---|---|---|---|
+| 1.1346 | $51,946 | $38,001 | **11.9%** |
+| 1.2268 | $76,959 | $49,413 | 18.5% |
+| 2.6118 | $48,495 | $15,112 | 61.7% |
+
+Exact for single-asset collateral; a first-order approximation for mixed baskets, and it
+ignores the debt asset appreciating — which hurts identically if the user borrowed a volatile
+asset against stables.
+
+**A position can be liquidated with no price movement.** `drawnIndex` accrues every second
+(§5.1) and risk premium accrues on top, so HF drifts downward in a completely flat market.
+Recomputing only on `AnswerUpdated` would systematically miss slow-bleed positions — the ones
+nobody is watching. Because `drawnRate` is indexed (§5.3), the interest-only path is
+deterministic: solving for HF = 1.0 with prices held constant yields a *time* to liquidation,
+which is a strictly better alert than a price trigger.
+
+### 12.5 Out of scope
 
 - **Token name and symbol.** Not present in any Aave event. A one-time ERC-20 read per reserve
   (14 calls, immutable, cached forever) or a static token list. Cheap, but it is enrichment,
@@ -1125,7 +1166,7 @@ healthFactor  = per spoke, §7.1
 - Logos, protocol branding, cross-protocol aggregation, and anything else DeBank shows that is
   not Aave state.
 
-### 12.5 What is computed when
+### 12.6 What is computed when
 
 | lifetime | data | refreshed by |
 |---|---|---|
