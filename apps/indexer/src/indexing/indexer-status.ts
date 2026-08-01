@@ -61,6 +61,12 @@ export class IndexerStatus {
     return this.failures;
   }
 
+  // ---------------------------------------------------------------------------
+  // An observation, made part-way through an iteration and answered immediately.
+  // Distinct from the transitions below, which are recorded once the iteration
+  // has an outcome.
+  // ---------------------------------------------------------------------------
+
   /**
    * Records an observed head and returns the value the loop should act on.
    *
@@ -68,6 +74,13 @@ export class IndexerStatus {
    * `fallback` does not reconcile them, so failing over to a lagging node makes
    * the head appear to move backwards — taken at face value that is
    * indistinguishable from a reorg, and it can invert a range.
+   *
+   * Deliberately not folded into {@link progressed}. The head is read on every
+   * iteration, including ones that go on to idle, retry or fail, and the loop
+   * needs the clamped value back before it knows which of those it will be.
+   * Updating it only on progress would freeze the reported head whenever the
+   * loop stopped advancing — exactly when someone is reading it — so a stuck
+   * indexer would understate its own lag.
    */
   observeHead(observed: number): number {
     if (observed < this.head) {
@@ -76,6 +89,10 @@ export class IndexerStatus {
     this.head = Math.max(this.head, observed);
     return this.head;
   }
+
+  // ---------------------------------------------------------------------------
+  // Transitions. One per iteration, recorded from its result.
+  // ---------------------------------------------------------------------------
 
   progressed(cursorAt: number): void {
     this.lastBlock = cursorAt;

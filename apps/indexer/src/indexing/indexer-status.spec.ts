@@ -82,5 +82,20 @@ describe('IndexerStatus', () => {
       expect(status.observeHead(940)).toBe(1_000);
       expect(status.snapshot.head).toBe(1_000);
     });
+
+    it('keeps tracking the head while the loop fails to progress', () => {
+      const status = new IndexerStatus();
+      status.progressed(500);
+      status.observeHead(1_000);
+
+      status.retried('rpc timeout');
+      status.observeHead(1_050);
+
+      // Why the head is observed separately from a transition rather than
+      // folded into progressed(): lag is head - lastBlock, so a stuck indexer
+      // whose head froze at its last success would report a lag that stops
+      // growing exactly when it starts mattering.
+      expect(status.snapshot).toMatchObject({ state: 'retrying', lastBlock: 500, head: 1_050 });
+    });
   });
 });
