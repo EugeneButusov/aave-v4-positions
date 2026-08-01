@@ -7,8 +7,8 @@ export type Hash = `0x${string}`;
 
 /**
  * The only part of a block the framework itself needs: enough to establish
- * ancestry. Processors that need transactions or logs use the raw viem client
- * bound to {@link VIEM_PUBLIC_CLIENT}.
+ * ancestry. Nothing here describes transactions or logs — that is a processor's
+ * business, and the port stays narrow until one actually needs it.
  */
 export interface BlockHeader {
   readonly number: number;
@@ -39,9 +39,14 @@ export interface ChainClient {
 export const CHAIN_CLIENT = Symbol('CHAIN_CLIENT');
 
 /**
- * The underlying viem `PublicClient`, exported so processors can reach
- * `getLogs` and friends. {@link ChainClient} is shaped for the reorg detector;
- * handing processors the full client is better than widening that port until it
- * is a viem re-implementation.
+ * What a {@link ChainClient} adapter needs to reach a chain. Deliberately not
+ * the indexing options: this layer knows about providers and timeouts, not
+ * about cursors, finality or processors.
  */
-export const VIEM_PUBLIC_CLIENT = Symbol('VIEM_PUBLIC_CLIENT');
+export interface ChainClientOptions {
+  /** Tried in order. The first is the preferred provider, not merely one of many. */
+  readonly rpcUrls: readonly string[];
+  readonly rpcTimeoutMs: number;
+}
+
+export const CHAIN_CLIENT_OPTIONS = Symbol('CHAIN_CLIENT_OPTIONS');

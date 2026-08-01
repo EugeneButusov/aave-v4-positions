@@ -1,19 +1,18 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createPublicClient, fallback, http, type PublicClient } from 'viem';
 
-import { VIEM_PUBLIC_CLIENT, type BlockHeader, type ChainClient } from './chain-client';
-
-export interface PublicClientOptions {
-  /** Tried in order. The first is the preferred provider, not merely one of many. */
-  readonly rpcUrls: readonly string[];
-  readonly rpcTimeoutMs: number;
-}
+import {
+  CHAIN_CLIENT_OPTIONS,
+  type BlockHeader,
+  type ChainClient,
+  type ChainClientOptions,
+} from './chain-client';
 
 /**
  * Builds the viem client from the configured provider list.
  *
- * Pure, and does no I/O — neither `createPublicClient` nor `http()` opens a
- * connection. That is what lets this run inside a DI factory without making
+ * Does no I/O — neither `createPublicClient` nor `http()` opens a connection.
+ * That is what lets the adapter be constructed during DI without making
  * application boot depend on an RPC node being reachable: a pod comes up and
  * reports not-ready, rather than crash-looping while the provider is down.
  *
@@ -41,7 +40,7 @@ export interface PublicClientOptions {
  * the *expected* value — which is what {@link ViemChainClient.getChainId} is
  * checked against at runtime.
  */
-export function buildPublicClient(options: PublicClientOptions): PublicClient {
+function buildPublicClient(options: ChainClientOptions): PublicClient {
   return createPublicClient({
     transport: fallback(
       options.rpcUrls.map((url) => http(url, { timeout: options.rpcTimeoutMs })),
@@ -53,12 +52,22 @@ export function buildPublicClient(options: PublicClientOptions): PublicClient {
 /**
  * Adapts viem to the {@link ChainClient} port.
  *
- * This is the only file in the app that sees viem's `bigint` block numbers; the
- * conversion to `number` stops here so nothing downstream has to think about it.
+ * The client is built from configuration here rather than injected: it is an
+ * implementation detail of this adapter, and threading it through DI would make
+ * the choice of RPC library part of the module's wiring. Everything outside this
+ * file talks to the port.
+ *
+ * This is also the only file in the app that sees viem's `bigint` block numbers;
+ * the conversion to `number` stops here so nothing downstream has to think about
+ * it.
  */
 @Injectable()
 export class ViemChainClient implements ChainClient {
-  constructor(@Inject(VIEM_PUBLIC_CLIENT) private readonly client: PublicClient) {}
+  private readonly client: PublicClient;
+
+  constructor(@Inject(CHAIN_CLIENT_OPTIONS) options: ChainClientOptions) {
+    this.client = buildPublicClient(options);
+  }
 
   getChainId(): Promise<number> {
     return this.client.getChainId();

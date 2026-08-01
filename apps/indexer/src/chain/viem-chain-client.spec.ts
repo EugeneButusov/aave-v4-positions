@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ViemChainClient, buildPublicClient } from './viem-chain-client';
+import { ViemChainClient } from './viem-chain-client';
 
 interface RpcCall {
   readonly url: string;
@@ -45,24 +45,8 @@ const PRIMARY = 'https://primary.invalid';
 const SECONDARY = 'https://secondary.invalid';
 
 function build(urls: string[] = [PRIMARY]): ViemChainClient {
-  return new ViemChainClient(buildPublicClient({ rpcUrls: urls, rpcTimeoutMs: 1_000 }));
+  return new ViemChainClient({ rpcUrls: urls, rpcTimeoutMs: 1_000 });
 }
-
-describe('buildPublicClient', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it('performs no I/O when constructed', () => {
-    const calls = stubRpc(() => ok('0x1'));
-
-    buildPublicClient({ rpcUrls: [PRIMARY, SECONDARY], rpcTimeoutMs: 1_000 });
-
-    // Boot must not depend on a reachable node: the pod comes up and reports
-    // not-ready rather than crash-looping while the provider is down.
-    expect(calls).toEqual([]);
-  });
-});
 
 describe('ViemChainClient', () => {
   beforeEach(() => {
@@ -71,6 +55,16 @@ describe('ViemChainClient', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('builds its client without reaching the network', () => {
+    const calls = stubRpc(() => ok('0x1'));
+
+    build([PRIMARY, SECONDARY]);
+
+    // Boot must not depend on a reachable node: the pod comes up and reports
+    // not-ready rather than crash-looping while the provider is down.
+    expect(calls).toEqual([]);
   });
 
   it('reads the chain id as a number', async () => {

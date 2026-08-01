@@ -6,8 +6,8 @@ import {
   type OptionalFactoryDependency,
 } from '@nestjs/common';
 
-import { CHAIN_CLIENT, VIEM_PUBLIC_CLIENT } from '../chain/chain-client';
-import { ViemChainClient, buildPublicClient } from '../chain/viem-chain-client';
+import { CHAIN_CLIENT, CHAIN_CLIENT_OPTIONS } from '../chain/chain-client';
+import { ViemChainClient } from '../chain/viem-chain-client';
 import { BLOCK_PROCESSORS, type BlockProcessor } from './block-processor';
 import { CURSOR_STORE } from './cursor-store';
 import { IndexerHealthIndicator } from './indexer.health-indicator';
@@ -94,27 +94,17 @@ export class IndexingModule {
         },
         { provide: REORG_DETECTOR, useExisting: options.reorgDetector },
         { provide: CURSOR_STORE, useExisting: options.cursorStore },
-        {
-          // Construction does no I/O, so this cannot make boot depend on a
-          // reachable node. The chain id is checked on the first iteration.
-          provide: VIEM_PUBLIC_CLIENT,
-          useFactory: (resolved: IndexingOptions) => buildPublicClient(resolved),
-          inject: [INDEXING_OPTIONS],
-        },
+        // IndexingOptions already carries the provider list and timeout, so the
+        // chain layer reads the same object under its own narrower token rather
+        // than taking a dependency on the indexing options type.
+        { provide: CHAIN_CLIENT_OPTIONS, useExisting: INDEXING_OPTIONS },
+        // Constructing the adapter does no I/O, so this cannot make boot depend
+        // on a reachable node. The chain id is checked on the first iteration.
         { provide: CHAIN_CLIENT, useClass: ViemChainClient },
         IndexerService,
         IndexerHealthIndicator,
       ],
-      exports: [
-        IndexerService,
-        IndexerHealthIndicator,
-        INDEXING_OPTIONS,
-        CHAIN_CLIENT,
-        // Exported deliberately: the ChainClient port is shaped for the reorg
-        // detector, and processors that need getLogs are better served the real
-        // client than by widening that port until it re-implements viem.
-        VIEM_PUBLIC_CLIENT,
-      ],
+      exports: [IndexerService, IndexerHealthIndicator, INDEXING_OPTIONS, CHAIN_CLIENT],
     };
   }
 }

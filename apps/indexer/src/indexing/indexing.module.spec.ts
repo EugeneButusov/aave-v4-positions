@@ -1,9 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PublicClient } from 'viem';
 
-import { CHAIN_CLIENT, VIEM_PUBLIC_CLIENT, type ChainClient } from '../chain/chain-client';
+import {
+  CHAIN_CLIENT,
+  CHAIN_CLIENT_OPTIONS,
+  type ChainClient,
+  type ChainClientOptions,
+} from '../chain/chain-client';
 import { ViemChainClient } from '../chain/viem-chain-client';
 import {
   BLOCK_PROCESSORS,
@@ -137,7 +141,12 @@ describe('IndexingModule', () => {
     });
 
     expect(moduleRef.get<ChainClient>(CHAIN_CLIENT)).toBeInstanceOf(ViemChainClient);
-    expect(moduleRef.get<PublicClient>(VIEM_PUBLIC_CLIENT)).toBeDefined();
+    // The chain layer sees the provider list under its own narrow token, not
+    // the whole indexing options type.
+    expect(moduleRef.get<ChainClientOptions>(CHAIN_CLIENT_OPTIONS).rpcUrls).toEqual([
+      'https://a.example.com',
+      'https://b.example.com',
+    ]);
   });
 
   it('reaches no network while building the module', async () => {
