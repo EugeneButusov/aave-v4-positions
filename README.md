@@ -17,13 +17,14 @@ and hands block ranges to injected processors.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
-lefthook, and the [indexing framework](#indexing) — chain client with provider failover, cursor and
+lefthook, the [indexing framework](#indexing) — chain client with provider failover, cursor and
 processor seams, and hash-chain reorg detection over a retained header window, with a detected fork
-re-reported on the next start until it has actually been applied.
+re-reported on the next start until it has actually been applied — and the shared ClickHouse layer:
+client, readiness probe and the [migration runner](#schema-and-migrations).
 
-**Not yet:** database and migrations, event decoding, the enrichment source, the positions
-endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and
-watches for forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
+**Not yet:** any tables to migrate, event decoding, the enrichment source, the positions endpoints,
+Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and watches for
+forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -42,6 +43,7 @@ watches for forks, but its processors are placeholders. See [Not here yet](#not-
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
+│   ├── clickhouse/          the client, its Nest module, a probe, the migration runner
 │   └── ops/                 probes, logging, graceful shutdown — no domain logic
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
@@ -55,14 +57,19 @@ listens, purely so Kubernetes has a probe target — no business endpoints are m
 `packages/ops` holds the operational concerns both services share: probes, structured logging and
 the shutdown sequence — everything an operator needs and nothing a position needs. The name is the
 boundary. It carries no Aave domain knowledge and would work in any Kubernetes-deployed Nest service,
-so the share maths and the database layer become their own packages rather than accumulating here.
-Wrapping `nestjs-pino` there also means no app depends on it directly.
+so the share maths becomes its own package rather than accumulating here. Wrapping `nestjs-pino`
+there also means no app depends on it directly.
 
-`pnpm -r` walks the workspace in topological order, so the package builds before its consumers with
-no extra wiring. Two consumers deliberately read its **source** instead of `dist`: each app's vitest
-config aliases it, so tests can never exercise a stale build. `pnpm typecheck` is the exception — it
-builds the package first and checks against the emitted `.d.ts`, which is what actually verifies the
-surface consumers see.
+`packages/clickhouse` is the database layer on the same terms — the client, its Nest module, a
+readiness probe and the [migration runner](#schema-and-migrations), and nothing that knows what is
+stored in it. Repositories live with whatever owns their tables and inject the client from here, so
+this package never becomes a catalogue of every table in the system.
+
+`pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
+no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config
+aliases the workspace packages, one entry each, so tests can never exercise a stale build.
+`pnpm typecheck` is the exception — it builds the packages first and checks against the emitted
+`.d.ts`, which is what actually verifies the surface consumers see.
 
 ## Prerequisites
 
@@ -221,6 +228,25 @@ lacks a typed success response.
 Zod, so `nestjs-zod` (one schema driving both validation and the OpenAPI document) is the coherent
 option; `class-validator` with `@ApiProperty` is the more conventional one. Worth deciding with the
 first real endpoint rather than now.
+
+## Schema and migrations
+
+**Migrations are `.sql` files**, including the one that creates the ledger they are recorded in — so
+the schema reads as schema: reviewable as a diff, runnable by hand when something needs checking,
+and not something a refactor of the surrounding TypeScript can quietly alter. **One statement per
+file**, because ClickHouse's HTTP interface takes one per request and splitting on `;` means writing
+a SQL parser that has to know about semicolons inside string literals and comments — a parser nobody
+would think to test until it silently truncated a migration. A table and the view over it are
+therefore two files, which also means each is recorded and retried independently.
+
+Each package owns the migrations for the tables it defines, and the application names the
+directories that deploy together. The runner orders by ordinal _across_ directories rather than
+grouping by package, and rejects a set whose `NNN_` ordinals collide, naming both sides. Without
+that last part two packages could each reach for `002` without either author noticing, and the apply
+order would quietly depend on how the application happened to list the directories.
+
+Applying the schema is **its own step, never something a service does at boot** — two replicas
+starting together would race each other through the same DDL.
 
 ## Indexing
 
@@ -506,17 +532,17 @@ commit. Bypass with `LEFTHOOK=0`, or one job with `LEFTHOOK_EXCLUDE=<name>`.
 
 Deliberate, in rough order of what comes next.
 
-- **Database, schema and migrations.** The analysis settles what has to be stored — immutable raw
-  events plus a derived projection, which is also what makes reorg handling a replay rather than a
-  patch (§8, §9). Until then `InMemoryCursorStore` is the only adapter, so **the indexer restarts
-  from `INDEXER_START_BLOCK` every time** rather than resuming. The port is real and its resume
-  behaviour is tested; the adapter is what is missing. That adapter will also need a
-  `withTransaction` seam so a processor's writes and the cursor advance commit together — the gap
-  between them is the one at-least-once window the design cannot close on its own. It should bring a
-  `BlockHeaderStore` adapter with it rather than leaving it to follow: those two are what make an
-  unapplied reorg re-derivable, and a durable cursor over an in-memory window turns every
-  cross-restart fork into `unrecoverable`, which is strictly worse than today, where nothing survives
-  and there is no resume to get wrong.
+- **Tables.** The ClickHouse layer is here; nothing defines a table through it yet. The analysis
+  settles what has to be stored — immutable raw events plus a derived projection, which is also what
+  makes reorg handling a replay rather than a patch (§8, §9). Until then `InMemoryCursorStore` is
+  the only adapter, so **the indexer restarts from `INDEXER_START_BLOCK` every time** rather than
+  resuming. The port is real and its resume behaviour is tested; the adapter is what is missing.
+  That adapter will also need a `withTransaction` seam so a processor's writes and the cursor
+  advance commit together — the gap between them is the one at-least-once window the design cannot
+  close on its own. It should bring a `BlockHeaderStore` adapter with it rather than leaving it to
+  follow: those two are what make an unapplied reorg re-derivable, and a durable cursor over an
+  in-memory window turns every cross-restart fork into `unrecoverable`, which is strictly worse than
+  today, where nothing survives and there is no resume to get wrong.
 - **Event decoding** — the Spoke and Hub processors, and the Hub asset mirror. That mirror is the
   highest-risk component: one mishandled transition silently corrupts every supply valuation for that
   asset, with no error, just wrong numbers.

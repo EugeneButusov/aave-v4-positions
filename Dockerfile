@@ -14,6 +14,7 @@ WORKDIR /repo
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/indexer/package.json ./apps/indexer/
+COPY packages/clickhouse/package.json ./packages/clickhouse/
 COPY packages/ops/package.json ./packages/ops/
 
 # --ignore-scripts skips the `prepare` hook, which installs git hooks: there is
