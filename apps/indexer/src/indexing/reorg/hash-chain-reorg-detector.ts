@@ -82,18 +82,17 @@ export class HashChainReorgDetector implements ReorgDetector {
     // a range and never inspected at all. Vet the higher of the two instead; if
     // it is canonical, everything beneath it is.
     const ahead = top && top.number > cursor.lastBlock ? top : null;
-    const highest = ahead?.number ?? cursor.lastBlock;
-    const ourHash = ahead?.hash ?? cursor.lastHash;
+    const ours = ahead ?? { number: cursor.lastBlock, hash: cursor.lastHash };
 
-    const canonical = await this.chain.getBlockHeader(highest);
+    const canonical = await this.chain.getBlockHeader(ours.number);
 
-    if (canonical.hash !== ourHash) {
+    if (canonical.hash !== ours.hash) {
       // The chain under that block is no longer the chain we folded, which is
       // precisely why the window cannot be rebuilt on this path. Reading
       // headers here would record the branch that won and erase the only
       // evidence of the one that lost, making every fork look one block deep.
       // What was durably retained is all there is to go on.
-      return this.locateFork(retained, highest - 1, highest);
+      return this.locateFork(retained, ours.number - 1, ours.number);
     }
 
     await this.commit(canonical);
