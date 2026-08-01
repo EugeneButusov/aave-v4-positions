@@ -14,9 +14,17 @@ export interface Harness {
 
 export const HEAD = 1_000;
 
-export function harness(finalityDepth = 10, head = HEAD): Harness {
+/**
+ * `store` is a seam so a spec can hand in a window that refuses a write —
+ * `RecordingBlockHeaderStore` — which is the only way to reach the detector's
+ * behaviour when the durable window is unavailable.
+ */
+export function harness(
+  finalityDepth = 10,
+  head = HEAD,
+  store: InMemoryBlockHeaderStore = new InMemoryBlockHeaderStore(),
+): Harness {
   const chain = new FakeChainClient({ head });
-  const store = new InMemoryBlockHeaderStore();
   const detector = new HashChainReorgDetector(
     { chainId: CHAIN_ID, finalityDepth } as IndexingOptions,
     chain,
