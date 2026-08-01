@@ -228,12 +228,9 @@ a processor does with a range. Each of those sits behind a port.
 
 ```ts
 interface BlockProcessor {
+  // both inclusive [from, to]: index this range / discard this range
   onBlockRange(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
-  onReorg(
-    firstInvalidBlock,
-    lastInvalidBlock,
-    signal,
-  ): ProcessorOutcome | Promise<ProcessorOutcome>;
+  onReorg(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
 }
 interface ReorgDetector {
   bootstrap(cursor): Promise<ReorgVerdict>; // fill the window, vet the resume point

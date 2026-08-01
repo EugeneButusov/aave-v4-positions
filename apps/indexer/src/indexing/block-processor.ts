@@ -77,14 +77,13 @@ export interface BlockProcessor {
   ): ProcessorOutcome | Promise<ProcessorOutcome>;
 
   /**
-   * Discard everything derived from blocks `[firstInvalidBlock,
-   * lastInvalidBlock]`, inclusive — they were on a branch that lost. The loop
-   * rewinds its cursor to `firstInvalidBlock - 1` afterwards and re-dispatches
-   * the replacement blocks through {@link onBlockRange}.
+   * Discard everything derived from blocks `[from, to]`, inclusive — they were
+   * on a branch that lost. The loop rewinds its cursor to `from - 1` afterwards
+   * and re-dispatches the replacement blocks through {@link onBlockRange}.
    */
   onReorg(
-    firstInvalidBlock: number,
-    lastInvalidBlock: number,
+    from: number,
+    to: number,
     signal: AbortSignal,
   ): ProcessorOutcome | Promise<ProcessorOutcome>;
 }

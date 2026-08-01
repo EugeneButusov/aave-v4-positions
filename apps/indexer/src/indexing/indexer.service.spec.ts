@@ -170,9 +170,7 @@ describe('IndexerService — dispatch shape (R3)', () => {
 
     await service.runOnce();
 
-    expect(processors[0]?.calls).toEqual([
-      { kind: 'reorg', firstInvalidBlock: 98, lastInvalidBlock: 99, aborted: false },
-    ]);
+    expect(processors[0]?.calls).toEqual([{ kind: 'reorg', from: 98, to: 99, aborted: false }]);
   });
 });
 
@@ -237,9 +235,7 @@ describe('IndexerService — resume (R4)', () => {
 
     // Without this the loop would carry on from 501 onto the branch that lost.
     expect(result).toEqual({ kind: 'progressed', cursorAt: 494 });
-    expect(processors[0]?.calls).toEqual([
-      { kind: 'reorg', firstInvalidBlock: 495, lastInvalidBlock: 500, aborted: false },
-    ]);
+    expect(processors[0]?.calls).toEqual([{ kind: 'reorg', from: 495, to: 500, aborted: false }]);
     expect(store.saved).toEqual([cursorAt(494)]);
   });
 

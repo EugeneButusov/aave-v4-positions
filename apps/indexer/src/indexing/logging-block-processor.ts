@@ -21,8 +21,8 @@ export class LoggingBlockProcessor implements BlockProcessor {
     return ok();
   }
 
-  onReorg(firstInvalidBlock: number, lastInvalidBlock: number): ProcessorOutcome {
-    this.logger.warn(`reorg: discarding blocks ${firstInvalidBlock}..${lastInvalidBlock}`);
+  onReorg(from: number, to: number): ProcessorOutcome {
+    this.logger.warn(`reorg: discarding blocks ${from}..${to}`);
     return ok();
   }
 }

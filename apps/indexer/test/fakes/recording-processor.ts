@@ -1,18 +1,12 @@
 import { ok, type BlockProcessor, type ProcessorOutcome } from '../../src/indexing/block-processor';
 
-export type ProcessorCall =
-  | {
-      readonly kind: 'range';
-      readonly from: number;
-      readonly to: number;
-      readonly aborted: boolean;
-    }
-  | {
-      readonly kind: 'reorg';
-      readonly firstInvalidBlock: number;
-      readonly lastInvalidBlock: number;
-      readonly aborted: boolean;
-    };
+/** Both processor methods take an inclusive `[from, to]`, so one shape covers them. */
+export interface ProcessorCall {
+  readonly kind: 'range' | 'reorg';
+  readonly from: number;
+  readonly to: number;
+  readonly aborted: boolean;
+}
 
 /**
  * Records what it was asked to do and returns scripted outcomes, defaulting to
@@ -51,18 +45,9 @@ export class RecordingProcessor implements BlockProcessor {
     return this.next();
   }
 
-  onReorg(
-    firstInvalidBlock: number,
-    lastInvalidBlock: number,
-    signal: AbortSignal,
-  ): ProcessorOutcome {
-    this.trace.push(`${this.name}.onReorg(${firstInvalidBlock},${lastInvalidBlock})`);
-    this.calls.push({
-      kind: 'reorg',
-      firstInvalidBlock,
-      lastInvalidBlock,
-      aborted: signal.aborted,
-    });
+  onReorg(from: number, to: number, signal: AbortSignal): ProcessorOutcome {
+    this.trace.push(`${this.name}.onReorg(${from},${to})`);
+    this.calls.push({ kind: 'reorg', from, to, aborted: signal.aborted });
     return this.next();
   }
 
