@@ -275,11 +275,18 @@ fork turns out to be deep. The window is `FINALITY_DEPTH + 1` headers deep, and 
 not slack: the deepest fork the loop can hand over begins at `safeHead + 1`, so placing it means
 matching its parent at exactly `safeHead`.
 
-Because the loop commits only the top header of each dispatched range, the window is **sparse**
-below the tip. The walk therefore looks for the highest retained header the chain still agrees with
-rather than insisting on an unbroken parent-hash chain. Where that lands on the far side of a gap,
-blocks that were never inspected are discarded along with the ones that were — the loop
-re-dispatches them and the fold reproduces the same state, so the cost is time, not correctness.
+**The window is one contiguous run, enforced rather than assumed.** A walk over a set with holes in
+it is not a parent-hash chain; it is spot checks joined by an assumption. The assumption does hold —
+a chain is ancestor-closed, so a header that still matches proves its ancestors do — but leaning on
+it makes a hole indistinguishable from a healthy window, and the walk then rewinds past blocks it
+can say nothing about. So `commit` restarts the window whenever a header does not join the retained
+run, and the walk stops dead at a discontinuity instead of stepping over it.
+
+That falls out of how the loop dispatches. While catching up it commits only the top header of each
+range, and each of those jumps, so the window collapses to that single anchor — which is exactly
+what the first inspected block is checked against, and all a settled range can honestly supply.
+From there it grows one block at a time up to `FINALITY_DEPTH + 1`. A hole can therefore only come
+from a store that lost rows, and it is reported as corruption rather than absorbed.
 
 **Resume is a detector question too.** On start the loop loads the cursor and hands it to
 `bootstrap()`, which asks the chain for the header at that height and compares it against
@@ -305,8 +312,11 @@ and reorg detection all work. `LoggingBlockProcessor` only logs, so nothing is d
 yet, and the loop's own failure paths are exercised by tests through scripted fakes rather than by
 the running service.
 
-Three limits are worth stating plainly:
+Four limits are worth stating plainly:
 
+- **The window refills one block at a time after a backfill**, so for the first `FINALITY_DEPTH`
+  blocks at the tip it can bound a fork only as deep as it has grown. Deeper than that is reported,
+  not repaired — the alternative is rewinding across blocks whose hashes were never recorded.
 - **A fork reaching at or below the safe head is reported, not repaired.** Those blocks went out as
   settled ranges and were never hash-inspected, so the detector answers `unrecoverable` rather than
   guessing which of them are wrong. That class of corruption is what reconciliation exists to catch.

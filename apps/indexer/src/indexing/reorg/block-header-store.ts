@@ -32,9 +32,11 @@ export interface BlockHeaderStore {
    * is the caller's to keep: an adapter must not hand out storage a reader
    * could mutate.
    *
-   * The window is **not** contiguous. While catching up, the loop commits only
-   * the top header of each dispatched range, so the retained blocks are sparse
-   * until it reaches the tip.
+   * What comes back should be an unbroken run of block numbers. That is the
+   * detector's invariant rather than this port's to enforce — it only ever
+   * writes headers that keep it — but an adapter that dropped a row in the
+   * middle would break fork detection, so a hole is treated as corruption
+   * rather than absorbed.
    */
   load(chainId: number): Promise<BlockHeader[]>;
 

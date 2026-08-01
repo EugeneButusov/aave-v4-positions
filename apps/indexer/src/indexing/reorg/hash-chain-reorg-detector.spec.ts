@@ -142,19 +142,49 @@ describe('HashChainReorgDetector — inspect', () => {
     expect(fetched(h.chain)).toEqual([103, 102]);
   });
 
-  it('walks past the gap a settled range leaves behind', async () => {
+  it('bounds a fork only as deep as the window it grew after a backfill', async () => {
     const h = harness(128);
-    // What a backfill leaves: two range tops, then contiguous blocks at the tip.
+    // What a backfill leaves: one anchor, then contiguous blocks at the tip.
     await commit(h, 149, 199, 200, 201);
     h.chain.forkAbove(160, 'b');
 
-    // 150..198 were never hash-inspected, so they are discarded along with the
-    // blocks that were. Replaying them costs time; leaving them would be wrong.
+    // 150..198 were dispatched as a settled range and never hash-inspected, so
+    // there is nothing to check them against. Rewinding to 149 anyway would be
+    // safe arithmetic over blocks the detector has no record of — which is the
+    // guess it exists not to make.
     await expect(h.detector.inspect(h.chain.headerAt(202))).resolves.toEqual({
-      type: 'reorg',
-      firstInvalidBlock: 150,
-      lastInvalidBlock: 201,
-      lastValidHash: hashOf('a', 149),
+      type: 'unrecoverable',
+      reason: 'no retained header between 199 and 200 is still canonical',
+    });
+  });
+
+  it('refuses to walk across a hole rather than treating it as a longer reach', async () => {
+    const h = harness(128);
+    await commit(h, ...blocks(197, 201));
+    // Only a store that lost a row can produce this; the detector's own writes
+    // cannot, so the window is holed by reaching past it.
+    await h.store.append(CHAIN_ID, h.chain.headerAt(150), 0);
+    h.chain.forkAbove(160, 'b');
+
+    // 150 would match the chain and the fork really is above it, so stepping
+    // over the hole would give a *safe* answer — and would silently widen the
+    // rewind across 47 blocks the window says nothing about.
+    await expect(h.detector.inspect(h.chain.headerAt(202))).resolves.toEqual({
+      type: 'unrecoverable',
+      reason: 'retained headers are not contiguous: nothing at block 196',
+    });
+  });
+
+  it('stops rather than guessing when the window does not reach the parent block', async () => {
+    const h = harness();
+    await commit(h, ...blocks(100, 104));
+    // A durable window and a durable cursor that drifted apart. The loop cannot
+    // cause this — it never skips ahead — so it is corruption, not a fork.
+    await h.store.truncate(CHAIN_ID, 102);
+
+    await expect(h.detector.inspect(h.chain.headerAt(105))).resolves.toEqual({
+      type: 'unrecoverable',
+      reason: 'nothing retained for block 104, so block 105 has no ancestry to check',
     });
   });
 
@@ -320,6 +350,28 @@ describe('HashChainReorgDetector — retention', () => {
     await commit(h, ...blocks(100, 111));
 
     await expect(retained(h)).resolves.toEqual(blocks(101, 111));
+  });
+
+  it('keeps only the anchor when a settled range jumps the window forward', async () => {
+    const h = harness(128);
+
+    // Every range top during a backfill lands clear of the last one. Keeping
+    // both would leave a hole between them, and a run on the far side of a hole
+    // cannot be walked back through — so the earlier anchor is not evidence of
+    // anything and goes.
+    await commit(h, 149, 199);
+
+    await expect(retained(h)).resolves.toEqual([199]);
+  });
+
+  it('grows contiguously from the anchor once the loop reaches the tip', async () => {
+    const h = harness(128);
+
+    await commit(h, 149, 199, 200, 201, 202);
+
+    // The anchor is what the first inspected block is checked against, and
+    // everything above it arrives one block at a time.
+    await expect(retained(h)).resolves.toEqual([199, 200, 201, 202]);
   });
 
   it('discards what a rewind invalidates, keeping the block rewound onto', async () => {
