@@ -49,14 +49,17 @@ export interface ReorgDetector {
    * held. Reports whether that cursor is still canonical — the process may have
    * been stopped across a fork, and nothing else in the design would notice.
    *
-   * A detector that retains headers must **not** answer this by refilling its
-   * window from the chain, however tempting the symmetry. A window read back
-   * from the chain *is* the canonical chain, so every retained hash would match
-   * and no fork could ever be reported: one call per block, spent to guarantee
-   * a wrong answer. `Cursor.lastHash` is the only record of the branch we
-   * actually followed that survives a restart unaided, so it is the only honest
-   * comparison available here, and anything below it has to come from whatever
-   * the detector durably retained.
+   * `Cursor.lastHash` is the only record of the branch we actually followed
+   * that survives a restart unaided, so it is the only comparison available —
+   * and a sufficient one, since a block hash commits to its whole ancestry.
+   *
+   * A detector that retains headers may rebuild its window here, but only
+   * downwards from a block that comparison has just proven, following
+   * `parentHash` and checking each link. Reading headers by height and trusting
+   * them is the trap: on a resume point that has already been reorged out they
+   * describe the branch that won, and recording them erases the evidence of the
+   * branch that lost — leaving every fork looking one block deep. On that path
+   * there is nothing to do but work with whatever was durably retained.
    */
   bootstrap(cursor: Cursor | null): Promise<ReorgVerdict>;
 

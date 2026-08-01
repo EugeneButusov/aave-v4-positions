@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FakeChainClient, hashOf } from '../../../test/fakes/fake-chain-client';
+import type { BlockHeader, ChainClient } from '../../chain/chain-client';
 import type { Cursor } from '../cursor/cursor-store';
 import { HashChainReorgDetector } from './hash-chain-reorg-detector';
 import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
@@ -24,6 +25,35 @@ function harness(finalityDepth = 10): Harness {
   );
 
   return { detector, chain, store };
+}
+
+/**
+ * A chain that forks partway through a sequence of header reads, which is the
+ * one thing `FakeChainClient` cannot script on its own — its forks apply the
+ * moment they are declared, so every header it then serves is self-consistent.
+ */
+class ForkingChain implements ChainClient {
+  private reads = 0;
+
+  constructor(
+    private readonly inner: FakeChainClient,
+    private readonly afterReads: number,
+    private readonly forkPoint: number,
+  ) {}
+
+  getChainId(): Promise<number> {
+    return this.inner.getChainId();
+  }
+
+  getHeadBlockNumber(): Promise<number> {
+    return this.inner.getHeadBlockNumber();
+  }
+
+  getBlockHeader(blockNumber: number): Promise<BlockHeader> {
+    if (this.reads === this.afterReads) this.inner.forkAbove(this.forkPoint, 'b');
+    this.reads += 1;
+    return this.inner.getBlockHeader(blockNumber);
+  }
 }
 
 /** Commits the chain's header for each block, as the chain reads it right now. */
@@ -251,13 +281,72 @@ describe('HashChainReorgDetector — bootstrap', () => {
     await expect(retained(h)).resolves.toEqual([]);
   });
 
-  it('accepts a cursor the chain still agrees with, in one call and no walk', async () => {
+  it('settles a canonical cursor with one header read and no walk', async () => {
     const h = harness();
 
     await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual({ type: 'continuous' });
-    // A chain is ancestor-closed: a canonical cursor makes everything beneath
-    // it canonical too, so there is nothing to walk.
+    // A hash commits to its whole ancestry, so a matching one at 500 proves 499
+    // and everything below it too. Reading them would answer nothing.
     expect(fetched(h.chain)).toEqual([500]);
+  });
+
+  it('rebuilds the window under a resume point near the tip', async () => {
+    // Head 1000, depth 10, so the safe head is 990 and the cursor is above it.
+    const h = harness(10);
+
+    await h.detector.bootstrap(cursorAt(998));
+
+    // Down to the safe head, which is as deep as a fork can reach — every one
+    // of them reached by following parentHash from a block the cursor proved.
+    await expect(retained(h)).resolves.toEqual(blocks(990, 998));
+  });
+
+  it('places a fork on the very next block after a resume', async () => {
+    const h = harness(10);
+    await h.detector.bootstrap(cursorAt(998));
+
+    h.chain.forkAbove(993, 'b');
+
+    // This is what the refill buys. With only the seed retained, the walk would
+    // have nothing below 998 to compare and would answer unrecoverable — a
+    // restart would blind the indexer for its next ~10 blocks.
+    await expect(h.detector.inspect(h.chain.headerAt(999))).resolves.toEqual({
+      type: 'reorg',
+      firstInvalidBlock: 994,
+      lastInvalidBlock: 998,
+      lastValidHash: hashOf('a', 993),
+    });
+  });
+
+  it('does not rebuild the window when resuming inside the settled range', async () => {
+    const h = harness(10);
+
+    // Cursor at 500 against a head of 1000: mid-backfill, far below the safe
+    // head. The loop is about to dispatch wide ranges and re-anchor the window
+    // on each one, so a refill would be calls spent on soon-discarded headers.
+    await h.detector.bootstrap(cursorAt(500));
+
+    await expect(retained(h)).resolves.toEqual([500]);
+    expect(fetched(h.chain)).toEqual([500]);
+  });
+
+  it('stops rebuilding where the chain moved underneath it', async () => {
+    const chain = new FakeChainClient({ head: 1_000 });
+    const store = new InMemoryBlockHeaderStore();
+    const detector = new HashChainReorgDetector(
+      { chainId: CHAIN_ID, finalityDepth: 10 } as IndexingOptions,
+      // Reads run 998, 997, 996, 995 — this forks in time for the last of them,
+      // so 995 comes back on a branch 996 never named as its parent.
+      new ForkingChain(chain, 3, 994),
+      store,
+    );
+
+    await detector.bootstrap(cursorAt(998));
+
+    // 995 now reads as branch b, which is not what 996 names as its parent.
+    // Splicing it in would leave a window that looks like a chain and is not,
+    // and the walk would later stop at a block we never processed.
+    expect((await store.load(CHAIN_ID)).map((entry) => entry.number)).toEqual([996, 997, 998]);
   });
 
   it('seeds the window from the verified cursor header', async () => {

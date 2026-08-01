@@ -15,13 +15,20 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
  * call at all. Only a mismatch opens the wallet, and only for as many calls as
  * the fork is deep.
  *
- * **The window is what we processed, not what the chain says.** That
- * distinction is the whole design. Nothing here is ever refilled from the
- * chain: a window read back from the chain *is* the canonical chain, so every
- * retained hash would match and no fork could ever be detected. The retained
- * headers are the only evidence of the branch we followed, which is why they
- * sit behind {@link BlockHeaderStore} rather than in a field — see that port
- * for what an in-memory window costs across a restart.
+ * **The window is what we processed, not what the chain says.** Every retained
+ * header must be traceable to the branch we folded, never merely to the branch
+ * that happens to be canonical now — which is why they sit behind
+ * {@link BlockHeaderStore} rather than in a field.
+ *
+ * There is exactly one way to read a header from the chain and still satisfy
+ * that: start from a block the cursor proves is ours and follow `parentHash`
+ * down, checking each link. A hash commits to the whole ancestry beneath it, so
+ * every verified step inherits the proof. {@link HashChainReorgDetector.bootstrap}
+ * does that on a clean resume, and it is the difference between rebuilding the
+ * window and inventing it. Reading headers by height and trusting them would
+ * record whatever the chain says today; do that on a resume point that has
+ * already been reorged out and it overwrites the only evidence of the branch
+ * that lost, leaving every fork looking one block deep.
  *
  * **The window is one contiguous run, and that is enforced rather than hoped
  * for.** A backwards walk over a set with holes in it is not a parent-hash
@@ -56,13 +63,16 @@ export class HashChainReorgDetector implements ReorgDetector {
   ) {}
 
   /**
-   * Vets the resume point against the chain, and seeds the window with it.
+   * Vets the resume point against the chain, and rebuilds the window under it.
    *
-   * `cursor.lastHash` is the one record of what we processed that survives a
-   * restart on its own, so it is the only honest comparison available here. If
-   * it still matches the chain, the cursor is canonical — and because a chain
-   * is ancestor-closed, so is everything beneath it, which is why the ordinary
-   * resume needs no walk and exactly one call.
+   * `cursor.lastHash` is the one record of the branch we folded that survives a
+   * restart unaided, so it is the only comparison available here — and it is a
+   * complete one. A block's hash commits to its `parentHash`, which commits to
+   * its parent's, all the way down, so a hash that still matches proves the
+   * entire ancestry beneath it is the one we processed. That is why the
+   * ordinary resume answers with a single header read and no walk: checking
+   * `lastBlock - 1` could not tell us anything the check at `lastBlock` did not
+   * already settle.
    */
   async bootstrap(cursor: Cursor | null): Promise<ReorgVerdict> {
     if (!cursor) {
@@ -73,18 +83,80 @@ export class HashChainReorgDetector implements ReorgDetector {
 
     const canonical = await this.chain.getBlockHeader(cursor.lastBlock);
 
-    if (canonical.hash === cursor.lastHash) {
-      // Seeded from a header just proven equal to what we processed — not a
-      // refill from the chain, which would be worthless (see the class note).
-      // Without it the window would be empty until the first commit, and a fork
-      // landing before then would pass unseen and become the window's anchor.
-      // It also repairs a durable window that disagreed at this height.
-      await this.commit(canonical);
-      return { type: 'continuous' };
+    if (canonical.hash !== cursor.lastHash) {
+      // The resume point is gone, so the chain under it is no longer the chain
+      // we folded — which is precisely why the window cannot be rebuilt on this
+      // path. Reading headers here would record the branch that won and erase
+      // the only evidence of the one that lost, making every fork look one
+      // block deep. What was durably retained is all there is to go on.
+      const retained = await this.headers.load(this.options.chainId);
+      return this.locateFork(retained, cursor.lastBlock - 1, cursor.lastBlock);
     }
 
-    const retained = await this.headers.load(this.options.chainId);
-    return this.locateFork(retained, cursor.lastBlock - 1, cursor.lastBlock);
+    await this.commit(canonical);
+    await this.refillBelow(canonical);
+    return { type: 'continuous' };
+  }
+
+  /**
+   * Rebuilds the window beneath a resume point already proven to be ours, by
+   * following `parentHash` down and checking every link.
+   *
+   * Without this the window would hold one header until the loop had committed
+   * `finalityDepth` more, so a restart would leave the indexer able to place
+   * only the shallowest fork for the next ~25 minutes of mainnet — and unable
+   * to place anything at all on the very next block. Growing back into that
+   * depth organically is the slowest possible way to reach a state the chain
+   * will hand over in one pass.
+   *
+   * Each step is proven, not assumed. The anchor is ours because the cursor
+   * says so; its parent is ours because the anchor names that exact hash as its
+   * parent; and so on down. That link check is the whole difference between
+   * this and reading `finalityDepth` headers by height and hoping — which would
+   * silently absorb a reorg landing mid-read.
+   */
+  private async refillBelow(anchor: BlockHeader): Promise<void> {
+    const safeHead = this.safeHead(await this.chain.getHeadBlockNumber());
+
+    // Resuming inside the settled range, mid-backfill. The loop is about to
+    // dispatch wide ranges and re-anchor the window on each one, and no fork
+    // reaches this far down in the first place, so a refill here would be up to
+    // `finalityDepth` calls spent on headers that the next commit discards.
+    if (anchor.number <= safeHead) return;
+
+    // Down to the deepest block a fork could still invalidate. Bounded by the
+    // retention floor as well, so a lagging provider reporting an old head
+    // cannot turn this into an unbounded walk.
+    const floor = Math.max(0, safeHead, anchor.number - this.options.finalityDepth);
+
+    let child = anchor;
+    while (child.number > floor) {
+      // Sequential by nature rather than by choice: each header names its
+      // parent, and that name is what makes the next read provable.
+      // oxlint-disable-next-line no-await-in-loop
+      const parent = await this.retainParentOf(child, floor);
+      if (!parent) return;
+      child = parent;
+    }
+  }
+
+  /**
+   * Reads and retains `child`'s parent, if the chain still agrees that it is
+   * the parent. Answers `null` when it does not.
+   */
+  private async retainParentOf(child: BlockHeader, floor: number): Promise<BlockHeader | null> {
+    const parent = await this.chain.getBlockHeader(child.number - 1);
+
+    // The chain moved between two reads. Everything retained so far is still
+    // the branch we processed; this header is not. Splicing the two would leave
+    // a window that looks like a chain and is not, and the walk would then find
+    // a "shared" block that we never actually processed and under-report the
+    // fork — the one error mode that loses data. Stop instead: a short window
+    // reports the fork as beyond reach, which is recoverable by a human.
+    if (parent.hash !== child.parentHash) return null;
+
+    await this.headers.append(this.options.chainId, parent, floor);
+    return parent;
   }
 
   /**

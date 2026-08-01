@@ -295,11 +295,22 @@ unaided. A match settles it: a chain is ancestor-closed, so a canonical cursor m
 beneath it canonical too, and the ordinary resume costs exactly one call. A mismatch means the
 process was stopped across a fork, and the retained headers are what locate it.
 
-That is why the window sits behind its own port, `BlockHeaderStore`, rather than in a field: it is
-the one piece of reorg state that has to outlive the process, and `InMemoryBlockHeaderStore` is the
-only adapter today. What `bootstrap` deliberately does **not** do is refill the window from the
-chain. A window read back from the chain _is_ the canonical chain, so every retained hash would
-match and no fork could ever be reported — one call per block, spent to guarantee a wrong answer.
+On the matching path `bootstrap` then **rebuilds the window under that block**, following
+`parentHash` down to the safe head and checking each link. Otherwise the window would hold a single
+header until the loop had committed `FINALITY_DEPTH` more, and a restart would leave the indexer
+unable to place a fork on its very next block — growing back into a depth the chain will hand over
+in one pass is the slowest possible way to get there. It skips the rebuild when the resume point is
+still below the safe head, since a mid-backfill restart is about to re-anchor the window on its
+first settled range anyway.
+
+Every header it retains is proven rather than assumed, and the difference matters. The anchor is
+ours because the cursor says so; its parent is ours because the anchor names that exact hash; and so
+on down. Reading headers by height and trusting them would look identical and be worth nothing —
+which is exactly why the rebuild cannot run on the mismatch path. Once the resume point has been
+reorged out, headers read by height describe the branch that won, and recording them would erase the
+only evidence of the branch that lost, leaving every fork looking one block deep. That path has
+whatever was durably retained and nothing else, which is why the window sits behind its own port,
+`BlockHeaderStore`; `InMemoryBlockHeaderStore` is the only adapter today.
 
 **Provider failover is viem's `fallback`**, tried in list order. Two of its defaults are overridden,
 both verified against the 2.55 source rather than the docs: `fallback`'s own `retryCount` goes to 0
@@ -312,19 +323,19 @@ and reorg detection all work. `LoggingBlockProcessor` only logs, so nothing is d
 yet, and the loop's own failure paths are exercised by tests through scripted fakes rather than by
 the running service.
 
-Four limits are worth stating plainly:
+Three limits are worth stating plainly:
 
-- **The window refills one block at a time after a backfill**, so for the first `FINALITY_DEPTH`
-  blocks at the tip it can bound a fork only as deep as it has grown. Deeper than that is reported,
-  not repaired — the alternative is rewinding across blocks whose hashes were never recorded.
 - **A fork reaching at or below the safe head is reported, not repaired.** Those blocks went out as
   settled ranges and were never hash-inspected, so the detector answers `unrecoverable` rather than
   guessing which of them are wrong. That class of corruption is what reconciliation exists to catch.
 - **A head that jumps well ahead re-enters wide ranges** with no ancestry check on the block the
   cursor sits at — the boundary moves above it and it becomes settled by arithmetic alone.
-- **A durable cursor paired with an in-memory window would be worse than losing both.** With nothing
-  retained, `bootstrap` holds one hash and has nowhere to walk, so every cross-restart fork ends as
-  `unrecoverable`. The two stores want to land in the same change.
+- **A fork that happens while the process is down cannot be repaired from an in-memory window.**
+  The rebuild above is no help on that path, by construction: the resume point is exactly what has
+  been reorged out, so the chain can no longer say what we processed. `bootstrap` holds one hash,
+  finds nothing retained to walk, and answers `unrecoverable`. It costs nothing today — the cursor
+  is in memory too, so there is no resume to get wrong — but it is the reason a durable cursor store
+  wants a durable `BlockHeaderStore` in the same change.
 
 ## Operational shape
 

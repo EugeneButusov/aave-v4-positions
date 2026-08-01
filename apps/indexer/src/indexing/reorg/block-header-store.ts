@@ -12,11 +12,13 @@ import type { BlockHeader } from '../../chain/chain-client';
  * adapter therefore makes cross-restart recovery impossible by construction;
  * that is a property of the adapter, not of the detector.
  *
- * Refilling the window from the chain instead is not an option, and it is worth
- * saying why, because it looks like one. A window read back from the chain *is*
- * the canonical chain, so every retained hash would match and no fork could
- * ever be detected. It would cost one RPC call per block to guarantee a wrong
- * answer.
+ * The detector can rebuild the window from the chain when — and only when — the
+ * cursor still matches, by following `parentHash` down from that proven block
+ * and checking every link. What it cannot do is rebuild it on the path that
+ * needs it most: once the resume point has been reorged out, headers read by
+ * height describe the branch that won, and recording those would erase the
+ * evidence of the branch that lost. So a durable window is what turns a
+ * cross-restart fork from unplaceable into repairable.
  *
  * Retention is the caller's policy: the floor arrives with each
  * {@link BlockHeaderStore.append}, so this layer holds no notion of finality —
