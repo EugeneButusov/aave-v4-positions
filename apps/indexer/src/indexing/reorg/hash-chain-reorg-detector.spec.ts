@@ -249,6 +249,23 @@ describe('HashChainReorgDetector — inspect', () => {
     });
   });
 
+  it('catches a swap at a height it committed but never cursored', async () => {
+    const h = harness();
+    await commit(h, ...blocks(495, 500));
+    // Only block 500 is replaced, so 499 — and therefore 500's parent link —
+    // still checks out. The cursor never reached 500, so the loop replays it.
+    h.chain.forkAbove(499, 'b');
+
+    // Waving this through would fold the replacement on top of a block whose
+    // events nothing ever told the processors to discard.
+    await expect(h.detector.inspect(h.chain.headerAt(500))).resolves.toEqual({
+      type: 'reorg',
+      firstInvalidBlock: 500,
+      lastInvalidBlock: 500,
+      lastValidHash: hashOf('a', 499),
+    });
+  });
+
   it('tolerates re-inspecting a block it has already committed', async () => {
     const h = harness();
     await commit(h, 100, 101);
@@ -499,6 +516,23 @@ describe('HashChainReorgDetector — an owed reorg survives the process', () => 
     // The cursor is the single durable commit point: once it names 496, the
     // unwinding is done and the loop may go forward.
     await expect(h.detector.bootstrap(cursorAt(496))).resolves.toEqual({ type: 'continuous' });
+  });
+
+  it('vets the block it committed, not just the one the cursor names', async () => {
+    const h = harness();
+    await commit(h, ...blocks(495, 500));
+    // The cursor save for 500 was the write that failed, so it still names 499.
+    // Then only 500 is replaced, leaving 499 canonical.
+    h.chain.forkAbove(499, 'b');
+
+    // Checking the cursor alone would answer continuous here — 499 is fine —
+    // and 500's events would stay folded under its replacement.
+    await expect(h.detector.bootstrap(cursorAt(499))).resolves.toEqual({
+      type: 'reorg',
+      firstInvalidBlock: 500,
+      lastInvalidBlock: 500,
+      lastValidHash: hashOf('a', 499),
+    });
   });
 
   it('cannot tell an unapplied fork from one that happened while it was down', async () => {

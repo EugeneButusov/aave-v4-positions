@@ -65,16 +65,29 @@ export class HashChainReorgDetector implements ReorgDetector {
       return { type: 'continuous' };
     }
 
-    const canonical = await this.chain.getBlockHeader(cursor.lastBlock);
+    const retained = await this.retainedWindow();
+    const top = retained.at(-1);
 
-    if (canonical.hash !== cursor.lastHash) {
-      // The resume point is gone, so the chain under it is no longer the chain
-      // we folded — which is precisely why the window cannot be rebuilt on this
-      // path. Reading headers here would record the branch that won and erase
-      // the only evidence of the one that lost, making every fork look one
-      // block deep. What was durably retained is all there is to go on.
-      const retained = await this.retainedWindow();
-      return this.locateFork(retained, cursor.lastBlock - 1, cursor.lastBlock);
+    // The cursor is the durable commit point, but it is not always the highest
+    // block the processors have folded. `commit` runs before the cursor is
+    // saved, so a rejected save leaves the window one ahead — and those events
+    // are already in the projection. Vetting only the cursor would call that
+    // block's replacement continuous and fold it on top of a branch nothing
+    // ever discarded. Vet the higher of the two instead; if it is canonical,
+    // everything beneath it is.
+    const ahead = top && top.number > cursor.lastBlock ? top : null;
+    const highest = ahead?.number ?? cursor.lastBlock;
+    const ourHash = ahead?.hash ?? cursor.lastHash;
+
+    const canonical = await this.chain.getBlockHeader(highest);
+
+    if (canonical.hash !== ourHash) {
+      // The chain under that block is no longer the chain we folded, which is
+      // precisely why the window cannot be rebuilt on this path. Reading
+      // headers here would record the branch that won and erase the only
+      // evidence of the one that lost, making every fork look one block deep.
+      // What was durably retained is all there is to go on.
+      return this.locateFork(retained, highest - 1, highest);
     }
 
     await this.commit(canonical);
@@ -182,6 +195,16 @@ export class HashChainReorgDetector implements ReorgDetector {
     // with no ancestry to contradict. After bootstrap's seeding this is the
     // only way the window can be empty.
     if (retained.length === 0) return { type: 'continuous' };
+
+    // The window can already hold this height: `commit` runs before the cursor
+    // is saved, so a rejected save has the loop replay the block. Replaying the
+    // *same* block is ordinary. A different one means the chain swapped it
+    // under us while its events were already folded — and its parent link can
+    // still check out, so the check below would wave it through.
+    const existing = retained.find((entry) => entry.number === header.number);
+    if (existing && existing.hash !== header.hash) {
+      return this.locateFork(retained, header.number - 1, header.number);
+    }
 
     const parent = retained.find((entry) => entry.number === header.number - 1);
 

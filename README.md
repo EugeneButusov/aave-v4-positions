@@ -322,11 +322,19 @@ same cursor, same window, same answer. There is one condition here, not two. A s
 the window already say, with the added job of never drifting out of step with them.
 
 **Resume is a detector question too.** On start the loop loads the cursor and hands it to
-`bootstrap()`, which asks the chain for the header at that height and compares it against
+`bootstrap()`, which reads the chain's header at that height and compares it against
 `cursor.lastHash` — the one record of the branch we actually followed that survives a restart
-unaided. A match settles it: a chain is ancestor-closed, so a canonical cursor makes everything
+unaided. A match settles it: a chain is ancestor-closed, so a canonical block makes everything
 beneath it canonical too, and the ordinary resume costs exactly one call. A mismatch means the
 process was stopped across a fork, and the retained headers are what locate it.
+
+The block it vets is the **highest one processed, which is not always the cursor**. `commit` runs
+before the cursor is saved, so a rejected save leaves the window one block ahead — and those events
+are already in the projection. If the chain then replaces exactly that block, its parent is
+untouched and the cursor still looks perfectly canonical; checking only the cursor would answer
+continuous and fold the replacement on top of a branch nothing ever discarded. `inspect` guards the
+same height for the same reason, since the loop replays that block whether or not the process
+restarted in between.
 
 On the matching path the resume point becomes the window's anchor and the pull above rebuilds
 beneath it, so the indexer starts full-depth rather than blind. On the mismatch path it cannot, and
