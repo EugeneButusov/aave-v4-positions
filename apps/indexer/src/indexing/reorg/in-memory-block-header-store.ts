@@ -6,18 +6,16 @@ import type { BlockHeaderStore } from './block-header-store';
 /**
  * Keeps the retention window in process memory.
  *
- * It does not survive a restart, which for this port is not merely a missing
- * feature: with an empty window the detector has only `Cursor.lastHash` to go
- * on, so a fork that happened while the process was down is reported as
- * unrecoverable rather than repaired. That costs nothing today, because the
- * cursor is in memory too and there is no resume to protect — but a durable
- * cursor store paired with this adapter would be strictly worse than either
- * alone. The two want to land together.
+ * Not surviving a restart is more than a missing feature here: with an empty
+ * window the detector has only `Cursor.lastHash`, so a fork that happened while
+ * the process was down is reported unrecoverable rather than repaired. It costs
+ * nothing while the cursor is in memory too — but pairing this adapter with a
+ * durable cursor would be worse than either alone, so the two want to land
+ * together.
  *
- * One sorted array per chain rather than a `Map` keyed by block number: the
- * window is read top-down and returned in order, and re-`set`ting an existing
- * key would keep its original insertion position, so a re-committed block after
- * a fork would silently sit in the wrong place.
+ * A sorted array per chain rather than a `Map`: re-`set`ting a key keeps its
+ * original insertion position, so a block re-committed after a fork would
+ * silently sit in the wrong place.
  */
 @Injectable()
 export class InMemoryBlockHeaderStore implements BlockHeaderStore {

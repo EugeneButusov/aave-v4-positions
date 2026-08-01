@@ -9,36 +9,27 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
 /**
  * Detects forks by keeping the last `finalityDepth` headers it committed and
  * checking each new block's `parentHash` against them. The steady state costs
- * nothing: that hash is already in the header the loop fetched, so only a
+ * nothing — that hash is already in the header the loop fetched — so only a
  * mismatch spends a call, and only for as deep as the fork runs.
  *
  * Three properties hold it together, each argued where it is enforced:
  *
- * - **The window is what we processed, not what the chain says.** A header is
- *   retained only where a verified `parentHash` link ties it to a block already
- *   known to be ours ({@link fillRunBelow}); reading headers by height and
- *   trusting them looks identical and proves nothing.
- * - **It is one contiguous hash chain.** {@link commit} restarts the window
- *   when a header does not continue it, and {@link findAncestor} stops at a
- *   hole rather than assume what is inside it.
+ * - **The window is what we processed, not what the chain says**, so a header
+ *   is retained only behind a verified `parentHash` link ({@link fillRunBelow}).
+ * - **It is one contiguous hash chain**: {@link commit} restarts the window when
+ *   a header does not continue it, and {@link findAncestor} stops at a hole.
  * - **A reported fork stays owed until applied**, with nothing written down for
- *   it: an unfinished unwind leaves the cursor and the window disagreeing, and
- *   {@link bootstrap} vets the higher of the two and reports the same range
- *   until it sticks. The loop rewinds only after the cursor is durable, so the
- *   window is the side left holding the abandoned branch.
+ *   it — an unfinished unwind leaves the window holding the abandoned branch
+ *   above the cursor, and {@link bootstrap} re-reports until it sticks.
  *
- * A fork reaching at or below `safeHead` is reported, never repaired: those
- * blocks went out as settled ranges and were never inspected.
+ * A fork at or below `safeHead` is reported, never repaired: those blocks went
+ * out as settled ranges and were never inspected.
  */
 @Injectable()
 export class HashChainReorgDetector implements ReorgDetector {
   private readonly logger = new Logger(HashChainReorgDetector.name);
 
-  /**
-   * The head last shown to {@link safeHead}. The loop hands it over on every
-   * iteration, so anything that needs the boundary mid-iteration already has
-   * it and need not spend a call re-reading it.
-   */
+  /** The head last shown to {@link safeHead}, so nothing re-reads it mid-iteration. */
   private observedHead: number | null = null;
 
   constructor(
@@ -50,14 +41,9 @@ export class HashChainReorgDetector implements ReorgDetector {
   /**
    * Vets the resume point against the chain, and rebuilds the window under it.
    *
-   * `cursor.lastHash` is the one record of the branch we folded that survives a
-   * restart unaided, so it is the only comparison available here — and it is a
-   * complete one. A block's hash commits to its `parentHash`, which commits to
-   * its parent's, all the way down, so a hash that still matches proves the
-   * entire ancestry beneath it is the one we processed. That is why the
-   * ordinary resume answers with a single header read and no walk: checking
-   * `lastBlock - 1` could not tell us anything the check at `lastBlock` did not
-   * already settle.
+   * One header read and no walk in the ordinary case: a block hash commits to
+   * its whole ancestry, so a hash that still matches proves everything beneath
+   * it is the branch we folded.
    */
   async bootstrap(cursor: Cursor | null): Promise<ReorgVerdict> {
     if (!cursor) {
@@ -69,31 +55,20 @@ export class HashChainReorgDetector implements ReorgDetector {
     const retained = await this.retainedWindow();
     const top = retained.at(-1);
 
-    // The window's top is the highest block we processed, and the cursor never
-    // runs ahead of it: both writes that move them run the window first — the
-    // loop commits before saving the cursor, and rewinds only after saving it.
-    // So the two are equal in the steady state and the window is one block or
-    // one run up while a step is part-applied.
-    //
-    // Vetting the cursor instead would answer continuous on both of those gaps.
-    // The fork would surface a beat later on the next `inspect`, except where
-    // the block above has since fallen below the safe head — that goes out as a
-    // range, is never inspected, and the events already folded on the losing
-    // branch would simply stay.
-    //
-    // The cursor is the fallback for an empty window, which is a cold start or
-    // a window that did not outlive the process. Its hash is a complete answer
-    // on its own: a block hash commits to its whole ancestry.
+    // The top is the highest block processed, and the cursor never runs ahead of
+    // it: the loop commits before saving the cursor and rewinds only after, so
+    // the window is equal or one step up. Vetting the cursor instead would call
+    // both gaps continuous, and where the block above has since fallen below the
+    // safe head nothing would ever inspect it. The cursor is the fallback for an
+    // empty window — a cold start, or one that did not outlive the process.
     const ours = top ?? { number: cursor.lastBlock, hash: cursor.lastHash };
 
     const canonical = await this.chain.getBlockHeader(ours.number);
 
     if (canonical.hash !== ours.hash) {
-      // The chain under that block is no longer the chain we folded, which is
-      // precisely why the window cannot be rebuilt on this path. Reading
-      // headers here would record the branch that won and erase the only
-      // evidence of the one that lost, making every fork look one block deep.
-      // What was durably retained is all there is to go on.
+      // No rebuild on this path: headers read by height now describe the branch
+      // that won, and recording them would erase the evidence of the one that
+      // lost, leaving every fork looking one block deep.
       return this.locateFork(retained, ours.number - 1, ours.number);
     }
 
@@ -102,34 +77,28 @@ export class HashChainReorgDetector implements ReorgDetector {
   }
 
   /**
-   * Pulls in the predecessors of a header the window does not already reach, by
-   * following `parentHash` down and checking every link.
+   * Pulls in the predecessors of a header the window does not reach, following
+   * `parentHash` down and checking every link — a resume or a window restart
+   * leaves one header where a full run belongs, and one header can place no
+   * fork beyond the shallowest.
    *
-   * A resume and a window restart both leave a single header where a full run
-   * belongs, and one header can place no fork beyond the shallowest. Each step
-   * down is proven rather than assumed: the anchor is ours — the cursor says
-   * so, or the loop just processed the range it tops — and its parent is ours
-   * because the anchor names that exact hash.
-   *
-   * **Skipped below the boundary**, where a predecessor is settled and could
-   * never be consulted. Not thrift: during a backfill every dispatched range
-   * restarts the window, and a full pull each time would cost more calls than
-   * the backfill itself. Above it this fires once, on the range that lands on
-   * the boundary.
+   * **Skipped below the boundary.** Not thrift: a backfill restarts the window
+   * on every dispatched range, so pulling a full depth each time would cost
+   * more calls than the backfill. Above it this fires once, on the range that
+   * lands on the boundary.
    */
   private async fillRunBelow(anchor: BlockHeader): Promise<void> {
     const safeHead = await this.currentSafeHead();
 
     if (anchor.number < safeHead) return;
 
-    // A full retention window under the anchor. Clamped at zero for a chain
-    // shorter than the finality depth.
+    // Clamped at zero for a chain shorter than the finality depth.
     const floor = Math.max(0, anchor.number - this.options.finalityDepth);
 
     let child = anchor;
     while (child.number > floor) {
-      // Sequential by nature rather than by choice: each header names its
-      // parent, and that name is what makes the next read provable.
+      // Sequential by nature: each header names the parent that makes the next
+      // read provable.
       // oxlint-disable-next-line no-await-in-loop
       const parent = await this.retainParentOf(child, floor);
       if (!parent) return;
@@ -144,51 +113,37 @@ export class HashChainReorgDetector implements ReorgDetector {
   private async retainParentOf(child: BlockHeader, floor: number): Promise<BlockHeader | null> {
     const parent = await this.chain.getBlockHeader(child.number - 1);
 
-    // The chain moved between two reads. Everything retained so far is still
-    // the branch we processed; this header is not. Splicing the two would leave
-    // a window that looks like a chain and is not, and the walk would then find
-    // a "shared" block that we never actually processed and under-report the
-    // fork — the one error mode that loses data. Stop instead: a short window
-    // reports the fork as beyond reach, which is recoverable by a human.
+    // The chain moved between two reads, so this header is not ours. Splicing it
+    // in would leave a window that looks like a chain and is not, and the walk
+    // would later stop at a "shared" block we never processed — under-reporting
+    // the fork, the one error mode that loses data. A short window instead
+    // reports it as beyond reach, which a human can recover.
     if (parent.hash !== child.parentHash) return null;
 
     await this.headers.append(this.options.chainId, parent, floor);
     return parent;
   }
 
-  /**
-   * Clamped at `-1` so a chain shorter than the finality depth — a freshly
-   * started Anvil, say — yields no negative range and simply treats every block
-   * as unsettled.
-   */
+  /** Clamped at `-1`, so a chain shorter than the depth treats everything as unsettled. */
   safeHead(observedHead: number): number {
     this.observedHead = observedHead;
     return Math.max(-1, observedHead - this.options.finalityDepth);
   }
 
   /**
-   * The boundary as of the loop's current iteration.
-   *
-   * The loop asks {@link safeHead} before it dispatches anything, so by the
-   * time a commit lands the answer is already known and no call is spent. Only
-   * `bootstrap`, which runs before the loop has read a head at all, has to ask.
-   * A stale or lagging value costs at worst a few headers pulled that were not
-   * needed, or a window shorter than it could have been — never a wrong verdict.
+   * The boundary as of this iteration. The loop asks {@link safeHead} before
+   * dispatching, so only `bootstrap` — which runs before any head is read — has
+   * to spend a call. A stale value costs a few needless header pulls, never a
+   * wrong verdict.
    */
   private async currentSafeHead(): Promise<number> {
     return this.safeHead(this.observedHead ?? (await this.chain.getHeadBlockNumber()));
   }
 
   /**
-   * The retained window, ascending.
-   *
-   * Sorted here rather than taken on trust from the adapter. Almost everything
-   * below reads the window positionally — the last entry is the top the invalid
-   * range is measured against, the first is the floor a failed walk reports,
-   * and the walk itself must descend — so rows arriving in whatever order a
-   * store happened to hand back would not fail loudly. They would under-report
-   * a reorg, which is the one direction that loses writes. At `finalityDepth +
-   * 1` entries the sort costs nothing worth naming.
+   * The retained window, ascending. Sorted here rather than trusted from the
+   * adapter: everything below reads it positionally, so store-order rows would
+   * under-report a reorg rather than fail loudly.
    */
   private async retainedWindow(): Promise<BlockHeader[]> {
     const retained = await this.headers.load(this.options.chainId);
@@ -198,16 +153,14 @@ export class HashChainReorgDetector implements ReorgDetector {
   async inspect(header: BlockHeader): Promise<ReorgVerdict> {
     const retained = await this.retainedWindow();
 
-    // Nothing retained means nothing processed: a cold start at `startBlock`,
-    // with no ancestry to contradict. After bootstrap's seeding this is the
-    // only way the window can be empty.
+    // Nothing retained means nothing processed: a cold start, with no ancestry
+    // to contradict.
     if (retained.length === 0) return { type: 'continuous' };
 
-    // The window can already hold this height: `commit` runs before the cursor
-    // is saved, so a rejected save has the loop replay the block. Replaying the
-    // *same* block is ordinary. A different one means the chain swapped it
-    // under us while its events were already folded — and its parent link can
-    // still check out, so the check below would wave it through.
+    // A rejected cursor save has the loop replay the block, so the window can
+    // already hold this height. The same block is ordinary; a different one was
+    // swapped under us with its events already folded — and its parent link can
+    // still check out, so the test below would wave it through.
     const existing = retained.find((entry) => entry.number === header.number);
     if (existing && existing.hash !== header.hash) {
       return this.locateFork(retained, header.number - 1, header.number);
@@ -217,10 +170,10 @@ export class HashChainReorgDetector implements ReorgDetector {
 
     if (!parent) {
       // The window is non-empty yet holds nothing for the block below this one.
-      // The loop cannot produce that — it never skips ahead, and `commit`
-      // keeps the run contiguous — so it means the window and the cursor have
-      // drifted apart underneath us. There is no ancestry to check and no way
-      // to bound a fork, and guessing is the one thing this class does not do.
+      // The loop cannot produce this — it never skips ahead and `commit` keeps
+      // the run contiguous — so the window and the cursor have drifted apart.
+      // No ancestry to check, no way to bound a fork, and guessing is the one
+      // thing this class does not do.
       return {
         type: 'unrecoverable',
         reason: `nothing retained for block ${header.number - 1}, so block ${header.number} has no ancestry to check`,
@@ -238,13 +191,11 @@ export class HashChainReorgDetector implements ReorgDetector {
     const parent = retained.find((entry) => entry.number === header.number - 1);
 
     if (parent && parent.hash !== header.parentHash) {
-      // `inspect` makes this check for every block at the tip, but a settled
-      // range is dispatched without inspection — and a one-block one (the
-      // range that truncates on the boundary, or a range narrowed to 1 by a
-      // fussy provider) would otherwise seat a header on a parent nothing ever
-      // compared it against. A break here means the chain changed at or below
-      // the safe head, which the finality assumption says cannot happen and
-      // which nothing else in the design would notice.
+      // `inspect` covers the tip, but a settled range is dispatched without it,
+      // so a one-block range would otherwise seat a header on a parent nothing
+      // compared it against. A break means the chain changed at or below the
+      // safe head — which finality says cannot happen, and nothing else would
+      // notice.
       this.logger.warn(
         `block ${header.number} does not extend retained block ${parent.number}; ` +
           'something changed at or below the safe head, so the window is being restarted',
@@ -254,25 +205,23 @@ export class HashChainReorgDetector implements ReorgDetector {
     const continues = continuesTheRun(retained, header);
 
     if (!continues) {
-      // A header that does not touch the retained run would leave a hole, and a
-      // run on the far side of a hole cannot be walked back through — so it is
-      // not evidence of anything and is dropped rather than kept as something
-      // to trip over later. This is the ordinary case while catching up: every
-      // settled range top lands clear of the last.
+      // A run on the far side of a hole cannot be walked back through, so it is
+      // evidence of nothing and is dropped rather than left to trip over. The
+      // ordinary case while catching up: each settled range top lands clear of
+      // the last.
       await this.headers.truncate(this.options.chainId, -1);
     }
 
-    // The floor is inclusive, so this retains `finalityDepth + 1` headers. The
-    // extra one is load-bearing: the deepest recoverable fork begins at
-    // `safeHead + 1`, and placing it needs its parent at exactly `safeHead`.
+    // Inclusive floor, so `finalityDepth + 1` headers. The extra one is
+    // load-bearing: the deepest recoverable fork starts at `safeHead + 1` and
+    // placing it needs its parent at exactly `safeHead`.
     const floor = Math.max(0, header.number - this.options.finalityDepth);
     await this.headers.append(this.options.chainId, header, floor);
 
-    // Top the window back up whenever it does not reach as deep as a fork could.
-    // That covers the two ways it ends up short — a restart leaves this header
-    // standing alone, and a deep rewind can strip it to a couple of entries —
-    // without asking which happened. In the steady state the run already
-    // reaches the floor, so this is a comparison and no more.
+    // Top up whenever the run falls short of the floor, which covers both ways
+    // it can — a restart leaving this header alone, a deep rewind stripping it
+    // — without asking which. In the steady state it is a comparison and no
+    // more.
     const oldest = continues ? retained[0] : undefined;
     const bottom = oldest ? Math.max(oldest.number, floor) : header.number;
     if (bottom > floor) await this.fillRunBelow(header);
@@ -285,12 +234,10 @@ export class HashChainReorgDetector implements ReorgDetector {
   /**
    * Turns a failed ancestry check into a verdict.
    *
-   * `impliedLastInvalid` is the highest block known to have been processed on
-   * the abandoned branch, and every caller works it out before walking:
-   * {@link bootstrap} takes the higher of the cursor and the window, and
-   * {@link inspect} is looking at the block itself. Widening it here against
-   * the window's top as well would never change the answer, and an unreachable
-   * guard is one a later reader trusts for a case it does not actually cover.
+   * `impliedLastInvalid` is the highest block known to be on the abandoned
+   * branch, and every caller has it before walking. Widening it here against
+   * the window's top would never change the answer, and an unreachable guard is
+   * one a later reader trusts for a case it does not cover.
    */
   private async locateFork(
     retained: readonly BlockHeader[],
@@ -315,20 +262,11 @@ export class HashChainReorgDetector implements ReorgDetector {
    * The highest header retained at or below `from` whose hash the chain still
    * agrees with — the point the two branches share.
    *
-   * Descends one block at a time and stops dead at a discontinuity. Stepping
-   * over one would still land on a header the chain agrees with, and the fork
-   * really would be above it, so the answer would be *safe* — but it would
-   * cover blocks whose hashes were never recorded, quietly widening the rewind
-   * to whatever the hole happened to be. A window with a hole in it is a broken
-   * window; say so rather than paper over it.
-   *
-   * Filling the hole from the chain is not the answer either, tempting as it
-   * looks. By the time this runs the chain has already forked, so a header read
-   * by height is the branch that *won*; writing it in and then comparing it
-   * against itself matches trivially, names that block the common ancestor, and
-   * under-reports the fork — losing exactly the writes above it that should
-   * have been discarded. Whatever the window is missing has to be pulled while
-   * the chain still agrees with us, which is what {@link fillRunBelow} is for.
+   * Stops dead at a discontinuity: stepping over a hole lands somewhere safe but
+   * silently widens the rewind across blocks whose hashes were never recorded.
+   * Filling it from the chain is worse — the chain has already forked, so a
+   * header read by height is the branch that *won*, and it would match itself,
+   * be named the ancestor, and under-report the fork.
    */
   private async findAncestor(
     retained: readonly BlockHeader[],
@@ -367,15 +305,13 @@ type AncestorSearch =
   | { readonly kind: 'hole'; readonly missing: number };
 
 /**
- * Whether writing `header` leaves the window a single unbroken **hash** chain,
- * not merely an unbroken sequence of numbers.
+ * Whether writing `header` leaves the window one unbroken **hash** chain, not
+ * merely an unbroken run of numbers.
  *
- * When the run already holds the block below this one, that is settled by the
- * link between them and nothing else — adjacent numbers over mismatched hashes
- * are two branches stacked on top of each other, which is worse than a hole
- * because it still looks walkable. Only where there is no such neighbour does
- * the number decide, and then only to tell an extension or a re-commit apart
- * from a jump.
+ * Where the block below is already retained, the link between them decides and
+ * nothing else: adjacent numbers over mismatched hashes are two branches
+ * stacked on each other, worse than a hole because they still look walkable.
+ * The number only decides where there is no such neighbour.
  */
 function continuesTheRun(retained: readonly BlockHeader[], header: BlockHeader): boolean {
   const oldest = retained[0];

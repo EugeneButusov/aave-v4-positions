@@ -38,12 +38,9 @@ const indexing = IndexingModule.forRootAsync({
   providers: [
     LoggingBlockProcessor,
     HashChainReorgDetector,
-    // Both stores are in memory, which is the pairing that keeps the detector
-    // honest: neither survives a restart, so there is no resume to get wrong.
-    // They want to become durable together — a cursor that outlives the process
-    // while the window does not is worse than neither doing so, because the
-    // cursor would then name a resume point nothing can vet. See
-    // BlockHeaderStore.
+    // Both in memory, and they want to become durable together: a cursor that
+    // outlives the process while the window does not would name a resume point
+    // nothing can vet. See BlockHeaderStore.
     { provide: BLOCK_HEADER_STORE, useClass: InMemoryBlockHeaderStore },
     InMemoryCursorStore,
   ],

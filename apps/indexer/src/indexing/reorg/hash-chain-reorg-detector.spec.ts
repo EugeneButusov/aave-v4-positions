@@ -473,11 +473,9 @@ describe('HashChainReorgDetector — bootstrap', () => {
 });
 
 /**
- * The loop rewinds only after the cursor is durable, so until a fork has been
- * fully unwound the window still holds the run above a cursor that has already
- * moved. That disagreement is the record that a reorg is owed; nothing else is
- * written down. These cover every point the process can die between reporting a
- * fork and finishing with it.
+ * The loop rewinds only after the cursor is durable, so an unfinished unwind
+ * leaves the window holding the run above a cursor that already moved. That
+ * disagreement is the only record that a reorg is owed.
  */
 describe('HashChainReorgDetector — an owed reorg survives the process', () => {
   it('reports the same fork again when nothing was applied', async () => {
