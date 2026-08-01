@@ -20,6 +20,7 @@ COPY packages/clickhouse/package.json ./packages/clickhouse/
 COPY packages/indexing/package.json ./packages/indexing/
 COPY packages/migrations/package.json ./packages/migrations/
 COPY packages/ops/package.json ./packages/ops/
+COPY packages/postgres/package.json ./packages/postgres/
 
 # --ignore-scripts skips the `prepare` hook, which installs git hooks: there is
 # no git repository here, and the image needs none. Everything prepare would

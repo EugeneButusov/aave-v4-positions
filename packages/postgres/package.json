@@ -1,0 +1,36 @@
+{
+  "name": "@packages/postgres",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "PostgreSQL access shared by every service: the client, its Nest module, a readiness probe, and the migration runner",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/migrations','dist/migrations',{recursive:true})\"",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@packages/migrations": "workspace:*",
+    "@packages/ops": "workspace:*",
+    "@nestjs/common": "catalog:",
+    "postgres": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "catalog:"
+  }
+}

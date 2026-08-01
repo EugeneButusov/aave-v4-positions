@@ -36,6 +36,12 @@ catalog:
   '@types/supertest': ^7.2.1
   nestjs-pino: ^4.6.1
   pino-http: ^11.0.0
+  # postgres.js rather than `pg`: no transitive dependencies against six, and it
+  # ships its own types where `pg` needs a separate `@types/pg`. Its tagged
+  # templates also make parameterisation the default rather than something a
+  # query has to remember — the only string that reaches the server unbound is
+  # the DDL in the migration runner, which is a repo file.
+  postgres: ^3.4.9
   reflect-metadata: ^0.2.2
   rxjs: ^7.8.2
   supertest: ^7.2.2
