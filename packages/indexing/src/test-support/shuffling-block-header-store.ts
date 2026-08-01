@@ -1,5 +1,5 @@
-import type { BlockHeader } from '../../src/chain/chain-client';
-import { InMemoryBlockHeaderStore } from '../../src/indexing/reorg/in-memory-block-header-store';
+import type { BlockHeader } from '../chain/chain-client';
+import { InMemoryBlockHeaderStore } from '../indexing/reorg/in-memory-block-header-store';
 
 /**
  * Hands the window back in the worst order it could. Stands in for an adapter

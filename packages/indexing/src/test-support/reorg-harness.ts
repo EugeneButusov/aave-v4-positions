@@ -1,7 +1,7 @@
-import type { Cursor } from '../../src/indexing/cursor/cursor-store';
-import { HashChainReorgDetector } from '../../src/indexing/reorg/hash-chain-reorg-detector';
-import { InMemoryBlockHeaderStore } from '../../src/indexing/reorg/in-memory-block-header-store';
-import type { IndexingOptions } from '../../src/indexing/indexing.options';
+import type { Cursor } from '../indexing/cursor/cursor-store';
+import { HashChainReorgDetector } from '../indexing/reorg/hash-chain-reorg-detector';
+import { InMemoryBlockHeaderStore } from '../indexing/reorg/in-memory-block-header-store';
+import type { IndexingOptions } from '../indexing/indexing.options';
 import { FakeChainClient, hashOf } from './fake-chain-client';
 
 export const CHAIN_ID = 1;

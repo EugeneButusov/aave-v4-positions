@@ -16,6 +16,7 @@
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {
+    "@packages/indexing": "workspace:*",
     "@packages/ops": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/config": "catalog:",
@@ -23,7 +24,6 @@
     "@nestjs/platform-express": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
-    "viem": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

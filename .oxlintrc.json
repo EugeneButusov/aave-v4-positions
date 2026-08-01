@@ -46,7 +46,12 @@
   },
   "overrides": [
     {
-      "files": ["**/*.spec.ts", "**/*.e2e-spec.ts", "**/test/**/*.ts"],
+      "files": [
+        "**/*.spec.ts",
+        "**/*.e2e-spec.ts",
+        "**/test/**/*.ts",
+        "**/test-support/**/*.ts"
+      ],
       "rules": {
         "typescript/unbound-method": "off",
         "typescript/no-unsafe-assignment": "off",

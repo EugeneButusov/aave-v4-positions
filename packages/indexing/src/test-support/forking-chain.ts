@@ -1,4 +1,4 @@
-import type { BlockHeader, ChainClient } from '../../src/chain/chain-client';
+import type { BlockHeader, ChainClient } from '../chain/chain-client';
 import type { FakeChainClient } from './fake-chain-client';
 
 /**

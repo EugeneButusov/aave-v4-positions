@@ -1,0 +1,42 @@
+export {
+  CHAIN_CLIENT,
+  CHAIN_CLIENT_OPTIONS,
+  type BlockHeader,
+  type ChainClient,
+  type ChainClientOptions,
+  type Hash,
+} from './chain/chain-client';
+export { ViemChainClient } from './chain/viem-chain-client';
+
+export { CURSOR_STORE, type Cursor, type CursorStore } from './indexing/cursor/cursor-store';
+export { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';
+
+export {
+  BLOCK_PROCESSORS,
+  failed,
+  ok,
+  retry,
+  type BlockProcessor,
+  type ProcessorOutcome,
+} from './indexing/processors/block-processor';
+export { LoggingBlockProcessor } from './indexing/processors/logging-block-processor';
+
+export {
+  REORG_DETECTOR,
+  type ReorgDetector,
+  type ReorgVerdict,
+} from './indexing/reorg/reorg-detector';
+export { HashChainReorgDetector } from './indexing/reorg/hash-chain-reorg-detector';
+export { BLOCK_HEADER_STORE, type BlockHeaderStore } from './indexing/reorg/block-header-store';
+export { InMemoryBlockHeaderStore } from './indexing/reorg/in-memory-block-header-store';
+
+export {
+  IndexerStatus,
+  type IndexerSnapshot,
+  type IndexerState,
+} from './indexing/observability/indexer-status';
+export { IndexerHealthIndicator } from './indexing/observability/indexer.health-indicator';
+
+export { IndexerService, type IterationResult } from './indexing/indexer.service';
+export { INDEXING_OPTIONS, type IndexingOptions } from './indexing/indexing.options';
+export { IndexingModule, type IndexingAsyncOptions } from './indexing/indexing.module';

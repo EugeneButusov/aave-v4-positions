@@ -1,4 +1,4 @@
-import type { Cursor, CursorStore } from '../../src/indexing/cursor/cursor-store';
+import type { Cursor, CursorStore } from '../indexing/cursor/cursor-store';
 
 /**
  * An in-memory cursor store that records every write and can be made to fail on

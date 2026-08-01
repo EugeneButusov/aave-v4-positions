@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { FakeChainClient, hashOf } from '../../../test/fakes/fake-chain-client';
-import { ForkingChain } from '../../../test/fakes/forking-chain';
+import { FakeChainClient, hashOf } from '../../test-support/fake-chain-client';
+import { ForkingChain } from '../../test-support/forking-chain';
 import {
   CHAIN_ID,
   blocks,
@@ -9,8 +9,8 @@ import {
   cursorAt,
   harness,
   retained,
-} from '../../../test/fakes/reorg-harness';
-import { ShufflingBlockHeaderStore } from '../../../test/fakes/shuffling-block-header-store';
+} from '../../test-support/reorg-harness';
+import { ShufflingBlockHeaderStore } from '../../test-support/shuffling-block-header-store';
 import { HashChainReorgDetector } from './hash-chain-reorg-detector';
 import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 import type { IndexingOptions } from '../indexing.options';

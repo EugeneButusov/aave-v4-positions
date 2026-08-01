@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { hashOf } from '../../../test/fakes/fake-chain-client';
+import { hashOf } from '../../test-support/fake-chain-client';
 import type { BlockHeader } from '../../chain/chain-client';
 import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 

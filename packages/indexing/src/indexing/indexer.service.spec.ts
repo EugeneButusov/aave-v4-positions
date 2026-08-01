@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { FakeChainClient, hashOf } from '../../test/fakes/fake-chain-client';
-import { RecordingCursorStore } from '../../test/fakes/recording-cursor-store';
-import { RecordingProcessor } from '../../test/fakes/recording-processor';
-import { ScriptedReorgDetector } from '../../test/fakes/scripted-reorg-detector';
+import { FakeChainClient, hashOf } from '../test-support/fake-chain-client';
+import { RecordingCursorStore } from '../test-support/recording-cursor-store';
+import { RecordingProcessor } from '../test-support/recording-processor';
+import { ScriptedReorgDetector } from '../test-support/scripted-reorg-detector';
 import { failed, retry } from './processors/block-processor';
 import type { Cursor } from './cursor/cursor-store';
 import { IndexerService } from './indexer.service';

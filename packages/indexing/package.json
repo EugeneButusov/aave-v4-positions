@@ -1,0 +1,40 @@
+{
+  "name": "@packages/indexing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Chain-agnostic indexing engine: the block loop, and the processor, reorg and cursor seams it drives",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./test-support": {
+      "types": "./dist/test-support/index.d.ts",
+      "default": "./dist/test-support/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@packages/ops": "workspace:*",
+    "@nestjs/common": "catalog:",
+    "@nestjs/core": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:",
+    "viem": "catalog:"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "catalog:"
+  }
+}
