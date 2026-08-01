@@ -8,65 +8,26 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
 
 /**
  * Detects forks by keeping the last `finalityDepth` headers it committed and
- * checking each new block's `parentHash` against them.
+ * checking each new block's `parentHash` against them. The steady state costs
+ * nothing: that hash is already in the header the loop fetched, so only a
+ * mismatch spends a call, and only for as deep as the fork runs.
  *
- * **The steady state costs nothing.** The parent hash is already in the header
- * the loop fetched, so a block that extends the chain is confirmed with no RPC
- * call at all. Only a mismatch opens the wallet, and only for as many calls as
- * the fork is deep.
+ * Three properties hold it together, each argued where it is enforced:
  *
- * **The window is what we processed, not what the chain says.** Every retained
- * header must be traceable to the branch we folded, never merely to the branch
- * that happens to be canonical now — which is why they sit behind
- * {@link BlockHeaderStore} rather than in a field.
+ * - **The window is what we processed, not what the chain says.** A header is
+ *   retained only where a verified `parentHash` link ties it to a block already
+ *   known to be ours ({@link fillRunBelow}); reading headers by height and
+ *   trusting them looks identical and proves nothing.
+ * - **It is one contiguous hash chain.** {@link commit} restarts the window
+ *   when a header does not continue it, and {@link findAncestor} stops at a
+ *   hole rather than assume what is inside it.
+ * - **A reported fork stays owed until applied**, with nothing written down for
+ *   it: the cursor is saved last, so an unfinished unwind leaves it naming a
+ *   block the chain lacks and the window holding the ancestry to place it, and
+ *   {@link bootstrap} reports the same range until it sticks.
  *
- * There is exactly one way to read a header from the chain and still satisfy
- * that: start from a block the cursor proves is ours and follow `parentHash`
- * down, checking each link. A hash commits to the whole ancestry beneath it, so
- * every verified step inherits the proof. {@link HashChainReorgDetector.bootstrap}
- * does that on a clean resume, and it is the difference between rebuilding the
- * window and inventing it. Reading headers by height and trusting them would
- * record whatever the chain says today; do that on a resume point that has
- * already been reorged out and it overwrites the only evidence of the branch
- * that lost, leaving every fork looking one block deep.
- *
- * **The window is one contiguous run, and that is enforced rather than hoped
- * for.** A backwards walk over a set with holes in it is not a parent-hash
- * chain — it is a series of spot checks joined by an assumption. The assumption
- * happens to hold (a chain is ancestor-closed, so a header that still matches
- * proves its ancestors do), but leaning on it means a hole is indistinguishable
- * from a healthy window, and the walk quietly rewinds past blocks it can say
- * nothing about. So instead: {@link commit} restarts the window whenever a
- * header does not join the retained run, and the walk refuses to step over a
- * hole it nonetheless finds.
- *
- * What that means in practice. While catching up, the loop commits only the top
- * header of each dispatched range, and each of those jumps — so the window
- * collapses to that single anchor, which is exactly what the first inspected
- * block needs and all those ranges can honestly supply. From there it grows one
- * block at a time up to `finalityDepth + 1`. A hole can therefore only come
- * from a store that lost rows, and it is reported as such.
- *
- * **A reported fork is owed until it is applied, and the window is the record.**
- * No separate note is kept, because the cursor and the window already say it:
- * the loop saves the cursor last, so until the unwinding has finished the
- * cursor names a block the chain does not have, and the window holds the
- * ancestry to place it. Crash anywhere in between — before the discard was
- * dispatched, after it, or after the rewind — and `bootstrap` walks to the same
- * ancestor and reports the same range. The `Math.max` in
- * {@link HashChainReorgDetector.locateFork} is what closes the last of those:
- * a truncated window would otherwise under-report a range the cursor still
- * remembers the top of. The reorg is re-dispatched, `onReorg` is an idempotent
- * discard, and the loop cannot index anything until it has been applied.
- *
- * A second record would have to be durable to help, and would then be saying
- * what the cursor and the window already say — with the added job of not
- * drifting out of step with them.
- *
- * The standing limit is the design's rather than this class's: a fork reaching
- * at or below `safeHead` is *reported*, never repaired. Those blocks went out
- * as settled ranges and were never inspected, so there is nothing to check them
- * against.
+ * A fork reaching at or below `safeHead` is reported, never repaired: those
+ * blocks went out as settled ranges and were never inspected.
  */
 @Injectable()
 export class HashChainReorgDetector implements ReorgDetector {
@@ -124,25 +85,17 @@ export class HashChainReorgDetector implements ReorgDetector {
    * Pulls in the predecessors of a header the window does not already reach, by
    * following `parentHash` down and checking every link.
    *
-   * Two callers, one need: a resume and a window restart both leave a single
-   * header where a full run belongs, and a window one header deep can place no
-   * fork at all beyond the shallowest. Growing back into `finalityDepth`
-   * organically is the slowest possible route to a state the chain will hand
-   * over in one pass — on mainnet, ~25 minutes of an indexer that can see forks
-   * but not size them.
+   * A resume and a window restart both leave a single header where a full run
+   * belongs, and one header can place no fork beyond the shallowest. Each step
+   * down is proven rather than assumed: the anchor is ours — the cursor says
+   * so, or the loop just processed the range it tops — and its parent is ours
+   * because the anchor names that exact hash.
    *
-   * Each step is proven, not assumed. The anchor is ours — the cursor says so,
-   * or the loop just processed the range it tops. Its parent is ours because
-   * the anchor names that exact hash. And so on down. That link check is the
-   * whole difference between this and reading `finalityDepth` headers by height
-   * and hoping, which would silently absorb a reorg landing mid-read.
-   *
-   * **Skipped entirely below the boundary.** Every predecessor of a settled
-   * block is itself settled, so no fork can reach one and the window would
-   * never consult it. That is not a nicety: during a backfill every dispatched
-   * range restarts the window, and pulling `finalityDepth` headers each time
-   * would cost more calls than the backfill itself. Above the boundary it fires
-   * once, on the range that lands on it.
+   * **Skipped below the boundary**, where a predecessor is settled and could
+   * never be consulted. Not thrift: during a backfill every dispatched range
+   * restarts the window, and a full pull each time would cost more calls than
+   * the backfill itself. Above it this fires once, on the range that lands on
+   * the boundary.
    */
   private async fillRunBelow(anchor: BlockHeader): Promise<void> {
     const safeHead = await this.currentSafeHead();
