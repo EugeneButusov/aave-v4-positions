@@ -8,7 +8,7 @@ import { AppModule } from '../src/app.module';
 
 /**
  * Covers the api's own surface and how it is mounted. Probe behaviour is tested
- * where it lives, in @aave-v4-positions/ops.
+ * where it lives, in @packages/ops.
  */
 describe('api (e2e)', () => {
   let app: INestApplication<App>;

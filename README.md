@@ -54,13 +54,17 @@ forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
 Both services are NestJS applications. The API serves HTTP; the indexer is a worker that also
 listens, purely so Kubernetes has a probe target — no business endpoints are mounted on it.
 
-`packages/ops` holds the operational concerns both services share: probes, structured logging and
+**The scope says whether a package knows about Aave.** Everything under `packages/` that does not
+is scoped `@packages` — the directory is the whole of its identity, because there is nothing about
+this product in it. `@aave-v4-positions` stays on the two apps, which _are_ the product.
+
+`@packages/ops` holds the operational concerns both services share: probes, structured logging and
 the shutdown sequence — everything an operator needs and nothing a position needs. The name is the
 boundary. It carries no Aave domain knowledge and would work in any Kubernetes-deployed Nest service,
 so the share maths becomes its own package rather than accumulating here. Wrapping `nestjs-pino`
 there also means no app depends on it directly.
 
-`packages/clickhouse` is the database layer on the same terms — the client, its Nest module, a
+`@packages/clickhouse` is the database layer on the same terms — the client, its Nest module, a
 readiness probe and the [migration runner](#schema-and-migrations), and nothing that knows what is
 stored in it. Repositories live with whatever owns their tables and inject the client from here, so
 this package never becomes a catalogue of every table in the system.

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { HealthModule, LoggingModule } from '@aave-v4-positions/ops';
+import { HealthModule, LoggingModule } from '@packages/ops';
 
 import { BLOCK_HEADER_STORE } from './indexing/reorg/block-header-store';
 import { validateEnv, type Env } from './config/env';

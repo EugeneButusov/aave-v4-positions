@@ -89,9 +89,6 @@ importers:
 
   apps/api:
     dependencies:
-      '@aave-v4-positions/ops':
-        specifier: workspace:*
-        version: link:../../packages/ops
       '@nestjs/common':
         specifier: 'catalog:'
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -107,6 +104,9 @@ importers:
       '@nestjs/swagger':
         specifier: 'catalog:'
         version: 11.4.6(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)
+      '@packages/ops':
+        specifier: workspace:*
+        version: link:../../packages/ops
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2
@@ -132,9 +132,6 @@ importers:
 
   apps/indexer:
     dependencies:
-      '@aave-v4-positions/ops':
-        specifier: workspace:*
-        version: link:../../packages/ops
       '@nestjs/common':
         specifier: 'catalog:'
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -147,6 +144,9 @@ importers:
       '@nestjs/platform-express':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)
+      '@packages/ops':
+        specifier: workspace:*
+        version: link:../../packages/ops
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2
@@ -175,15 +175,15 @@ importers:
 
   packages/clickhouse:
     dependencies:
-      '@aave-v4-positions/ops':
-        specifier: workspace:*
-        version: link:../ops
       '@clickhouse/client':
         specifier: 'catalog:'
         version: 1.23.1
       '@nestjs/common':
         specifier: 'catalog:'
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@packages/ops':
+        specifier: workspace:*
+        version: link:../ops
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2

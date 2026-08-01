@@ -1,5 +1,5 @@
 {
-  "name": "@aave-v4-positions/clickhouse",
+  "name": "@packages/clickhouse",
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
@@ -23,7 +23,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@aave-v4-positions/ops": "workspace:*",
+    "@packages/ops": "workspace:*",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
     "reflect-metadata": "catalog:",
