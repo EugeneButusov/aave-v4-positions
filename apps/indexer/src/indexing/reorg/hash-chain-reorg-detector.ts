@@ -16,8 +16,8 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
  *
  * - **The window is what we processed, not what the chain says**, so a header
  *   is retained only behind a verified `parentHash` link ({@link fillRunBelow}).
- * - **It is one contiguous hash chain**: {@link commit} restarts the window when
- *   a header does not continue it, and {@link findAncestor} stops at a hole.
+ * - **It is one contiguous hash chain**, because {@link commit} restarts the
+ *   window rather than leave a gap the walk could not cross.
  * - **A reported fork stays owed until applied**, with nothing written down for
  *   it — an unfinished unwind leaves the window holding the abandoned branch
  *   above the cursor, and {@link bootstrap} re-reports until it sticks.
@@ -230,7 +230,7 @@ export class HashChainReorgDetector implements ReorgDetector {
     const search = await this.findAncestor(retained, walkFrom);
 
     if (search.kind !== 'found') {
-      return { type: 'unrecoverable', reason: describeSearch(search, retained, walkFrom) };
+      return { type: 'unrecoverable', reason: describeSearch(retained, walkFrom) };
     }
 
     return {
@@ -246,10 +246,10 @@ export class HashChainReorgDetector implements ReorgDetector {
    * with — where the two branches meet. Descending one at a time keeps the usual
    * one-block reorg to a single call.
    *
-   * Stops dead at a discontinuity: stepping over a hole lands somewhere safe but
-   * silently widens the rewind across blocks whose hashes were never recorded.
-   * Filling it from the chain is worse — by now a header read by height is the
-   * branch that *won*, so it would match itself and be named the ancestor.
+   * Nothing here fills a gap from the chain, and {@link commit} is what makes
+   * sure there is none: by the time this runs the chain has forked, so a header
+   * read by height is the branch that *won* — it would match itself, be named
+   * the ancestor, and under-report the fork.
    *
    * A provider failover mid-walk could answer from the old branch and place the
    * fork too high; viem's `fallback` keeps steady-state traffic on one provider.
@@ -259,14 +259,8 @@ export class HashChainReorgDetector implements ReorgDetector {
     from: number,
   ): Promise<AncestorSearch> {
     const candidates = retained.filter((entry) => entry.number <= from).toReversed();
-    let expected: number | null = null;
 
     for (const candidate of candidates) {
-      if (expected !== null && candidate.number !== expected) {
-        return { kind: 'hole', missing: expected };
-      }
-      expected = candidate.number - 1;
-
       // oxlint-disable-next-line no-await-in-loop
       const canonical = await this.chain.getBlockHeader(candidate.number);
       if (canonical.hash === candidate.hash) return { kind: 'found', ancestor: candidate };
@@ -280,9 +274,7 @@ export class HashChainReorgDetector implements ReorgDetector {
 type AncestorSearch =
   | { readonly kind: 'found'; readonly ancestor: BlockHeader }
   /** Ran out of retained headers before finding one the chain still agrees with. */
-  | { readonly kind: 'exhausted' }
-  /** The retained headers are not contiguous, so the walk could not continue. */
-  | { readonly kind: 'hole'; readonly missing: number };
+  | { readonly kind: 'exhausted' };
 
 /**
  * Whether `header` leaves the window one unbroken **hash** chain, not merely an
@@ -301,16 +293,8 @@ function continuesTheRun(retained: readonly BlockHeader[], header: BlockHeader):
   return header.number >= oldest.number - 1 && header.number <= newest.number + 1;
 }
 
-/** Names which of the three ways to fail actually happened. */
-function describeSearch(
-  search: AncestorSearch,
-  retained: readonly BlockHeader[],
-  walkFrom: number,
-): string {
-  if (search.kind === 'hole') {
-    return `retained headers are not contiguous: nothing at block ${search.missing}`;
-  }
-
+/** Names which way the walk ran out. */
+function describeSearch(retained: readonly BlockHeader[], walkFrom: number): string {
   const oldest = retained[0];
   if (!oldest || oldest.number > walkFrom) {
     return `nothing retained at or below block ${walkFrom} to compare against`;

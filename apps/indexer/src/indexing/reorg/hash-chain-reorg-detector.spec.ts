@@ -201,23 +201,6 @@ describe('HashChainReorgDetector — inspect', () => {
     });
   });
 
-  it('refuses to walk across a hole rather than treating it as a longer reach', async () => {
-    const h = harness(128);
-    await commit(h, ...blocks(197, 201));
-    // Only a store that lost a row can produce this; the detector's own writes
-    // cannot, so the window is holed by reaching past it.
-    await h.store.append(CHAIN_ID, h.chain.headerAt(150), 0);
-    h.chain.forkAbove(160, 'b');
-
-    // 150 would match the chain and the fork really is above it, so stepping
-    // over the hole would give a *safe* answer — and would silently widen the
-    // rewind across 47 blocks the window says nothing about.
-    await expect(h.detector.inspect(h.chain.headerAt(202))).resolves.toEqual({
-      type: 'unrecoverable',
-      reason: 'retained headers are not contiguous: nothing at block 196',
-    });
-  });
-
   it('stops rather than guessing when the window does not reach the parent block', async () => {
     const h = harness();
     await commit(h, ...blocks(100, 104));
@@ -547,6 +530,38 @@ describe('HashChainReorgDetector — an owed reorg survives the process', () => 
 });
 
 describe('HashChainReorgDetector — retention', () => {
+  it('never leaves a gap in the window, whatever the loop does to it', async () => {
+    const h = harness(5);
+    h.detector.safeHead(1_000);
+
+    const contiguous = async (step: string) => {
+      const numbers = await retained(h);
+      const gaps = numbers.filter((n, i) => i > 0 && n - numbers[i - 1]! !== 1);
+      expect(gaps, `${step}: ${numbers.join(',')}`).toEqual([]);
+    };
+
+    // Every shape the loop can put the window in. A gap would be unwalkable,
+    // and the walk has no safe way to fill one — by then a header read by
+    // height is the branch that won, so it would match itself and be named the
+    // common ancestor, under-reporting the fork.
+    await commit(h, 900, 901, 902);
+    await contiguous('extending');
+    await commit(h, 950, 951, 951, 940);
+    await contiguous('jumping forward, re-committing, jumping back');
+    await h.detector.rewindTo(938);
+    await commit(h, 939);
+    await contiguous('committing after a rewind');
+    await h.detector.rewindTo(-1);
+    await commit(h, 996);
+    await contiguous('committing onto an emptied window');
+    await h.detector.bootstrap(cursorAt(996));
+    await contiguous('bootstrapping');
+    h.chain.forkAbove(994, 'b');
+    await h.detector.inspect(h.chain.headerAt(997));
+    await commit(h, 997);
+    await contiguous('committing across a fork');
+  });
+
   it('keeps the oldest header the deepest recoverable fork needs', async () => {
     const h = harness(10);
 
