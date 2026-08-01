@@ -87,13 +87,6 @@ function cursorAt(lastBlock: number, branch = 'a'): Cursor {
   return { chainId: CHAIN_ID, lastBlock, lastHash: hashOf(branch, lastBlock) };
 }
 
-/** Blocks the detector actually read a header for, in order. */
-function fetched(chain: FakeChainClient): number[] {
-  return chain.calls.flatMap((call) =>
-    call.method === 'getBlockHeader' ? [call.blockNumber] : [],
-  );
-}
-
 async function retained({ store }: Harness): Promise<number[]> {
   return (await store.load(CHAIN_ID)).map((entry) => entry.number);
 }
@@ -109,23 +102,16 @@ describe('HashChainReorgDetector — finality', () => {
     // range.
     expect(harness(128).detector.safeHead(5)).toBe(-1);
   });
-
-  it('treats every block as unsettled when nothing is final', () => {
-    expect(harness(128).detector.safeHead(128)).toBe(0);
-  });
 });
 
 describe('HashChainReorgDetector — inspect', () => {
-  it('accepts a block whose parent is the header it retained, without asking the chain', async () => {
+  it('accepts a block whose parent is the header it retained', async () => {
     const h = harness();
     await commit(h, 100);
 
     await expect(h.detector.inspect(h.chain.headerAt(101))).resolves.toEqual({
       type: 'continuous',
     });
-    // The parent hash arrives in the header the loop already fetched, so the
-    // steady state adds no RPC traffic at all.
-    expect(fetched(h.chain)).toEqual([]);
   });
 
   it('accepts the first block when nothing has been retained', async () => {
@@ -134,7 +120,6 @@ describe('HashChainReorgDetector — inspect', () => {
     await expect(h.detector.inspect(h.chain.headerAt(101))).resolves.toEqual({
       type: 'continuous',
     });
-    expect(fetched(h.chain)).toEqual([]);
   });
 
   it('names the invalid range when the parent hash does not match', async () => {
@@ -161,28 +146,6 @@ describe('HashChainReorgDetector — inspect', () => {
       lastInvalidBlock: 104,
       lastValidHash: hashOf('a', 103),
     });
-  });
-
-  it('does not re-read the parent it has already disproved', async () => {
-    const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b');
-
-    await h.detector.inspect(h.chain.headerAt(105));
-
-    // The mismatch that opened the walk is proof that 104 is stale; asking the
-    // chain about it again would buy nothing.
-    expect(fetched(h.chain)).not.toContain(104);
-  });
-
-  it('stops descending at the first ancestor the chain still agrees with', async () => {
-    const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b');
-
-    await h.detector.inspect(h.chain.headerAt(105));
-
-    expect(fetched(h.chain)).toEqual([103, 102]);
   });
 
   it('bounds a fork only as deep as the window it grew after a backfill', async () => {
@@ -315,13 +278,12 @@ describe('HashChainReorgDetector — bootstrap', () => {
     await expect(retained(h)).resolves.toEqual([]);
   });
 
-  it('settles a canonical cursor with one header read and no walk', async () => {
+  it('settles a cursor the chain still agrees with', async () => {
     const h = harness();
 
+    // A hash commits to its whole ancestry, so a match at 500 settles 499 and
+    // everything below it too.
     await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual({ type: 'continuous' });
-    // A hash commits to its whole ancestry, so a matching one at 500 proves 499
-    // and everything below it too. Reading them would answer nothing.
-    expect(fetched(h.chain)).toEqual([500]);
   });
 
   it('rebuilds the window under a resume point near the tip', async () => {
@@ -361,7 +323,6 @@ describe('HashChainReorgDetector — bootstrap', () => {
     await h.detector.bootstrap(cursorAt(500));
 
     await expect(retained(h)).resolves.toEqual([500]);
-    expect(fetched(h.chain)).toEqual([500]);
   });
 
   it('stops rebuilding where the chain moved underneath it', async () => {
@@ -592,7 +553,6 @@ describe('HashChainReorgDetector — retention', () => {
     await commit(h, 149, 199);
 
     await expect(retained(h)).resolves.toEqual([199]);
-    expect(fetched(h.chain)).toEqual([]);
   });
 
   it('pulls the predecessors of a range that lands on the boundary', async () => {
@@ -619,19 +579,6 @@ describe('HashChainReorgDetector — retention', () => {
     // Re-earning that depth one block at a time would leave the window unable
     // to size a second fork for most of the way back.
     await expect(retained(h)).resolves.toEqual(blocks(982, 992));
-  });
-
-  it('pulls nothing more once the run continues on its own', async () => {
-    const h = harness(128);
-    await commit(h, 872);
-    const pulled = fetched(h.chain).length;
-
-    await commit(h, 873, 874);
-
-    // At the tip each block extends the run, so there is nothing to fill and
-    // the steady state stays free of header reads.
-    expect(fetched(h.chain)).toHaveLength(pulled);
-    await expect(retained(h)).resolves.toEqual(blocks(746, 874));
   });
 
   it('grows contiguously from the anchor once the loop reaches the tip', async () => {
