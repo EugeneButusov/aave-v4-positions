@@ -16,6 +16,7 @@ allowBuilds:
 # Single source of truth for dependency versions across every workspace package.
 # Packages reference these with `"<name>": "catalog:"`.
 catalog:
+  '@clickhouse/client': ^1.23.1
   '@nestjs/common': ^11.1.28
   '@nestjs/config': ^4.0.4
   '@nestjs/core': ^11.1.28
