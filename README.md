@@ -17,13 +17,13 @@ and hands block ranges to injected processors.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
-lefthook, and the [indexing framework](#indexing) — chain client with provider failover, cursor,
-reorg and processor seams.
+lefthook, and the [indexing framework](#indexing) — chain client with provider failover, cursor and
+processor seams, and hash-chain reorg detection over a retained header window, with a detected fork
+re-reported on the next start until it has actually been applied.
 
-**Not yet:** database and migrations, event decoding, real reorg detection, the enrichment source,
-the positions endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer walks
-the chain but its processors and reorg detector are placeholders. See
-[Not here yet](#not-here-yet).
+**Not yet:** database and migrations, event decoding, the enrichment source, the positions
+endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and
+watches for forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -36,7 +36,7 @@ the chain but its processors and reorg detector are placeholders. See
 │           ├── chain/       RPC access — the ChainClient port and its viem adapter
 │           └── indexing/    the loop, plus one folder per seam
 │               ├── processors/     what to do with a block range
-│               ├── reorg/          finality, fork detection, resume
+│               ├── reorg/          finality, fork detection, and what outlives the process
 │               ├── cursor/         durable position
 │               └── observability/  state machine and health indicator
 ├── docs/
@@ -171,17 +171,17 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
 
-| variable                     | default    |                                                                    |
-| ---------------------------- | ---------- | ------------------------------------------------------------------ |
-| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration. |
-| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                   |
-| `FINALITY_DEPTH`             | `128`      | Read by the reorg detector, never by the loop.                     |
-| `INDEXER_START_BLOCK`        | `24720899` | Main Spoke genesis; used only when no cursor exists.               |
-| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                             |
-| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                    |
-| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                    |
-| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                  |
-| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                         |
+| variable                     | default    |                                                                                                              |
+| ---------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
+| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration.                                           |
+| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                                                             |
+| `FINALITY_DEPTH`             | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained. |
+| `INDEXER_START_BLOCK`        | `24720899` | Main Spoke genesis; used only when no cursor exists.                                                         |
+| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                                                                       |
+| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                                                              |
+| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                                                              |
+| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                                                            |
+| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                                                                   |
 
 `CHAIN_ID` and `RPC_URLS` deliberately have **no defaults**. A default chain id is precisely the
 failure this validation exists to prevent: an indexer quietly pointed at the wrong chain produces
@@ -237,7 +237,7 @@ interface BlockProcessor {
   onReorg(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
 }
 interface ReorgDetector {
-  bootstrap(cursor): Promise<ReorgVerdict>; // fill the window, vet the resume point
+  bootstrap(cursor): Promise<ReorgVerdict>; // vet the resume point against the chain
   safeHead(observedHead): number; // what is settled
   inspect(header): ReorgVerdict; // continuous | reorg | unrecoverable
   commit(header);
@@ -259,8 +259,10 @@ the depth heuristic for `getBlock({ blockTag: 'finalized' })` later changes one 
 **Processors gate the cursor.** They return `ok` / `retry` / `failed` rather than throwing, and run
 sequentially in registration order, stopping at the first non-`ok`. The cursor advances only when all
 of them succeeded, and it is saved **last** — it is the single durable commit point, so a crash
-anywhere earlier replays the range rather than skipping it. The corollary is that dispatch is
-**at-least-once per processor per range**, and processors must be idempotent. That is not a wart: the
+anywhere earlier replays the range rather than skipping it. Unwinding a fork is the one place
+something follows it, and for the same reason: the detector's rewind discards the headers that are
+the evidence of the abandoned branch, so it waits until the cursor is durable. The corollary is that
+dispatch is **at-least-once per processor per range**, and processors must be idempotent. That is not a wart: the
 analysis already models positions as a fold over an immutable log, so replay is the repair primitive
 (§8, §9.4).
 
@@ -269,9 +271,86 @@ why. Retries are unbounded, because an RPC outage should recover on its own; the
 observability, not control, and `/health/ready` fails once the loop has made no progress for
 `INDEXER_STALL_THRESHOLD_MS`. `failed` is reserved for "more attempts cannot help" and is terminal.
 
+**Detection is free in the steady state.** `inspect` compares the new block's `parentHash` against
+the hash retained for the block below it — both already in hand, so a chain that simply extends
+costs no RPC call at all. Only a mismatch opens a backwards walk, and only for as many calls as the
+fork turns out to be deep. The window is `FINALITY_DEPTH + 1` headers deep, and that extra entry is
+not slack: the deepest fork the loop can hand over begins at `safeHead + 1`, so placing it means
+matching its parent at exactly `safeHead`.
+
+**The window is one contiguous run, enforced rather than assumed.** A walk over a set with holes in
+it is not a parent-hash chain; it is spot checks joined by an assumption. The assumption does hold —
+a chain is ancestor-closed, so a header that still matches proves its ancestors do — but leaning on
+it makes a hole indistinguishable from a healthy window, and the walk then rewinds past blocks it
+can say nothing about. So the run is kept whole at the point it is written rather than guarded at
+the point it is read: `commit` restarts the window whenever a header does not continue it, and a
+restarted window immediately **pulls its predecessors back in**. The walk itself carries no
+gap-handling, because there is no gap to handle.
+
+"Continues it" is a hash question, not a numeric one. Adjacent block numbers over mismatched hashes
+are two branches stacked on each other, which is worse than a hole because it still looks walkable —
+the walk would find a block it thinks is shared, and under-report the fork. `inspect` makes that
+comparison for every block at the tip, but a settled range is dispatched without inspection, so
+`commit` makes it too, for nothing, from data already in hand.
+
+The pull is what keeps a restart from costing depth. While catching up the loop commits only the top
+header of each range, and each of those lands clear of the last, so the window would otherwise
+collapse to a single anchor and have to earn its depth back one block at a time. Instead the
+predecessors are followed down by `parentHash` — each link checked, so every one of them is proven
+rather than read on trust. It is skipped below the boundary, where a predecessor is settled and
+nothing could ever consult it: that is not thrift but necessity, since pulling `FINALITY_DEPTH`
+headers per dispatched range would cost more calls than the backfill itself. In practice it fires
+once, on the range that lands on the boundary, and the window is full from the first inspected block.
+
+A hole is therefore outside the model — nothing the loop does can produce one, and a test drives the
+window through every shape the loop can leave it in to say so. Only a store that lost rows could,
+and defending the walk against that would mean carrying a branch no test can reach.
+
+**A reported fork is owed until it is applied, and the window is what remembers.** A verdict handed
+to the loop lives only as long as the process, so a crash mid-unwind must not lose it. Nothing extra
+is written down for that, because the cursor and the window already say it between them: while an
+unwind is unfinished the two disagree, and the disagreement is the record.
+
+**The rewind is the last step, after the cursor is durable.** A rewind discards the retained headers,
+and those headers are the evidence of the branch being abandoned — throwing them away for a write
+that has not landed yet gets the order backwards. So the gap the loop can die in leaves the cursor
+already correct and the window still holding the run above it, which is strictly more to work with
+than the reverse would leave.
+
+Every point the process can die therefore lands on the same answer. Before the discard was
+dispatched, after it, or after the cursor save — `bootstrap` vets the window's top, walks to the same
+ancestor and reports the same range, the loop re-dispatches, and `onReorg` is an idempotent discard.
+Only once the rewind has also run does the question stop being asked.
+
+The same check covers a fork that happened while the process was down and was never detected at all —
+same cursor, same window, same answer. There is one condition here, not two. A separate record of
+"a reorg is owed" would have to be durable to help, and would then be repeating what the cursor and
+the window already say, with the added job of never drifting out of step with them.
+
 **Resume is a detector question too.** On start the loop loads the cursor and hands it to
-`bootstrap()`, which fills the retention window and reports whether that block is still canonical —
-the process may have been stopped across a fork, and nothing else in the design would notice.
+`bootstrap()`, which reads the chain's header at that height and compares it against
+`cursor.lastHash` — the one record of the branch we actually followed that survives a restart
+unaided. A match settles it: a chain is ancestor-closed, so a canonical block makes everything
+beneath it canonical too, and the ordinary resume costs exactly one call. A mismatch means the
+process was stopped across a fork, and the retained headers are what locate it.
+
+The block it vets is the **window's top, which is not always the cursor** — the cursor is only the
+fallback for an empty window. Two things leave the window ahead: `commit` runs before the cursor is
+saved, so a rejected save leaves it one block up with those events already in the projection, and an
+unwind that saved the cursor but died before rewinding leaves it a whole run up. If the chain then
+replaces exactly that block its parent is untouched, so the cursor still looks perfectly canonical —
+checking it alone would answer continuous and fold the replacement on top of a branch nothing ever
+discarded. `inspect` guards the same height for the same reason, since the loop replays that block
+whether or not the process restarted in between.
+
+On the matching path the resume point becomes the window's anchor and the pull above rebuilds
+beneath it, so the indexer starts full-depth rather than blind. On the mismatch path it cannot, and
+that asymmetry is the point rather than a shortfall. Reading headers by height and trusting them
+looks identical to following verified links and is worth nothing: once the resume point has been
+reorged out, those headers describe the branch that won, and recording them would erase the only
+evidence of the branch that lost — leaving every fork looking one block deep. That path has whatever
+was durably retained and nothing else, which is why the window sits behind its own port,
+`BlockHeaderStore`; `InMemoryBlockHeaderStore` is the only adapter today.
 
 **Provider failover is viem's `fallback`**, tried in list order. Two of its defaults are overridden,
 both verified against the 2.55 source rather than the docs: `fallback`'s own `retryCount` goes to 0
@@ -279,10 +358,24 @@ so a total outage surfaces immediately instead of after four full sweeps of the 
 clamped monotonically in the loop — viem does not reconcile block height between providers, so
 failing over to a lagging node otherwise looks exactly like a reorg.
 
-**What is real and what is not.** The chain client, the loop, the cursor seam and the outcome
-protocol all work. `NoopReorgDetector` answers the finality question but detects nothing, and
-`LoggingBlockProcessor` only logs. The reorg, bootstrap and failure paths are exercised by tests
-through scripted fakes, not by the running service.
+**What is real and what is not.** The chain client, the loop, the cursor seam, the outcome protocol
+and reorg detection all work. `LoggingBlockProcessor` only logs, so nothing is decoded or stored
+yet, and the loop's own failure paths are exercised by tests through scripted fakes rather than by
+the running service.
+
+Three limits are worth stating plainly:
+
+- **A fork reaching at or below the safe head is reported, not repaired.** Those blocks went out as
+  settled ranges and were never hash-inspected, so the detector answers `unrecoverable` rather than
+  guessing which of them are wrong. That class of corruption is what reconciliation exists to catch.
+- **A head that jumps well ahead re-enters wide ranges** with no ancestry check on the block the
+  cursor sits at — the boundary moves above it and it becomes settled by arithmetic alone.
+- **No fork survives a restart with an in-memory window**, whether it was detected first or not.
+  Both cases need the same thing — retained headers to walk — and the rebuild cannot supply them,
+  by construction: the resume point is exactly what was reorged out, so the chain can no longer say
+  what we processed. `bootstrap` holds one hash, finds nothing retained, and answers
+  `unrecoverable`. It costs nothing today, since the cursor is in memory too and there is no resume
+  to get wrong, but it is why the cursor and the window want to become durable in the same change.
 
 ## Operational shape
 
@@ -412,14 +505,11 @@ Deliberate, in rough order of what comes next.
   from `INDEXER_START_BLOCK` every time** rather than resuming. The port is real and its resume
   behaviour is tested; the adapter is what is missing. That adapter will also need a
   `withTransaction` seam so a processor's writes and the cursor advance commit together — the gap
-  between them is the one at-least-once window the design cannot close on its own.
-- **Real reorg detection.** `NoopReorgDetector` never reports a fork, including at bootstrap, so a
-  reorg across a restart passes unnoticed. What is needed is a ring buffer of the last
-  `FINALITY_DEPTH` headers, a parent-hash walk back to the common ancestor, and a `bootstrap` that
-  refills the window from the chain. Note the limitation that will remain: a fork deeper than the
-  retention window is _reported_ (`unrecoverable`) rather than repaired, because the blocks it
-  invalidates were dispatched as settled ranges and never hash-inspected. That class of corruption is
-  what reconciliation exists to catch.
+  between them is the one at-least-once window the design cannot close on its own. It should bring a
+  `BlockHeaderStore` adapter with it rather than leaving it to follow: those two are what make an
+  unapplied reorg re-derivable, and a durable cursor over an in-memory window turns every
+  cross-restart fork into `unrecoverable`, which is strictly worse than today, where nothing survives
+  and there is no resume to get wrong.
 - **Event decoding** — the Spoke and Hub processors, and the Hub asset mirror. That mirror is the
   highest-risk component: one mishandled transition silently corrupts every supply valuation for that
   asset, with no error, just wrong numbers.

@@ -286,9 +286,14 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
 
   /**
    * Unwinds a fork. Nothing is mutated until every processor has accepted the
-   * reorg, so a failure here leaves the rewind entirely unapplied rather than
-   * half-done — the cursor still points into the abandoned branch and the whole
-   * step is retried.
+   * reorg, so a failure there leaves the step entirely unapplied and retried.
+   *
+   * **The rewind is last, after the cursor is durable**, because it discards the
+   * headers that are the evidence of the abandoned branch. Rewinding first and
+   * then failing the save would leave the detector holding less than it started
+   * with, having committed to nothing; this way it holds more — stale headers
+   * above an already-correct cursor — which `bootstrap` resolves by re-reporting
+   * the range for an idempotent second discard.
    */
   private async applyReorg(
     firstInvalidBlock: number,
@@ -301,8 +306,8 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     if (failure) return failure;
 
     const lastValidBlock = firstInvalidBlock - 1;
-    await this.detector.rewindTo(lastValidBlock);
     await this.saveCursor(lastValidBlock, lastValidHash);
+    await this.detector.rewindTo(lastValidBlock);
 
     return { kind: 'progressed', cursorAt: lastValidBlock };
   }

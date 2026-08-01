@@ -4,18 +4,13 @@ import type { Cursor } from '../cursor/cursor-store';
 /**
  * What the detector makes of a block, or of a resume point.
  *
- * - `continuous` — the header's `parentHash` matches the hash retained for
- *   `number - 1`, so it extends the chain we already processed. From
- *   {@link ReorgDetector.bootstrap} it means the stored cursor is still on the
- *   canonical chain. This is the ordinary case.
- * - `reorg` — the parent hash does not match, *and* walking backwards found an
- *   ancestor whose hash still matches the chain. Everything above it is invalid
- *   and is named precisely.
- * - `unrecoverable` — the parent hash does not match and the walk exhausted the
- *   retention window without finding a matching ancestor. The detector cannot
- *   say which blocks are invalid, so it refuses to guess: rewinding blindly
- *   would delete data it cannot prove is wrong. The loop stops and a human
- *   decides.
+ * - `continuous` — it extends the chain we processed; from `bootstrap`, the
+ *   stored cursor is still canonical. The ordinary case.
+ * - `reorg` — it does not, *and* walking back found an ancestor the chain still
+ *   agrees with. Everything above that is named precisely.
+ * - `unrecoverable` — it does not, and the walk exhausted the window without
+ *   finding one. Rewinding blindly would delete data it cannot prove is wrong,
+ *   so the loop stops and a human decides.
  */
 export type ReorgVerdict =
   | { readonly type: 'continuous' }
@@ -35,25 +30,21 @@ export type ReorgVerdict =
   | { readonly type: 'unrecoverable'; readonly reason: string };
 
 /**
- * Owns everything the loop would otherwise have to know about the shape of the
- * chain: how deep a reorg can go, whether a given block is settled, and where a
- * fork began. The loop performs no such arithmetic itself — it asks.
- *
- * That boundary is the point. Today's implementation is depth-based; replacing
- * it with one that reads `getBlock({ blockTag: 'finalized' })` changes this file
- * and nothing else.
+ * Owns everything the loop would otherwise know about the shape of the chain:
+ * how deep a reorg can go, whether a block is settled, where a fork began. The
+ * loop does no such arithmetic — it asks. Today's implementation is depth-based;
+ * swapping it for one that reads `blockTag: 'finalized'` changes nothing else.
  */
 export interface ReorgDetector {
   /**
-   * Called once, before the first iteration, with whatever the cursor store
-   * held.
+   * Called once before the first iteration. Reports whether the stored cursor is
+   * still canonical — the process may have been stopped across a fork, and
+   * nothing else would notice.
    *
-   * Two jobs. First, fill the retention window ending at the cursor by walking
-   * backwards from it, so a deep fork is resolvable immediately rather than
-   * only after the window refills organically — at 128 blocks of 12s that would
-   * otherwise be ~25 minutes of blindness after every restart. Second, report
-   * whether the cursor is still canonical: the process may have been stopped
-   * across a fork, and nothing else in the design would notice.
+   * A detector may refill its window here, but only downwards from a block just
+   * proven canonical, checking each `parentHash` link. Reading headers by height
+   * is the trap: past a reorged-out resume point they describe the branch that
+   * won, and recording them erases the evidence of the one that lost.
    */
   bootstrap(cursor: Cursor | null): Promise<ReorgVerdict>;
 
@@ -70,9 +61,10 @@ export interface ReorgDetector {
   /**
    * Classify the next header.
    *
-   * Precondition: `header.number === lastCommitted + 1`. The loop never skips
-   * ahead — a gap in the parent-hash chain would leave no way to locate a fork
-   * point.
+   * The loop never skips ahead, so `header.number` is at most one above the
+   * highest committed — a gap would leave no way to locate a fork point. It may
+   * also *equal* it, since a rejected cursor save replays the block. Treat that
+   * as ordinary; asserting otherwise turns a benign retry into a crash loop.
    */
   inspect(header: BlockHeader): ReorgVerdict | Promise<ReorgVerdict>;
 
@@ -82,7 +74,16 @@ export interface ReorgDetector {
    */
   commit(header: BlockHeader): void | Promise<void>;
 
-  /** Discard every retained header above `lastValidBlock`. */
+  /**
+   * Discard every retained header above `lastValidBlock`.
+   *
+   * **Called after the rewound cursor is saved, never before.** Retained headers
+   * are the evidence of the abandoned branch; discarding them for a write that
+   * has not landed leaves the detector holding less than it started with. This
+   * way a crash between the two leaves the window *ahead* of the cursor, which
+   * {@link bootstrap} may rely on: its highest retained header is the highest
+   * block processed.
+   */
   rewindTo(lastValidBlock: number): void | Promise<void>;
 }
 
