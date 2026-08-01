@@ -2,12 +2,14 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HealthModule, LoggingModule } from '@aave-v4-positions/ops';
 
+import { BLOCK_HEADER_STORE } from './indexing/reorg/block-header-store';
 import { validateEnv, type Env } from './config/env';
+import { HashChainReorgDetector } from './indexing/reorg/hash-chain-reorg-detector';
 import { IndexerHealthIndicator } from './indexing/observability/indexer.health-indicator';
 import { IndexingModule } from './indexing/indexing.module';
+import { InMemoryBlockHeaderStore } from './indexing/reorg/in-memory-block-header-store';
 import { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';
 import { LoggingBlockProcessor } from './indexing/processors/logging-block-processor';
-import { NoopReorgDetector } from './indexing/reorg/noop-reorg-detector';
 
 /**
  * Built once and referenced twice below. Nest identifies a dynamic module by
@@ -28,12 +30,22 @@ const indexing = IndexingModule.forRootAsync({
     stallThresholdMs: config.get('INDEXER_STALL_THRESHOLD_MS', { infer: true }),
     autoStart: config.get('INDEXER_AUTOSTART', { infer: true }),
   }),
-  // Placeholders. The real event-decoding processor and the hash-chain detector
-  // replace these without the loop changing.
+  // The processor is still a placeholder; the real event-decoding one replaces
+  // it without the loop changing.
   processors: [LoggingBlockProcessor],
-  reorgDetector: NoopReorgDetector,
+  reorgDetector: HashChainReorgDetector,
   cursorStore: InMemoryCursorStore,
-  providers: [LoggingBlockProcessor, NoopReorgDetector, InMemoryCursorStore],
+  providers: [
+    LoggingBlockProcessor,
+    HashChainReorgDetector,
+    // Both stores are in memory, which is the pairing that keeps the detector
+    // honest: neither the cursor nor the retention window survives a restart,
+    // so there is no resume to get wrong. A durable cursor store arriving
+    // without a durable window would be worse than either alone — see
+    // BlockHeaderStore.
+    { provide: BLOCK_HEADER_STORE, useClass: InMemoryBlockHeaderStore },
+    InMemoryCursorStore,
+  ],
 });
 
 @Module({

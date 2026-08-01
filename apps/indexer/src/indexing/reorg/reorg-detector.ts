@@ -46,14 +46,17 @@ export type ReorgVerdict =
 export interface ReorgDetector {
   /**
    * Called once, before the first iteration, with whatever the cursor store
-   * held.
+   * held. Reports whether that cursor is still canonical — the process may have
+   * been stopped across a fork, and nothing else in the design would notice.
    *
-   * Two jobs. First, fill the retention window ending at the cursor by walking
-   * backwards from it, so a deep fork is resolvable immediately rather than
-   * only after the window refills organically — at 128 blocks of 12s that would
-   * otherwise be ~25 minutes of blindness after every restart. Second, report
-   * whether the cursor is still canonical: the process may have been stopped
-   * across a fork, and nothing else in the design would notice.
+   * A detector that retains headers must **not** answer this by refilling its
+   * window from the chain, however tempting the symmetry. A window read back
+   * from the chain *is* the canonical chain, so every retained hash would match
+   * and no fork could ever be reported: one call per block, spent to guarantee
+   * a wrong answer. `Cursor.lastHash` is the only record of the branch we
+   * actually followed that survives a restart unaided, so it is the only honest
+   * comparison available here, and anything below it has to come from whatever
+   * the detector durably retained.
    */
   bootstrap(cursor: Cursor | null): Promise<ReorgVerdict>;
 
@@ -70,9 +73,12 @@ export interface ReorgDetector {
   /**
    * Classify the next header.
    *
-   * Precondition: `header.number === lastCommitted + 1`. The loop never skips
-   * ahead — a gap in the parent-hash chain would leave no way to locate a fork
-   * point.
+   * The loop never skips ahead, so `header.number` is at most one above the
+   * highest header committed — a gap in the parent-hash chain would leave no
+   * way to locate a fork point. It may also *equal* it: the loop commits a
+   * header before saving the cursor, so a rejected save replays the same block.
+   * Treat that as ordinary. Asserting the stricter precondition would turn a
+   * benign retry into a crash loop.
    */
   inspect(header: BlockHeader): ReorgVerdict | Promise<ReorgVerdict>;
 

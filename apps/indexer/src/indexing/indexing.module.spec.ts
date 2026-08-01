@@ -21,7 +21,7 @@ import { IndexerHealthIndicator } from './observability/indexer.health-indicator
 import { IndexerService } from './indexer.service';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
 import { IndexingModule } from './indexing.module';
-import { NoopReorgDetector } from './reorg/noop-reorg-detector';
+import type { ReorgDetector, ReorgVerdict } from './reorg/reorg-detector';
 
 const SETTINGS = Symbol('SETTINGS');
 
@@ -47,6 +47,35 @@ function optionsFrom(settings: Settings): IndexingOptions {
 @Injectable()
 class Marker {
   readonly tag = 'injected';
+}
+
+/**
+ * The module needs a detector bound, not a detection strategy. Binding the real
+ * one would drag its header store into a test about wiring, and break this file
+ * again the next time the detector gains a dependency — `app.e2e-spec.ts`
+ * compiles the whole application, which is where the real graph is checked.
+ */
+@Injectable()
+class StubReorgDetector implements ReorgDetector {
+  bootstrap(): Promise<ReorgVerdict> {
+    return Promise.resolve({ type: 'continuous' });
+  }
+
+  safeHead(observedHead: number): number {
+    return observedHead;
+  }
+
+  inspect(): ReorgVerdict {
+    return { type: 'continuous' };
+  }
+
+  commit(): void {
+    // Nothing retained, so nothing to record.
+  }
+
+  rewindTo(): void {
+    // Nothing retained, so nothing to discard.
+  }
 }
 
 /** Proves a processor is resolved through DI rather than instantiated bare. */
@@ -91,13 +120,13 @@ function build(settings: Settings = { chainId: 1, rpcUrls: ['https://rpc.example
           Marker,
           DependentProcessor,
           SecondProcessor,
-          NoopReorgDetector,
+          StubReorgDetector,
           InMemoryCursorStore,
         ],
         inject: [SETTINGS],
         useFactory: optionsFrom,
         processors: [DependentProcessor, SecondProcessor],
-        reorgDetector: NoopReorgDetector,
+        reorgDetector: StubReorgDetector,
         cursorStore: InMemoryCursorStore,
       }),
     ],
@@ -170,15 +199,15 @@ describe('IndexingModule', () => {
 
   it('produces a distinct module on every call, which is why callers must reuse one', async () => {
     const first = IndexingModule.forRootAsync({
-      providers: [NoopReorgDetector, InMemoryCursorStore],
+      providers: [StubReorgDetector, InMemoryCursorStore],
       useFactory: () => optionsFrom({ chainId: 1, rpcUrls: ['https://a.example.com'] }),
-      reorgDetector: NoopReorgDetector,
+      reorgDetector: StubReorgDetector,
       cursorStore: InMemoryCursorStore,
     });
     const second = IndexingModule.forRootAsync({
-      providers: [NoopReorgDetector, InMemoryCursorStore],
+      providers: [StubReorgDetector, InMemoryCursorStore],
       useFactory: () => optionsFrom({ chainId: 1, rpcUrls: ['https://a.example.com'] }),
-      reorgDetector: NoopReorgDetector,
+      reorgDetector: StubReorgDetector,
       cursorStore: InMemoryCursorStore,
     });
 
