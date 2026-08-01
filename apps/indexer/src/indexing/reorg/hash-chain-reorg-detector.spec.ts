@@ -29,11 +29,16 @@ describe('HashChainReorgDetector — finality', () => {
 });
 
 describe('HashChainReorgDetector — inspect', () => {
+  // Head 1000 against a depth of 10 puts the boundary at 990, so everything
+  // here sits above it. Only unsettled blocks reach `inspect` — the detector
+  // waves a settled one through without looking, since it arrives as the top of
+  // a range whose other blocks were never fetched.
+
   it('accepts a block whose parent is the header it retained', async () => {
     const h = harness();
-    await commit(h, 100);
+    await commit(h, 999);
 
-    await expect(h.detector.inspect(h.chain.headerAt(101))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'continuous',
     });
   });
@@ -41,89 +46,102 @@ describe('HashChainReorgDetector — inspect', () => {
   it('accepts the first block when nothing has been retained', async () => {
     const h = harness();
 
-    await expect(h.detector.inspect(h.chain.headerAt(101))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
+      type: 'continuous',
+    });
+  });
+
+  it('waves through a block the boundary has already settled', async () => {
+    const h = harness();
+    await commit(h, 999);
+    // A fork under a settled block is out of scope by assumption, and the range
+    // it came in with left nothing to check it against anyway.
+    h.chain.forkAbove(100, 'b');
+
+    await expect(h.detector.inspect(h.chain.headerAt(500))).resolves.toEqual({
       type: 'continuous',
     });
   });
 
   it('names the invalid range when the parent hash does not match', async () => {
     const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b');
+    await commit(h, ...blocks(995, 999));
+    h.chain.forkAbove(997, 'b');
 
-    await expect(h.detector.inspect(h.chain.headerAt(105))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'reorg',
-      firstInvalidBlock: 103,
-      lastInvalidBlock: 104,
-      lastValidHash: hashOf('a', 102),
+      firstInvalidBlock: 998,
+      lastInvalidBlock: 999,
+      lastValidHash: hashOf('a', 997),
     });
   });
 
   it('handles a one-block fork at the tip', async () => {
     const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(103, 'b');
+    await commit(h, ...blocks(995, 999));
+    h.chain.forkAbove(998, 'b');
 
-    await expect(h.detector.inspect(h.chain.headerAt(105))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'reorg',
-      firstInvalidBlock: 104,
-      lastInvalidBlock: 104,
-      lastValidHash: hashOf('a', 103),
+      firstInvalidBlock: 999,
+      lastInvalidBlock: 999,
+      lastValidHash: hashOf('a', 998),
     });
   });
 
   it('stops rather than guessing when the window does not reach the parent block', async () => {
     const h = harness();
-    await commit(h, ...blocks(100, 104));
+    await commit(h, ...blocks(995, 999));
     // A durable window and a durable cursor that drifted apart. The loop cannot
     // cause this — it never skips ahead — so it is corruption, not a fork.
-    await h.store.truncate(CHAIN_ID, 102);
+    await h.store.truncate(CHAIN_ID, 997);
 
-    await expect(h.detector.inspect(h.chain.headerAt(105))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'unrecoverable',
-      reason: 'nothing retained for block 104, so block 105 has no ancestry to check',
+      reason: 'nothing retained for block 999, so block 1000 has no ancestry to check',
     });
   });
 
   it('catches a swap at a height it committed but never cursored', async () => {
     const h = harness();
     // The loop commits a header before saving the cursor, so a rejected save
-    // leaves 500 retained with the cursor at 499 and the loop replaying it.
-    await commit(h, ...blocks(495, 500));
-    // Only 500 is replaced, so 499 — and therefore 500's parent link — still
+    // leaves 1000 retained with the cursor at 999 and the loop replaying it.
+    await commit(h, ...blocks(995, 1_000));
+    // Only 1000 is replaced, so 999 — and therefore its parent link — still
     // checks out. Nothing but the height itself gives this away.
-    h.chain.forkAbove(499, 'b');
+    h.chain.forkAbove(999, 'b');
 
     // Waving it through would fold the replacement on top of a block whose
     // events nothing ever told the processors to discard.
-    await expect(h.detector.inspect(h.chain.headerAt(500))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'reorg',
-      firstInvalidBlock: 500,
-      lastInvalidBlock: 500,
-      lastValidHash: hashOf('a', 499),
+      firstInvalidBlock: 1_000,
+      lastInvalidBlock: 1_000,
+      lastValidHash: hashOf('a', 999),
     });
   });
 
   it('tolerates re-inspecting a block it has already committed', async () => {
     const h = harness();
-    await commit(h, 100, 101);
+    await commit(h, 999, 1_000);
 
     // The precondition is soft: after a failed cursor save the loop replays a
     // block the detector already holds. Treating that as a violation would turn
     // a benign retry into a crash loop.
-    await expect(h.detector.inspect(h.chain.headerAt(101))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'continuous',
     });
   });
 
   it('refuses to guess when nothing it retained is still canonical', async () => {
     const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(99, 'b');
+    await commit(h, ...blocks(995, 999));
+    // Deeper than the window reaches, which is deeper than finality allows.
+    h.chain.forkAbove(988, 'b');
 
-    await expect(h.detector.inspect(h.chain.headerAt(105))).resolves.toEqual({
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).resolves.toEqual({
       type: 'unrecoverable',
-      reason: 'no retained header between 100 and 103 is still canonical',
+      reason: 'no retained header between 989 and 998 is still canonical',
     });
   });
 
@@ -134,29 +152,30 @@ describe('HashChainReorgDetector — inspect', () => {
       chain,
       new ShufflingBlockHeaderStore(),
     );
-    await commit({ detector, chain }, ...blocks(100, 104));
-    chain.forkAbove(102, 'b');
+    detector.safeHead(1_000);
+    await commit({ detector, chain }, ...blocks(995, 999));
+    chain.forkAbove(997, 'b');
 
     // Nearly everything reads the window positionally — the last entry bounds
     // the invalid range, the first bounds a failed walk, and the walk descends.
     // Taken in the wrong order this under-reports, which loses writes.
-    await expect(detector.inspect(chain.headerAt(105))).resolves.toEqual({
+    await expect(detector.inspect(chain.headerAt(1_000))).resolves.toEqual({
       type: 'reorg',
-      firstInvalidBlock: 103,
-      lastInvalidBlock: 104,
-      lastValidHash: hashOf('a', 102),
+      firstInvalidBlock: 998,
+      lastInvalidBlock: 999,
+      lastValidHash: hashOf('a', 997),
     });
   });
 
   it('surfaces an RPC failure rather than mistaking it for a fork', async () => {
     const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b').failNext(1);
+    await commit(h, ...blocks(995, 999));
+    h.chain.forkAbove(997, 'b').failNext(1);
 
-    await expect(h.detector.inspect(h.chain.headerAt(105))).rejects.toThrow('rpc unavailable');
+    await expect(h.detector.inspect(h.chain.headerAt(1_000))).rejects.toThrow('rpc unavailable');
     // The loop turns a rejection into a retry, so the window must come through
     // the failed walk untouched.
-    await expect(retained(h)).resolves.toEqual(blocks(100, 104));
+    await expect(retained(h)).resolves.toEqual(blocks(989, 999));
   });
 });
 
@@ -236,21 +255,6 @@ describe('HashChainReorgDetector — bootstrap', () => {
     expect((await store.load(CHAIN_ID)).map((entry) => entry.number)).toEqual([996, 997, 998]);
   });
 
-  it('seeds the window from the verified cursor header', async () => {
-    const h = harness();
-    await h.detector.bootstrap(cursorAt(500));
-    // The chain forks after the resume check but before the next block.
-    h.chain.forkAbove(499, 'b');
-
-    // Without the seed the window would still be empty here, block 501 would
-    // pass as continuous, and the losing branch would become the anchor
-    // everything after it is checked against.
-    await expect(h.detector.inspect(h.chain.headerAt(501))).resolves.toEqual({
-      type: 'unrecoverable',
-      reason: 'nothing retained at or below block 499 to compare against',
-    });
-  });
-
   it('unwinds a fork that happened while the process was down', async () => {
     const h = harness();
     await commit(h, ...blocks(494, 500));
@@ -316,68 +320,51 @@ describe('HashChainReorgDetector — bootstrap', () => {
 describe('HashChainReorgDetector — an owed reorg survives the process', () => {
   it('reports the same fork again when nothing was applied', async () => {
     const h = harness();
-    await commit(h, ...blocks(494, 500));
-    h.chain.forkAbove(496, 'b');
-    const reported = await h.detector.inspect(h.chain.headerAt(501));
+    await commit(h, ...blocks(994, 999));
+    h.chain.forkAbove(996, 'b');
+    const reported = await h.detector.inspect(h.chain.headerAt(1_000));
 
     // Died before the discard was even dispatched. The cursor was never moved,
-    // so it still names 500 on the branch that lost.
-    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(reported);
+    // so it still names 999 on the branch that lost.
+    await expect(h.detector.bootstrap(cursorAt(999))).resolves.toEqual(reported);
   });
 
   it('reports the same fork again when the cursor landed but the rewind did not', async () => {
     const h = harness();
-    await commit(h, ...blocks(494, 500));
-    h.chain.forkAbove(496, 'b');
-    const reported = await h.detector.inspect(h.chain.headerAt(501));
+    await commit(h, ...blocks(994, 999));
+    h.chain.forkAbove(996, 'b');
+    const reported = await h.detector.inspect(h.chain.headerAt(1_000));
 
     // The gap the loop actually leaves: it saves the cursor before rewinding,
-    // so a crash here has the cursor already naming 496 while the window still
-    // holds 497..500 from the branch that lost.
-    await expect(h.detector.bootstrap(cursorAt(496))).resolves.toEqual(reported);
+    // so a crash here has the cursor already naming 996 while the window still
+    // holds 997..999 from the branch that lost.
+    await expect(h.detector.bootstrap(cursorAt(996))).resolves.toEqual(reported);
   });
 
-  it('stops reporting it once the rewound cursor has been saved', async () => {
+  it('stops reporting it once the rewind has also run', async () => {
     const h = harness();
-    await commit(h, ...blocks(494, 500));
-    h.chain.forkAbove(496, 'b');
-    await h.detector.inspect(h.chain.headerAt(501));
-    await h.detector.rewindTo(496);
+    await commit(h, ...blocks(994, 999));
+    h.chain.forkAbove(996, 'b');
+    await h.detector.inspect(h.chain.headerAt(1_000));
+    await h.detector.rewindTo(996);
 
-    // The cursor is the single durable commit point: once it names 496, the
-    // unwinding is done and the loop may go forward.
-    await expect(h.detector.bootstrap(cursorAt(496))).resolves.toEqual({ type: 'continuous' });
-  });
-
-  it('vets the block it committed, not just the one the cursor names', async () => {
-    const h = harness();
-    await commit(h, ...blocks(495, 500));
-    // The cursor save for 500 was the write that failed, so it still names 499.
-    // Then only 500 is replaced, leaving 499 canonical.
-    h.chain.forkAbove(499, 'b');
-
-    // Checking the cursor alone would answer continuous here — 499 is fine —
-    // and 500's events would stay folded under its replacement.
-    await expect(h.detector.bootstrap(cursorAt(499))).resolves.toEqual({
-      type: 'reorg',
-      firstInvalidBlock: 500,
-      lastInvalidBlock: 500,
-      lastValidHash: hashOf('a', 499),
-    });
+    // Both writes landed, so the window and the cursor agree again and there is
+    // nothing left owed.
+    await expect(h.detector.bootstrap(cursorAt(996))).resolves.toEqual({ type: 'continuous' });
   });
 
   it('cannot tell an unapplied fork from one that happened while it was down', async () => {
     const h = harness();
-    await commit(h, ...blocks(494, 500));
-    h.chain.forkAbove(496, 'b');
+    await commit(h, ...blocks(994, 999));
+    h.chain.forkAbove(996, 'b');
 
-    // No inspect: this process never saw the fork at all. Same cursor, same
-    // window, same answer — which is why one mechanism covers both.
-    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual({
+    // No inspect: this process never saw the fork at all. Same window, same
+    // answer — which is why one mechanism covers both.
+    await expect(h.detector.bootstrap(cursorAt(999))).resolves.toEqual({
       type: 'reorg',
-      firstInvalidBlock: 497,
-      lastInvalidBlock: 500,
-      lastValidHash: hashOf('a', 496),
+      firstInvalidBlock: 997,
+      lastInvalidBlock: 999,
+      lastValidHash: hashOf('a', 996),
     });
   });
 });

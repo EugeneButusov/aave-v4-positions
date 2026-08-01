@@ -374,9 +374,8 @@ describe('IndexerService — the detector owns the chain shape', () => {
 
     await service.runOnce();
 
-    // No finality arithmetic in the service: the detector's answer alone
-    // decides, so settling the whole chain removes inspection entirely.
-    expect(detector.inspected).toEqual([]);
+    // No finality arithmetic in the service: the detector's answer decides how
+    // wide to dispatch, and settling the whole chain makes that one range.
     expect(ranges(processors[0]!)).toEqual([[100, 149]]);
   });
 
@@ -406,14 +405,18 @@ describe('IndexerService — the detector owns the chain shape', () => {
     ]);
   });
 
-  it('never inspects a settled block', async () => {
+  it('asks about a settled range once, not once per block', async () => {
     const { service, detector } = harness();
     detector.settledThrough(1_000);
 
     await service.runOnce();
     await service.runOnce();
 
-    expect(detector.inspected).toEqual([]);
+    // Every header the loop commits is put to the detector first — but a range
+    // yields one header for fifty blocks, so this is two questions rather than
+    // a hundred. Whether a settled top needs checking is the detector's call;
+    // the loop does not make it on its behalf.
+    expect(detector.inspected).toEqual([149, 199]);
   });
 
   it('unwinds a fork in order: processors, then cursor, then detector', async () => {
@@ -515,10 +518,12 @@ describe('IndexerService — the detector owns the chain shape', () => {
 
     await service.runOnce();
 
-    expect(detector.inspectedHeaders.map((h) => h.number)).toEqual([150]);
-    // ...because it is exactly the ancestry the first inspected block is
-    // checked against. Without it the detector crosses the boundary blind.
-    expect(detector.inspectedHeaders[0]?.parentHash).toBe(detector.committedHeaders[0]?.hash);
+    // 149 is asked about as the range's own top, then 150 as the first block
+    // past the boundary.
+    expect(detector.inspectedHeaders.map((h) => h.number)).toEqual([149, 150]);
+    // ...because it is exactly the ancestry the first block past the boundary
+    // is checked against. Without it the detector crosses the boundary blind.
+    expect(detector.inspectedHeaders[1]?.parentHash).toBe(detector.committedHeaders[0]?.hash);
   });
 });
 

@@ -12,14 +12,21 @@ export interface Harness {
   readonly store: InMemoryBlockHeaderStore;
 }
 
-export function harness(finalityDepth = 10): Harness {
-  const chain = new FakeChainClient({ head: 1_000 });
+export const HEAD = 1_000;
+
+export function harness(finalityDepth = 10, head = HEAD): Harness {
+  const chain = new FakeChainClient({ head });
   const store = new InMemoryBlockHeaderStore();
   const detector = new HashChainReorgDetector(
     { chainId: CHAIN_ID, finalityDepth } as IndexingOptions,
     chain,
     store,
   );
+
+  // The loop hands the head over on every iteration, so the detector always
+  // knows where the boundary is by the time anything else is asked of it.
+  // Priming keeps that true here rather than leaving it to fetch its own.
+  detector.safeHead(head);
 
   return { detector, chain, store };
 }
