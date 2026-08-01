@@ -423,6 +423,27 @@ Deliberate, in rough order of what comes next.
 - **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
   must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
+- **Metrics export.** `IndexerStatus` knows the cursor, the head, the lag between them and the
+  consecutive-failure count, but the only way out is `/health/ready`, which answers up or down and
+  puts the detail in an error string. That is a fine alert and a poor time series — you cannot graph
+  indexing lag or alert on it before it crosses the stall threshold. The shape when it lands is a
+  **write-only** observer, optional and multi-provider like the processors, called from the loop's
+  state transition:
+
+  ```ts
+  interface IndexerObserver {
+    onProgress(snapshot: IndexerSnapshot): void;
+    onRetry(reason: string, snapshot: IndexerSnapshot): void;
+    onFailure(reason: string, snapshot: IndexerSnapshot): void;
+  }
+  ```
+
+  Write-only is the whole point. `IndexerStatus` itself is deliberately **not** a port, unlike the
+  processor, reorg and cursor seams: the loop reads back from it — `isFailed` to know it is
+  finished, `observeHead` for the clamped value it indexes against, `consecutiveFailures` to size
+  the backoff — so swapping the implementation would change correctness rather than policy. An
+  observer that nothing reads back from costs a metric when it misbehaves, not a stalled indexer.
+
 - **Kubernetes manifests.** The probes, drain sequence and JSON logs are already shaped for them.
   CI covers format, lint, typecheck, test and build on Node 24, but does not yet build the Docker
   images — so the `Dockerfile` can rot without anything failing.
