@@ -262,8 +262,7 @@ of them succeeded, and it is saved **last** — it is the single durable commit 
 anywhere earlier replays the range rather than skipping it. Unwinding a fork is the one place
 something follows it, and for the same reason: the detector's rewind discards the headers that are
 the evidence of the abandoned branch, so it waits until the cursor is durable. The corollary is that
-dispatch is
-**at-least-once per processor per range**, and processors must be idempotent. That is not a wart: the
+dispatch is **at-least-once per processor per range**, and processors must be idempotent. That is not a wart: the
 analysis already models positions as a fold over an immutable log, so replay is the repair primitive
 (§8, §9.4).
 
@@ -317,9 +316,9 @@ already correct and the window still holding the run above it, which is strictly
 than the reverse would leave.
 
 Every point the process can die therefore lands on the same answer. Before the discard was
-dispatched, after it, or after the cursor save — `bootstrap` vets the higher of the cursor and the
-window, walks to the same ancestor and reports the same range, the loop re-dispatches, and `onReorg`
-is an idempotent discard. Only once the rewind has also run does the question stop being asked.
+dispatched, after it, or after the cursor save — `bootstrap` vets the window's top, walks to the same
+ancestor and reports the same range, the loop re-dispatches, and `onReorg` is an idempotent discard.
+Only once the rewind has also run does the question stop being asked.
 
 The same check covers a fork that happened while the process was down and was never detected at all —
 same cursor, same window, same answer. There is one condition here, not two. A separate record of
@@ -333,14 +332,14 @@ unaided. A match settles it: a chain is ancestor-closed, so a canonical block ma
 beneath it canonical too, and the ordinary resume costs exactly one call. A mismatch means the
 process was stopped across a fork, and the retained headers are what locate it.
 
-The block it vets is the **highest one processed, which is not always the cursor**. Two things leave
-the window ahead: `commit` runs before the cursor is saved, so a rejected save leaves it one block
-up, and an unwind that saved the cursor but died before rewinding leaves it a whole run up. In the
-first case those events are already in the projection. If the chain then replaces exactly that block, its parent is
-untouched and the cursor still looks perfectly canonical; checking only the cursor would answer
-continuous and fold the replacement on top of a branch nothing ever discarded. `inspect` guards the
-same height for the same reason, since the loop replays that block whether or not the process
-restarted in between.
+The block it vets is the **window's top, which is not always the cursor** — the cursor is only the
+fallback for an empty window. Two things leave the window ahead: `commit` runs before the cursor is
+saved, so a rejected save leaves it one block up with those events already in the projection, and an
+unwind that saved the cursor but died before rewinding leaves it a whole run up. If the chain then
+replaces exactly that block its parent is untouched, so the cursor still looks perfectly canonical —
+checking it alone would answer continuous and fold the replacement on top of a branch nothing ever
+discarded. `inspect` guards the same height for the same reason, since the loop replays that block
+whether or not the process restarted in between.
 
 On the matching path the resume point becomes the window's anchor and the pull above rebuilds
 beneath it, so the indexer starts full-depth rather than blind. On the mismatch path it cannot, and
