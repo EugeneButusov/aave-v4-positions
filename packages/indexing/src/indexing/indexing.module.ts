@@ -6,6 +6,7 @@ import {
   type OptionalFactoryDependency,
 } from '@nestjs/common';
 
+import { BackfillRunner } from '../backfill/backfill-runner';
 import { CHAIN_CLIENT, CHAIN_CLIENT_OPTIONS } from '../chain/chain-client';
 import { LOG_READER } from '../chain/log-reader';
 import { ViemChainClient } from '../chain/viem-chain-client';
@@ -116,11 +117,16 @@ export class IndexingModule {
         IndexerStatus,
         IndexerService,
         IndexerHealthIndicator,
+        // Bound here rather than in a module of its own because the processor
+        // list it needs is assembled here and nowhere else. Idle in a service
+        // that only runs the loop: constructing it does no I/O.
+        BackfillRunner,
       ],
       exports: [
         IndexerService,
         IndexerStatus,
         IndexerHealthIndicator,
+        BackfillRunner,
         INDEXING_OPTIONS,
         CHAIN_CLIENT,
         LOG_READER,

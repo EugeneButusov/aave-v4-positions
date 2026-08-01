@@ -13,6 +13,7 @@ import {
   type BlockProcessor,
   type ProcessorOutcome,
 } from './processors/block-processor';
+import { describeError, dispatchToProcessors } from './processors/dispatch';
 import { CURSOR_STORE, type Cursor, type CursorStore } from './cursor/cursor-store';
 import { IndexerStatus } from './observability/indexer-status';
 import {
@@ -23,6 +24,7 @@ import {
   type IndexingOptions,
 } from './indexing.options';
 import { REORG_DETECTOR, type ReorgDetector } from './reorg/reorg-detector';
+import { sleepUntil } from '../sleep';
 
 /**
  * What one iteration accomplished. Drives both the backoff and, through
@@ -35,10 +37,6 @@ export type IterationResult =
   | { readonly kind: 'idle' }
   | { readonly kind: 'retry'; readonly reason: string }
   | { readonly kind: 'failed'; readonly reason: string };
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Walks the chain and hands ranges to the registered processors.
@@ -170,7 +168,7 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       // store throwing. Retries are unbounded, so a genuine code defect keeps
       // failing here and surfaces through the stall alarm rather than being
       // mistaken for a terminal condition.
-      return { kind: 'retry', reason: `unhandled: ${describe(error)}` };
+      return { kind: 'retry', reason: `unhandled: ${describeError(error)}` };
     }
   }
 
@@ -325,20 +323,14 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
   }
 
   /**
-   * Runs the processors in registration order, stopping at the first non-`ok`.
-   * Returns `null` when all succeeded.
+   * Hands the range to {@link dispatchToProcessors} and translates its answer
+   * into an iteration. Returns `null` when every processor succeeded.
    *
-   * Fail-fast means an earlier processor is re-invoked when a later one asks to
-   * retry, which is why the interface requires idempotence.
-   *
-   * TODO: parallelize once the real processors land — the Spoke, Hub and price
-   * streams have no ordering dependency during backfill (analysis §8). Needs
-   * `allSettled`, not `all`: outcomes are returned rather than thrown, so
-   * `Promise.all` cannot fail fast here, and it does not cancel its siblings
-   * either. Also needs a concurrency cap for the measured provider rate limits,
-   * `narrowRange` halving once per dispatch rather than once per processor that
-   * asks, and registration order dropped from the {@link BlockProcessor}
-   * contract.
+   * Only the translation lives here: the retry policy is what makes this
+   * different from a backfill, and it is one line of it — a `retry` backs the
+   * loop off and is re-attempted forever, because an RPC outage should recover
+   * by itself and a wedged processor is surfaced by the stall alarm rather than
+   * by giving up.
    */
   private async dispatch(
     invoke: (
@@ -346,26 +338,15 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       signal: AbortSignal,
     ) => ProcessorOutcome | Promise<ProcessorOutcome>,
   ): Promise<IterationResult | null> {
-    for (const processor of this.processors) {
-      let outcome: ProcessorOutcome;
-      try {
-        // oxlint-disable-next-line no-await-in-loop
-        outcome = await invoke(processor, this.abort.signal);
-      } catch (error) {
-        // A thrown error is a retry, not a failure. It is indistinguishable
-        // from one at this level, and treating it as terminal would let a
-        // transient bug stop indexing permanently.
-        return { kind: 'retry', reason: `${processor.name} threw: ${describe(error)}` };
-      }
+    const result = await dispatchToProcessors(this.processors, this.abort.signal, invoke);
 
-      if (outcome.status === 'failed') {
-        return { kind: 'failed', reason: `${processor.name}: ${outcome.reason}` };
-      }
+    if (result.status === 'failed') {
+      return { kind: 'failed', reason: result.reason };
+    }
 
-      if (outcome.status === 'retry') {
-        if (outcome.narrowRange === true) this.narrowRange(processor.name);
-        return { kind: 'retry', reason: `${processor.name}: ${outcome.reason}` };
-      }
+    if (result.status === 'retry') {
+      if (result.narrowRange) this.narrowRange(result.processor);
+      return { kind: 'retry', reason: result.reason };
     }
 
     return null;
@@ -412,8 +393,10 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
         );
       }
 
+      // Wakes on shutdown too, so a quiet loop does not sit out its poll
+      // interval before noticing.
       // oxlint-disable-next-line no-await-in-loop
-      await this.sleep(this.delayFor(result));
+      await sleepUntil(this.delayFor(result), this.abort.signal);
     }
 
     this.status.stopped();
@@ -425,20 +408,6 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
 
     const exponent = Math.min(this.status.consecutiveFailures - 1, 16);
     return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, exponent));
-  }
-
-  /** Wakes on the delay or on shutdown, so a quiet loop does not sit out its poll interval. */
-  private sleep(ms: number): Promise<void> {
-    const { signal } = this.abort;
-    if (ms <= 0 || signal.aborted) return Promise.resolve();
-
-    // Composing the two signals rather than racing a timer against a listener:
-    // there is one wake path, so no cleanup to get wrong and no way to settle
-    // twice. The timeout signal does not hold the event loop open.
-    const wake = AbortSignal.any([signal, AbortSignal.timeout(ms)]);
-    return new Promise<void>((resolve) => {
-      wake.addEventListener('abort', () => resolve(), { once: true });
-    });
   }
 
   private async drain(): Promise<void> {

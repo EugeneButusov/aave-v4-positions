@@ -8,6 +8,7 @@
   "scripts": {
     "build": "rimraf dist && tsc -p tsconfig.build.json",
     "start": "node --enable-source-maps dist/main.js",
+    "backfill": "node --enable-source-maps dist/backfill.js",
     "start:dev": "pnpm run build && concurrently -k -n tsc,app -c blue,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --enable-source-maps dist/main.js\"",
     "start:debug": "pnpm run build && concurrently -k -n tsc,app -c blue,green \"tsc -p tsconfig.build.json --watch --preserveWatchOutput\" \"node --watch --inspect --enable-source-maps dist/main.js\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",

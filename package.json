@@ -9,6 +9,7 @@
     "pnpm": ">=11"
   },
   "scripts": {
+    "backfill": "pnpm --filter @aave-v4-positions/indexer backfill",
     "build": "pnpm -r build",
     "build:packages": "pnpm --filter './packages/**' build",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
