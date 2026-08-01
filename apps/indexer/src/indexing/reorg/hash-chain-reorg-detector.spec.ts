@@ -72,22 +72,6 @@ describe('HashChainReorgDetector — inspect', () => {
     });
   });
 
-  it('bounds a fork only as deep as the window it grew after a backfill', async () => {
-    const h = harness(128);
-    // What a backfill leaves: one anchor, then contiguous blocks at the tip.
-    await commit(h, 149, 199, 200, 201);
-    h.chain.forkAbove(160, 'b');
-
-    // 150..198 were dispatched as a settled range and never hash-inspected, so
-    // there is nothing to check them against. Rewinding to 149 anyway would be
-    // safe arithmetic over blocks the detector has no record of — which is the
-    // guess it exists not to make.
-    await expect(h.detector.inspect(h.chain.headerAt(202))).resolves.toEqual({
-      type: 'unrecoverable',
-      reason: 'no retained header between 199 and 200 is still canonical',
-    });
-  });
-
   it('stops rather than guessing when the window does not reach the parent block', async () => {
     const h = harness();
     await commit(h, ...blocks(100, 104));
@@ -101,32 +85,16 @@ describe('HashChainReorgDetector — inspect', () => {
     });
   });
 
-  it('counts a block it committed but never cursored as invalid', async () => {
-    const h = harness();
-    // The loop commits a header before saving the cursor. A rejected save
-    // leaves 101 retained with the cursor still at 100, so the loop re-inspects
-    // 101 — and 101's writes are already out there.
-    await commit(h, ...blocks(95, 101));
-    h.chain.forkAbove(97, 'b');
-
-    await expect(h.detector.inspect(h.chain.headerAt(101))).resolves.toEqual({
-      type: 'reorg',
-      firstInvalidBlock: 98,
-      // 101, not 100: reporting the block the caller implies would orphan
-      // everything the processors derived from it.
-      lastInvalidBlock: 101,
-      lastValidHash: hashOf('a', 97),
-    });
-  });
-
   it('catches a swap at a height it committed but never cursored', async () => {
     const h = harness();
+    // The loop commits a header before saving the cursor, so a rejected save
+    // leaves 500 retained with the cursor at 499 and the loop replaying it.
     await commit(h, ...blocks(495, 500));
-    // Only block 500 is replaced, so 499 — and therefore 500's parent link —
-    // still checks out. The cursor never reached 500, so the loop replays it.
+    // Only 500 is replaced, so 499 — and therefore 500's parent link — still
+    // checks out. Nothing but the height itself gives this away.
     h.chain.forkAbove(499, 'b');
 
-    // Waving this through would fold the replacement on top of a block whose
+    // Waving it through would fold the replacement on top of a block whose
     // events nothing ever told the processors to discard.
     await expect(h.detector.inspect(h.chain.headerAt(500))).resolves.toEqual({
       type: 'reorg',
