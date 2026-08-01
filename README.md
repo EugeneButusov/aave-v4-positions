@@ -11,15 +11,19 @@ against those findings rather than v3 intuition.
 
 ## Status
 
-This is the **scaffold**. It stands up the workspace, both services, the test and lint toolchain, and
-the operational shape a Kubernetes deployment expects.
+The **scaffold plus the indexing framework**. The workspace, both services, the test and lint
+toolchain, the operational shape a Kubernetes deployment expects — and a loop that walks the chain
+and hands block ranges to injected processors.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
-lefthook.
+lefthook, and the [indexing framework](#indexing) — chain client with provider failover, cursor,
+reorg and processor seams.
 
-**Not yet:** database and migrations, the ingestion pipeline, the enrichment source, the positions
-endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer is a probe-serving shell. See [Not here yet](#not-here-yet).
+**Not yet:** database and migrations, event decoding, real reorg detection, the enrichment source,
+the positions endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer walks
+the chain but its processors and reorg detector are placeholders. See
+[Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -28,6 +32,13 @@ endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer i
 ├── apps/
 │   ├── api/                 read API — indexed and enriched positions
 │   └── indexer/             worker — Spoke/Hub event ingestion
+│       └── src/
+│           ├── chain/       RPC access — the ChainClient port and its viem adapter
+│           └── indexing/    the loop, plus one folder per seam
+│               ├── processors/     what to do with a block range
+│               ├── reorg/          finality, fork detection, resume
+│               ├── cursor/         durable position
+│               └── observability/  state machine and health indicator
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
@@ -103,6 +114,14 @@ Both services come up with health checks; `docker compose ps` shows them as `hea
 readiness probes pass. Same addresses as above (`:3000`, `:3001`, `/docs`). Tear down with
 `docker compose down`.
 
+The indexer starts indexing immediately, against **`https://eth.drpc.org` by default** — so
+`docker compose up` makes real requests to a third party. Point it somewhere else with
+`RPC_URLS=https://your-node docker compose up`, or set `INDEXER_AUTOSTART=false` to bring up the
+probes without indexing. Watching `docker compose logs -f indexer` is the quickest way to see the
+framework work: it walks 1000-block ranges up from the Main Spoke genesis, and once it reaches the
+tip it switches to one block at a time. Measured on a cold start: 938 ranges to cover the backfill,
+with the final one self-truncating to 571 blocks so it stopped exactly on the finality boundary.
+
 If 3000 or 3001 are taken:
 
 ```bash
@@ -150,10 +169,28 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`).
 
-**Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001). Chain and deployment configuration lands with
-the ingestion pipeline. Worth stating now, because it shapes that config: ingestion reads logs only,
-so a **full node is sufficient** — historical _state_ is what would need an archive node, and nothing
-on the read path calls `eth_call` (analysis §8).
+**Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
+
+| variable                     | default    |                                                                    |
+| ---------------------------- | ---------- | ------------------------------------------------------------------ |
+| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration. |
+| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                   |
+| `FINALITY_DEPTH`             | `128`      | Read by the reorg detector, never by the loop.                     |
+| `INDEXER_START_BLOCK`        | `24720899` | Main Spoke genesis; used only when no cursor exists.               |
+| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                             |
+| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                    |
+| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                    |
+| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                  |
+| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                         |
+
+`CHAIN_ID` and `RPC_URLS` deliberately have **no defaults**. A default chain id is precisely the
+failure this validation exists to prevent: an indexer quietly pointed at the wrong chain produces
+plausible, wrong data rather than an error.
+
+A **full node is sufficient** — ingestion reads logs only. Historical _state_ is what would need an
+archive node, and nothing on the read path calls `eth_call` (analysis §8). Provider capability does
+vary, though: measured `eth_getLogs` ranges across public endpoints run from 50 blocks to 10,000, and
+some serve no history at all, which is why the provider list is ordered and the range size adapts.
 
 See each service's `.env.example` for the annotated list.
 
@@ -184,6 +221,68 @@ lacks a typed success response.
 Zod, so `nestjs-zod` (one schema driving both validation and the OpenAPI document) is the coherent
 option; `class-validator` with `@ApiProperty` is the more conventional one. Worth deciding with the
 first real endpoint rather than now.
+
+## Indexing
+
+The indexer walks the chain and hands block ranges to registered processors. The loop itself knows
+about block numbers and nothing else — no notion of finality, of what a fork looks like, or of what
+a processor does with a range. Each of those sits behind a port.
+
+**Three seams, all injected at module setup.**
+
+```ts
+interface BlockProcessor {
+  // both inclusive [from, to]: index this range / discard this range
+  onBlockRange(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
+  onReorg(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
+}
+interface ReorgDetector {
+  bootstrap(cursor): Promise<ReorgVerdict>; // fill the window, vet the resume point
+  safeHead(observedHead): number; // what is settled
+  inspect(header): ReorgVerdict; // continuous | reorg | unrecoverable
+  commit(header);
+  rewindTo(lastValidBlock);
+}
+interface CursorStore {
+  load(chainId);
+  save(cursor);
+}
+```
+
+**The detector owns the shape of the chain.** The loop never computes `head - finalityDepth`; it
+calls `safeHead()` and branches on the answer. Blocks at or below it are settled, so they are
+dispatched in wide ranges with no per-block inspection — which is what makes a ~932k-block backfill
+take minutes. Above it, one block at a time, inspected first. That boundary is recomputed from a
+fresh head every iteration rather than latched as a mode, and a range never straddles it. Swapping
+the depth heuristic for `getBlock({ blockTag: 'finalized' })` later changes one file.
+
+**Processors gate the cursor.** They return `ok` / `retry` / `failed` rather than throwing, and run
+sequentially in registration order, stopping at the first non-`ok`. The cursor advances only when all
+of them succeeded, and it is saved **last** — it is the single durable commit point, so a crash
+anywhere earlier replays the range rather than skipping it. The corollary is that dispatch is
+**at-least-once per processor per range**, and processors must be idempotent. That is not a wart: the
+analysis already models positions as a fold over an immutable log, so replay is the repair primitive
+(§8, §9.4).
+
+A `retry` may set `narrowRange`, which halves the range size — the measured provider caps above are
+why. Retries are unbounded, because an RPC outage should recover on its own; the bound is
+observability, not control, and `/health/ready` fails once the loop has made no progress for
+`INDEXER_STALL_THRESHOLD_MS`. `failed` is reserved for "more attempts cannot help" and is terminal.
+
+**Resume is a detector question too.** On start the loop loads the cursor and hands it to
+`bootstrap()`, which fills the retention window and reports whether that block is still canonical —
+the process may have been stopped across a fork, and nothing else in the design would notice.
+
+**Provider failover is viem's `fallback`**, tried in list order. Two of its defaults are overridden,
+both verified against the 2.55 source rather than the docs: `fallback`'s own `retryCount` goes to 0
+so a total outage surfaces immediately instead of after four full sweeps of the list, and the head is
+clamped monotonically in the loop — viem does not reconcile block height between providers, so
+failing over to a lagging node otherwise looks exactly like a reorg.
+
+**What is real and what is not.** The chain client, the loop, the cursor seam and the outcome
+protocol all work. `NoopReorgDetector` answers the finality question but detects nothing, and
+`LoggingBlockProcessor` only logs. The reorg, bootstrap and failure paths are exercised by tests
+through scripted fakes, not by the running service.
 
 ## Operational shape
 
@@ -226,12 +325,21 @@ the results:
 
 ```ts
 HealthModule.forRoot({
-  imports: [DatabaseModule],
-  indicators: [DatabaseHealthIndicator],
+  imports: [indexing],
+  indicators: [IndexerHealthIndicator],
 });
 ```
 
-The database check will be the first real one.
+That is the indexer's real registration, and the first use of the seam. It reports down on two
+conditions only: the loop has stopped, or it has made no progress for longer than
+`INDEXER_STALL_THRESHOLD_MS`. Before the first iteration it reports **up** — an indicator that fails
+while starting would stop the pod ever becoming ready.
+
+Worth being honest about what it buys. The indexer serves probes and nothing else, so failing
+readiness drains no traffic, and compose's `restart: unless-stopped` does not react to an unhealthy
+health check. It is an **alertable signal with no automatic recovery** — something above it has to
+act. A `failed` loop stays failed until the process restarts, which is the same posture the rest of
+the service takes towards bad configuration.
 
 ## Toolchain notes
 
@@ -300,14 +408,46 @@ Deliberate, in rough order of what comes next.
 
 - **Database, schema and migrations.** The analysis settles what has to be stored — immutable raw
   events plus a derived projection, which is also what makes reorg handling a replay rather than a
-  patch (§8, §9).
-- **The ingestion pipeline**: incremental sync, backfill, reorg handling, and the Hub asset mirror.
-  That mirror is the highest-risk component — one mishandled transition silently corrupts every
-  supply valuation for that asset, with no error, just wrong numbers.
+  patch (§8, §9). Until then `InMemoryCursorStore` is the only adapter, so **the indexer restarts
+  from `INDEXER_START_BLOCK` every time** rather than resuming. The port is real and its resume
+  behaviour is tested; the adapter is what is missing. That adapter will also need a
+  `withTransaction` seam so a processor's writes and the cursor advance commit together — the gap
+  between them is the one at-least-once window the design cannot close on its own.
+- **Real reorg detection.** `NoopReorgDetector` never reports a fork, including at bootstrap, so a
+  reorg across a restart passes unnoticed. What is needed is a ring buffer of the last
+  `FINALITY_DEPTH` headers, a parent-hash walk back to the common ancestor, and a `bootstrap` that
+  refills the window from the chain. Note the limitation that will remain: a fork deeper than the
+  retention window is _reported_ (`unrecoverable`) rather than repaired, because the blocks it
+  invalidates were dispatched as settled ranges and never hash-inspected. That class of corruption is
+  what reconciliation exists to catch.
+- **Event decoding** — the Spoke and Hub processors, and the Hub asset mirror. That mirror is the
+  highest-risk component: one mishandled transition silently corrupts every supply valuation for that
+  asset, with no error, just wrong numbers.
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.
 - **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
   must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
   past it. The failure mode is a few wei of drift that reads as a rounding bug.
+- **Metrics export.** `IndexerStatus` knows the cursor, the head, the lag between them and the
+  consecutive-failure count, but the only way out is `/health/ready`, which answers up or down and
+  puts the detail in an error string. That is a fine alert and a poor time series — you cannot graph
+  indexing lag or alert on it before it crosses the stall threshold. The shape when it lands is a
+  **write-only** observer, optional and multi-provider like the processors, called from the loop's
+  state transition:
+
+  ```ts
+  interface IndexerObserver {
+    onProgress(snapshot: IndexerSnapshot): void;
+    onRetry(reason: string, snapshot: IndexerSnapshot): void;
+    onFailure(reason: string, snapshot: IndexerSnapshot): void;
+  }
+  ```
+
+  Write-only is the whole point. `IndexerStatus` itself is deliberately **not** a port, unlike the
+  processor, reorg and cursor seams: the loop reads back from it — `isFailed` to know it is
+  finished, `observeHead` for the clamped value it indexes against, `consecutiveFailures` to size
+  the backoff — so swapping the implementation would change correctness rather than policy. An
+  observer that nothing reads back from costs a metric when it misbehaves, not a stalled indexer.
+
 - **Kubernetes manifests.** The probes, drain sequence and JSON logs are already shaped for them.
   CI covers format, lint, typecheck, test and build on Node 24, but does not yet build the Docker
   images — so the `Dockerfile` can rot without anything failing.
