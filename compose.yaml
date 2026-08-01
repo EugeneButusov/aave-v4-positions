@@ -3,6 +3,55 @@ name: aave-v4-positions
 # Ports are overridable so a busy 3000 does not block you:
 #   API_PORT=4000 docker compose up
 services:
+  # 26.3 is the current LTS: it and 25.8 are still being rebuilt while every
+  # release between them has gone stale.
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: aave
+      CLICKHOUSE_USER: aave
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ports:
+      - '${CLICKHOUSE_PORT:-8123}:8123'
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'clickhouse-client',
+          '--user',
+          'aave',
+          '--password',
+          '${CLICKHOUSE_PASSWORD:-aave}',
+          '--query',
+          'SELECT 1',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Runs once and exits. Migrating from the indexer's own boot would have every
+  # replica race the same DDL, so the schema is its own step.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP: indexer
+    command: ['node', 'dist/migrate.js']
+    restart: 'no'
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: aave
+      CLICKHOUSE_USER: aave
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -65,8 +114,17 @@ services:
       FINALITY_DEPTH: '128'
       # Main Spoke genesis: the log shows the catch-up walking wide ranges up to
       # the tip, then switching to one block at a time.
-      INDEXER_START_BLOCK: '24720899'
+      INDEXER_START_BLOCK: ${INDEXER_START_BLOCK:-24720899}
       INDEXER_MAX_RANGE_SIZE: '1000'
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: aave
+      CLICKHOUSE_USER: aave
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - '${INDEXER_PORT:-3001}:3001'
     healthcheck:
@@ -81,3 +139,6 @@ services:
       timeout: 3s
       retries: 3
       start_period: 15s
+
+volumes:
+  clickhouse-data:

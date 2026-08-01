@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { SPOKE_EVENT_PROCESSOR, SpokeEventsModule } from '@aave-positions/events';
+import { ClickHouseHealthIndicator } from '@packages/clickhouse';
 import {
   BLOCK_HEADER_STORE,
   HashChainReorgDetector,
@@ -7,11 +9,33 @@ import {
   IndexingModule,
   InMemoryBlockHeaderStore,
   InMemoryCursorStore,
-  LoggingBlockProcessor,
 } from '@packages/indexing';
 import { HealthModule, LoggingModule } from '@packages/ops';
 
 import { validateEnv, type Env } from './config/env';
+
+/**
+ * Everything Aave-specific: the client, the store and the processor that fills
+ * it. The application names which Spoke to follow and nothing else.
+ */
+const spokeEvents = SpokeEventsModule.forRootAsync({
+  imports: [ConfigModule],
+  inject: [ConfigService],
+  useFactory: (config: ConfigService<Env, true>) => ({
+    chainId: config.get('CHAIN_ID', { infer: true }),
+    spoke: config.get('MAIN_SPOKE_ADDRESS', { infer: true }),
+    rpc: {
+      rpcUrls: config.get('RPC_URLS', { infer: true }),
+      rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),
+    },
+    clickhouse: {
+      url: config.get('CLICKHOUSE_URL', { infer: true }),
+      database: config.get('CLICKHOUSE_DATABASE', { infer: true }),
+      username: config.get('CLICKHOUSE_USER', { infer: true }),
+      password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
+    },
+  }),
+});
 
 /**
  * Built once and referenced twice below. Nest identifies a dynamic module by
@@ -19,7 +43,7 @@ import { validateEnv, type Env } from './config/env';
  * module — and with it a second indexing loop racing the same cursor.
  */
 const indexing = IndexingModule.forRootAsync({
-  imports: [ConfigModule],
+  imports: [ConfigModule, spokeEvents],
   inject: [ConfigService],
   useFactory: (config: ConfigService<Env, true>) => ({
     chainId: config.get('CHAIN_ID', { infer: true }),
@@ -32,13 +56,10 @@ const indexing = IndexingModule.forRootAsync({
     stallThresholdMs: config.get('INDEXER_STALL_THRESHOLD_MS', { infer: true }),
     autoStart: config.get('INDEXER_AUTOSTART', { infer: true }),
   }),
-  // The processor is still a placeholder; the real event-decoding one replaces
-  // it without the loop changing.
-  processors: [LoggingBlockProcessor],
+  processors: [SPOKE_EVENT_PROCESSOR],
   reorgDetector: HashChainReorgDetector,
   cursorStore: InMemoryCursorStore,
   providers: [
-    LoggingBlockProcessor,
     HashChainReorgDetector,
     // Both in memory, and they want to become durable together: a cursor that
     // outlives the process while the window does not would name a resume point
@@ -72,8 +93,11 @@ const indexing = IndexingModule.forRootAsync({
     }),
     indexing,
     HealthModule.forRoot({
-      imports: [indexing],
-      indicators: [IndexerHealthIndicator],
+      // The same module objects referenced above, so this resolves the
+      // indicators already constructed rather than building a second graph.
+      // SpokeEventsModule re-exports ClickHouse, so its probe comes from there.
+      imports: [indexing, spokeEvents],
+      indicators: [IndexerHealthIndicator, ClickHouseHealthIndicator],
     }),
   ],
 })

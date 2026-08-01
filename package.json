@@ -10,9 +10,9 @@
   },
   "scripts": {
     "build": "pnpm -r build",
-    "build:packages": "pnpm --filter './packages/*' build",
+    "build:packages": "pnpm --filter './packages/**' build",
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test",
-    "clean": "rimraf 'apps/*/dist' 'apps/*/coverage' 'packages/*/dist' 'packages/*/coverage' 'apps/*/node_modules/.cache' 'packages/*/node_modules/.cache' '**/*.tsbuildinfo' coverage",
+    "clean": "rimraf 'apps/*/dist' 'apps/*/coverage' 'packages/**/dist' 'packages/**/coverage' 'apps/*/node_modules/.cache' 'packages/**/node_modules/.cache' '**/*.tsbuildinfo' coverage",
     "dev:api": "pnpm --filter @aave-v4-positions/api start:dev",
     "dev:indexer": "pnpm --filter @aave-v4-positions/indexer start:dev",
     "format": "prettier --write .",

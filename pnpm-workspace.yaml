@@ -1,6 +1,9 @@
 packages:
   - apps/*
   - packages/*
+  # Domain packages nest one level: packages/aave-positions/*. The bare
+  # packages/aave-positions directory has no manifest, so pnpm skips it.
+  - packages/*/*
 
 # pnpm 10+ requires postinstall scripts to be allow-listed explicitly.
 allowBuilds:
@@ -16,6 +19,13 @@ allowBuilds:
 # Single source of truth for dependency versions across every workspace package.
 # Packages reference these with `"<name>": "catalog:"`.
 catalog:
+  # Pinned exactly, unlike everything else here. This is a data dependency —
+  # contract addresses and ABIs — republished most days as Aave deploys, so a
+  # caret range would let the addresses the indexer targets change between two
+  # installs of the same commit. 4.61.2 carries byte-identical ISpokeV4 and
+  # IHubV4 ABIs and the same Main Spoke and Core Hub as the newest release;
+  # bump it deliberately, after re-checking those.
+  '@aave-dao/aave-address-book': 4.61.2
   '@clickhouse/client': ^1.23.1
   '@nestjs/common': ^11.1.28
   '@nestjs/config': ^4.0.4

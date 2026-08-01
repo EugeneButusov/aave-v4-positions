@@ -11,20 +11,22 @@ against those findings rather than v3 intuition.
 
 ## Status
 
-The **scaffold plus the indexing framework**. The workspace, both services, the test and lint
-toolchain, the operational shape a Kubernetes deployment expects — and a loop that walks the chain
-and hands block ranges to injected processors.
+The **indexing framework plus real event ingestion**. The workspace, both services, the test and
+lint toolchain, the operational shape a Kubernetes deployment expects — and a loop that walks
+Ethereum mainnet decoding Aave v4 Spoke position events into an append-only ClickHouse table.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook, the [indexing framework](#indexing) — chain client with provider failover, log reader,
 cursor and processor seams, and hash-chain reorg detection over a retained header window, with a
-detected fork re-reported on the next start until it has actually been applied — and the shared
-ClickHouse layer: client, readiness probe and the [migration runner](#schema-and-migrations).
+detected fork re-reported on the next start until it has actually been applied; the shared ClickHouse
+layer of client, readiness probe and [migration runner](#schema-and-migrations); and
+[event ingestion](#event-ingestion) — the eight Main Spoke events that move a position, decoded
+against the official ABI and stored so the position fold can read them.
 
-**Not yet:** any tables to migrate, event decoding, the enrichment source, the positions endpoints,
-Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and watches for
-forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
+**Not yet:** the position fold itself, Core Hub events and therefore any valuation, prices, health
+factors, the positions endpoints, durable cursor persistence, Kubernetes manifests. The API still
+serves one stub endpoint. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -46,7 +48,9 @@ forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
 │   │       │   ├── cursor/          durable position
 │   │       │   └── observability/   state machine and health indicator
 │   │       └── test-support/    fakes, exported so consumers test against them
-│   └── ops/                 probes, logging, graceful shutdown — no domain logic
+│   ├── ops/                 probes, logging, graceful shutdown — no domain logic
+│   └── aave-positions/      packages that know about Aave
+│       └── events/          ABI binding, decoder, append-only event store
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -57,8 +61,10 @@ Both services are NestJS applications. The API serves HTTP; the indexer is a wor
 listens, purely so Kubernetes has a probe target — no business endpoints are mounted on it.
 
 **The scope says whether a package knows about Aave.** Everything under `packages/` that does not
-is scoped `@packages` — the directory is the whole of its identity, because there is nothing about
-this product in it. `@aave-v4-positions` stays on the two apps, which _are_ the product.
+is scoped `@packages` — the directory is the whole of its identity. Anything that _does_ know is
+nested under `packages/aave-positions/` and scoped `@aave-positions`, so the import line says
+whether a module is protocol-aware before you open it. `@aave-v4-positions` stays on the two apps,
+which _are_ the product.
 
 `@packages/ops` holds the operational concerns both services share: probes, structured logging and
 the shutdown sequence — everything an operator needs and nothing a position needs. The name is the
@@ -71,11 +77,20 @@ readiness probe and the [migration runner](#schema-and-migrations), and nothing 
 stored in it. Repositories live with whatever owns their tables and inject the client from here, so
 this package never becomes a catalogue of every table in the system.
 
-`packages/indexing` is the [loop](#indexing) and the seams it drives. It knows about block numbers,
+`@packages/indexing` is the [loop](#indexing) and the seams it drives. It knows about block numbers,
 forks and cursors, and nothing about Aave — a processor is something a consumer writes. It had to
-leave `apps/indexer` for that to be true at all: a package cannot import from an app. What remains
-in the app is about 220 lines — `main.ts`, `AppModule` and env validation — and everything it _does_
-comes from the packages it wires together.
+leave `apps/indexer` for that to be true at all: a package cannot import from an app.
+
+`@aave-positions/events` is the first package on the other side of that line, and the only one so
+far. It ships `SpokeEventsModule`: the ClickHouse client, the event store and the block processor
+that fills it, behind one `forRootAsync`. The application says which Spoke to follow and hands the
+exported processor to the loop; it assembles none of the parts.
+
+`apps/indexer` is left with about 310 lines: `main.ts`, `AppModule`, env validation and the
+migration entry point. Everything it _does_ comes from the packages it wires together, which is what
+makes the engine reusable and the Aave half independently testable. It is also the composition point
+for schema: each package owns the migrations for its own tables, and the application declares which
+sets ship together — the same reason it is the application that names which processors to run.
 
 `pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
 no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config
@@ -88,6 +103,17 @@ aliases the workspace packages, one entry each, so tests can never exercise a st
 - **Node 24** — enforced by `engines` with `engine-strict` on, so an older runtime fails at install
   rather than at runtime. It is the only version CI runs, so the declaration and the evidence match.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
+- **Docker**, to run the tests. The event-store specs go against a real ClickHouse rather than a
+  mock: what they assert is that the SQL executes and that the collapsing semantics behave as
+  documented, and neither is something a fake can tell you. CI runs the same image as a service
+  container.
+
+  ```bash
+  docker run -d --rm --name clickhouse -p 8123:8123 -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server:26.3-alpine
+  ```
+
+  `CLICKHOUSE_SKIP_USER_SETUP` drops the generated password, so the defaults in the vitest config
+  need no configuration at all.
 
 There is no Nest CLI. `pnpm build` is `tsc`, and `pnpm dev:*` is `tsc --watch` plus `node --watch`.
 
@@ -101,6 +127,13 @@ That also installs the git hooks (via the `prepare` script). Then give each serv
 
 ```bash
 cp apps/api/.env.example apps/api/.env && cp apps/indexer/.env.example apps/indexer/.env
+```
+
+The indexer needs a ClickHouse to write to (see [Prerequisites](#prerequisites)) with the schema
+applied. It never migrates at boot, so this is a step:
+
+```bash
+pnpm --filter @aave-v4-positions/indexer migrate
 ```
 
 Run either service in watch mode:
@@ -129,17 +162,30 @@ Nothing to install but Docker — no Node, no pnpm:
 docker compose up --build
 ```
 
-Both services come up with health checks; `docker compose ps` shows them as `healthy` once their
-readiness probes pass. Same addresses as above (`:3000`, `:3001`, `/docs`). Tear down with
-`docker compose down`.
+Four services: ClickHouse, a one-shot `migrate` that applies the schema and exits, then the API and
+the indexer. `docker compose ps` shows the long-running three as `healthy` once their probes pass.
+Same addresses as above (`:3000`, `:3001`, `/docs`), ClickHouse on `:8123`. Tear down with
+`docker compose down`, or `down -v` to drop the indexed data with it.
 
-The indexer starts indexing immediately, against **`https://eth.drpc.org` by default** — so
-`docker compose up` makes real requests to a third party. Point it somewhere else with
-`RPC_URLS=https://your-node docker compose up`, or set `INDEXER_AUTOSTART=false` to bring up the
-probes without indexing. Watching `docker compose logs -f indexer` is the quickest way to see the
-framework work: it walks 1000-block ranges up from the Main Spoke genesis, and once it reaches the
-tip it switches to one block at a time. Measured on a cold start: 938 ranges to cover the backfill,
-with the final one self-truncating to 571 blocks so it stopped exactly on the finality boundary.
+The indexer waits for `migrate` to succeed rather than migrating at boot — replicas would otherwise
+race the same DDL — and then starts indexing against **`https://eth.drpc.org` by default**, so
+`docker compose up` makes real requests to a third party. Point it elsewhere with
+`RPC_URLS=https://your-node docker compose up`, or set `INDEXER_AUTOSTART=false` for probes only.
+
+`docker compose logs -f indexer` is the quickest way to watch it work: 1000-block ranges up from the
+Main Spoke genesis, the last one self-truncating to stop exactly on the finality boundary, then one
+block at a time at the tip. A full backfill is ~94 chunked requests and lands roughly 57k rows; to
+skip it while trying the stack out, start a few thousand blocks below the tip:
+
+```bash
+INDEXER_START_BLOCK=25656868 docker compose up --build
+```
+
+Then look at what it stored:
+
+```bash
+docker compose exec clickhouse clickhouse-client --user aave --password aave --database aave --query "SELECT event_name, count() FROM spoke_events_current GROUP BY event_name ORDER BY 2 DESC"
+```
 
 If 3000 or 3001 are taken:
 
@@ -167,13 +213,19 @@ Two details that exist so the drain actually works in a container:
 | ----------------------------------- | -------------------------------------------- |
 | `pnpm build`                        | compile both services to `apps/*/dist`       |
 | `pnpm dev:api` / `pnpm dev:indexer` | watch mode                                   |
-| `pnpm test`                         | every app's tests in one run                 |
+| `pnpm test`                         | every project's tests in one run             |
 | `pnpm test:watch` / `pnpm test:cov` | watch mode / V8 coverage                     |
 | `pnpm typecheck`                    | `tsc --noEmit` across the workspace          |
 | `pnpm lint` / `pnpm lint:fix`       | oxlint, type-aware                           |
 | `pnpm format` / `pnpm format:check` | Prettier                                     |
 | `pnpm check`                        | format, lint, typecheck, test — what CI runs |
 | `pnpm clean`                        | remove build output                          |
+
+Applying the ClickHouse schema is its own command, never something a service does at boot:
+
+```bash
+pnpm --filter @aave-v4-positions/indexer migrate
+```
 
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
 
@@ -251,14 +303,15 @@ a SQL parser that has to know about semicolons inside string literals and commen
 would think to test until it silently truncated a migration. A table and the view over it are
 therefore two files, which also means each is recorded and retried independently.
 
-Each package owns the migrations for the tables it defines, and the application names the
-directories that deploy together. The runner orders by ordinal _across_ directories rather than
+Each package owns the migrations for the tables it defines — `spoke_events` and its view belong to
+the events package — and the application names the directories that deploy together. The runner orders by ordinal _across_ directories rather than
 grouping by package, and rejects a set whose `NNN_` ordinals collide, naming both sides. Without
 that last part two packages could each reach for `002` without either author noticing, and the apply
 order would quietly depend on how the application happened to list the directories.
 
 Applying the schema is **its own step, never something a service does at boot** — two replicas
-starting together would race each other through the same DDL.
+starting together would race each other through the same DDL. Compose runs `migrate` as a one-shot
+service the indexer waits on.
 
 ## Indexing
 
@@ -430,9 +483,9 @@ together, so a rate-limit message carrying only the second does not narrow the r
 are pinned by tests built from the literal strings four public endpoints returned.
 
 **What is real and what is not.** The chain client, the log reader, the loop, the cursor seam, the
-outcome protocol and reorg detection all work. `LoggingBlockProcessor` only logs, so nothing is
-decoded or stored yet, and the loop's own failure paths are exercised by tests through scripted
-fakes rather than by the running service.
+outcome protocol, reorg detection and the event processor all work. `InMemoryCursorStore` forgets on
+restart, and the loop's own failure paths are exercised by tests through scripted fakes rather than
+by the running service.
 
 Three limits are worth stating plainly:
 
@@ -447,6 +500,120 @@ Three limits are worth stating plainly:
   what we processed. `bootstrap` holds one hash, finds nothing retained, and answers
   `unrecoverable`. It costs nothing today, since the cursor is in memory too and there is no resume
   to get wrong, but it is why the cursor and the window want to become durable in the same change.
+
+## Event ingestion
+
+`@aave-positions/events` turns Main Spoke logs into rows. It reads the range the loop dispatched with
+one `eth_getLogs`, decodes against the official ABI, and writes.
+
+**`SpokeEventsModule` is the whole surface an application uses.** It owns the ClickHouse client, the
+store and the processor, and exports the processor for `IndexingModule`'s `processors`. Following a
+second Spoke is a second call with a different address and its own token — nothing else changes,
+which is the property the split exists for. It binds its own `LOG_READER` rather than borrowing the
+loop's: a module in `IndexingModule`'s `imports` cannot reach what that module provides, since
+dynamic-module exports flow outward to importers and not inward.
+
+**Eight events**, exactly what §12.2 lists as the position fold's inputs plus the registry that gives
+`reserveId` a meaning: `Supply`, `Withdraw`, `Borrow`, `Repay`, `LiquidationCall`, `ReportDeficit`,
+`SetUsingAsCollateral`, `AddReserve`. Three protocol traps each carry a test rather than a comment —
+positions key on `user` and never `caller`, decoding is scoped by emitting address because
+`ReportDeficit` exists on both Spoke and Hub with different signatures, and the position managers'
+mirror events are excluded because folding them would double-count every routed action.
+
+**ABIs come from [`@aave-dao/aave-address-book`](https://github.com/bgd-labs/aave-address-book)**
+rather than being transcribed, and topics are derived from them at load rather than pasted — a stale
+hash matches nothing, which looks exactly like a quiet chain. Every topic derived this way matches
+the catalogue in the analysis, which was extracted independently from the Solidity interfaces. It is
+the one catalog entry pinned exactly rather than caret-ranged: it is a data dependency republished
+most days, so a range would let the addresses the indexer targets change between two installs of the
+same commit.
+
+**Storage is append-only. There is no `DELETE` and no mutation anywhere in the package.** The table
+is a `VersionedCollapsingMergeTree`, and a reorg retracts rows by writing their negation — the same
+mechanism a retry uses, so there is one write path rather than two. Every claim below was measured
+against the real engine rather than read off the documentation.
+
+- a retraction pairs on the sorting key, the version and an opposite sign — **not** on the other
+  columns, which collapse whatever they hold. Copying them all still matters, and for a sharper
+  reason: a materialized view sees each row as it is inserted, so a retraction missing a column
+  subtracts from the wrong group. Measured — dropping the user column left `alice=100` standing
+  beside `<null>=-100`, a ledger that nets to zero over projections that keep the position. The
+  store retracts with `INSERT … SELECT` from the view for that reason, and a spec compares the pair
+  column by column;
+- two `sign = +1` rows never collapse, so **revert-before-append** is what makes a dispatch
+  idempotent, not the engine — the store exposes the two as separate calls so the order is visible
+  where it is made, and a spec proves an `append` without the `revert` doubles the range;
+- `FINAL` leaks an unpaired retraction row where the `GROUP BY` view does not, which is why reads go
+  through `spoke_events_current` and never the table;
+- grouping by `version` is required, or a reorg's superseded row and its replacement collapse into
+  one group and `any()` can return the stale content.
+
+**Why not `ReplacingMergeTree(version, is_deleted)`**, which would make a repeated insert idempotent
+on its own and still retract by appending a tombstone. Because it resolves by _highest version wins_,
+so a retraction cancels whatever sits at that key rather than the generation it was meant to kill.
+Measured, same sequence under both engines — a reorg tombstone arriving after the new branch has
+already been indexed:
+
+|                                | after re-index | after a late tombstone |
+| ------------------------------ | -------------- | ---------------------- |
+| `ReplacingMergeTree`           | `new-branch`   | **0 rows**             |
+| `VersionedCollapsingMergeTree` | `new-branch`   | `new-branch`           |
+
+The retraction here is an `INSERT … SELECT` that copies the version of the row it read, so it cannot
+cancel a row it never saw and arrival order stops mattering. That is worth more than free
+idempotence, because three ordinary things invert the order: `Date.now()` is wall-clock and steps
+backwards under NTP, nothing enforces a single writer while the cursor is in memory, and any retry
+can reorder two writes. Under Replacing each of those is silent permanent loss that reads as "no
+events in that block"; under Collapsing they are harmless, and the idempotence gap they leave is
+loud, guarded, and pinned by a spec.
+
+**Materialized views over this table get reorgs for free, and must handle the sign themselves.** An
+MV is an insert trigger, so it sees each row as written — a retraction arrives as an ordinary insert
+carrying `sign = -1`, and `sum(sign * amount)` nets it out. Measured against a `SummingMergeTree`
+target: supply 100 → `100`; retract → `0`; re-index the new branch at 60 → `60`, and the target
+sheds the dead row entirely on merge. Two traps come with that:
+
+- **A merge on the source does not fire an MV.** Collapsing took `spoke_events` from 3 raw rows to 1
+  and the target stayed at 60. The `-1` row _is_ the deletion, so the sign has to be in the
+  projection's arithmetic rather than assumed away.
+- **The MV must read `spoke_events`, not `spoke_events_current`.** ClickHouse accepts the DDL over a
+  plain view and then never fires it — nothing inserts into a view, so there is no trigger and no
+  error. Measured: `42` into the table-sourced target, `0` into the view-sourced one, forever.
+
+**What the retraction costs.** It is one `INSERT … SELECT` per dispatched range, and the primary key
+`(chain_id, block_number, log_index)` prunes it to the granules the range touches, so the cost
+follows the range rather than the table:
+
+| case                                                  | rows read           | elapsed |
+| ----------------------------------------------------- | ------------------- | ------- |
+| empty range — every backfill chunk, every quiet block | 0                   | ~10 ms  |
+| populated 1000-block range, 57k-row table             | 8,192 (1 granule)   | 35 ms   |
+| populated 1000-block range, 627k-row table (11×)      | 15,510 (2 granules) | 10 ms   |
+
+So a full backfill spends well under a second on retractions across all 94 chunks, and at the tip it
+is ~10 ms once per block against a 12-second block time. The real cost is write amplification: a
+retracted range holds both generations until the next merge — 57,000 rows became 57,056 after
+retracting 56 — which is why the reads go through the view rather than waiting for a merge.
+
+**One row shape for all eight events.** Only three of them share a field layout — `Supply`,
+`Withdraw` and `Borrow` are identical but for field names — so a column per field would be mostly
+nulls and would need a migration per new event. Instead the indexed parameters stay the topic words
+they arrived as, in `topic1`/`topic2`/`topic3`, and everything decoded goes in `body` as JSON.
+
+Only `topic1` means the same thing across all eight: the reserve id, or the collateral one on
+`LiquidationCall`. `topic2` is `caller`, `user`, `debtReserveId` or `assetId` depending on the event,
+and `topic3` is `user` or `hub`, or absent on `ReportDeficit`. A reader that ignores `event_name`
+therefore gets the wrong field rather than nothing — which is why **this table is a ledger and
+nothing queries it directly**; the position fold reads one view per event, and that is where
+`user` becomes a name again.
+
+Every decoded `uint256` is stored as a string: §7.5 is about exactly the habit of narrowing one
+because it looks small. The raw topic words and `data` sit beside the decoded `body`, so a decoder
+bug is repairable by re-decoding what is already stored rather than re-fetching the backfill —
+§9.4's "repair is replay, not patch", one level down.
+
+Verified end to end against mainnet: the same block range was dispatched twice across a restart and
+the table holds one generation of it — 107 live rows, zero duplicate keys, zero mutations.
 
 ## Operational shape
 
@@ -570,20 +737,29 @@ commit. Bypass with `LEFTHOOK=0`, or one job with `LEFTHOOK_EXCLUDE=<name>`.
 
 Deliberate, in rough order of what comes next.
 
-- **Tables.** The ClickHouse layer is here; nothing defines a table through it yet. The analysis
-  settles what has to be stored — immutable raw events plus a derived projection, which is also what
-  makes reorg handling a replay rather than a patch (§8, §9). Until then `InMemoryCursorStore` is
-  the only adapter, so **the indexer restarts from `INDEXER_START_BLOCK` every time** rather than
-  resuming. The port is real and its resume behaviour is tested; the adapter is what is missing.
-  That adapter will also need a `withTransaction` seam so a processor's writes and the cursor
-  advance commit together — the gap between them is the one at-least-once window the design cannot
-  close on its own. It should bring a `BlockHeaderStore` adapter with it rather than leaving it to
-  follow: those two are what make an unapplied reorg re-derivable, and a durable cursor over an
-  in-memory window turns every cross-restart fork into `unrecoverable`, which is strictly worse than
-  today, where nothing survives and there is no resume to get wrong.
-- **Event decoding** — the Spoke and Hub processors, and the Hub asset mirror. That mirror is the
-  highest-risk component: one mishandled transition silently corrupts every supply valuation for that
-  asset, with no error, just wrong numbers.
+- **The position fold.** The immutable log is here; the derived projection that turns it into
+  balances is not (§8, §9). Note that a ClickHouse materialized view is an insert trigger, not a
+  query over `spoke_events_current`: it sees each row as written, retractions included, so the
+  target has to be sign-aware — a `SummingMergeTree` over `sign`-weighted shares rather than
+  something that reads the collapsed view.
+- **Core Hub events**, and so any valuation at all. Shares are stored; converting them to asset
+  amounts needs Hub state. `UpdateAsset` is the one worth having first and on its own — §5.3 shows
+  the Hub emits its own interest index, which is what lets debt be valued with no archive node and
+  no rate-strategy model. The 11-event Hub asset mirror is the highest-risk fold in the design
+  (§5.5): one mishandled transition silently corrupts every supply valuation for that asset, with no
+  error, just wrong numbers. Its own PR.
+- **A durable cursor.** `InMemoryCursorStore` is still the only adapter, so **the indexer restarts
+  from `INDEXER_START_BLOCK` every time** rather than resuming. Harmless now that writes are
+  idempotent — a restart re-indexes to the same rows — but it costs the requests again. The natural
+  shape is the same append-only discipline the event log uses: a cursor journal, insert on every
+  advance, read the newest row, no mutation. It will also need a `withTransaction` seam so a
+  processor's writes and the cursor advance commit together — the gap between them is the one
+  at-least-once window the design cannot close on its own. And it should bring a `BlockHeaderStore`
+  adapter with it rather than leaving it to follow: those two are what make an unapplied reorg
+  re-derivable, and a durable cursor over an in-memory window turns every cross-restart fork into
+  `unrecoverable`, which is strictly worse than today.
+- **The price layer**, and therefore USD values and health factors — ~8 Chainlink aggregators plus
+  two LST rebase sources (§7.4).
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.
 - **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
   must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far

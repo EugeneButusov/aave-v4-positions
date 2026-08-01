@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@aave-dao/aave-address-book':
+      specifier: 4.61.2
+      version: 4.61.2
     '@clickhouse/client':
       specifier: ^1.23.1
       version: 1.23.1
@@ -132,6 +135,12 @@ importers:
 
   apps/indexer:
     dependencies:
+      '@aave-positions/events':
+        specifier: workspace:*
+        version: link:../../packages/aave-positions/events
+      '@clickhouse/client':
+        specifier: 'catalog:'
+        version: 1.23.1
       '@nestjs/common':
         specifier: 'catalog:'
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -144,6 +153,9 @@ importers:
       '@nestjs/platform-express':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)
+      '@packages/clickhouse':
+        specifier: workspace:*
+        version: link:../../packages/clickhouse
       '@packages/indexing':
         specifier: workspace:*
         version: link:../../packages/indexing
@@ -172,6 +184,40 @@ importers:
       supertest:
         specifier: 'catalog:'
         version: 7.2.2
+
+  packages/aave-positions/events:
+    dependencies:
+      '@aave-dao/aave-address-book':
+        specifier: 'catalog:'
+        version: 4.61.2(viem@2.55.10(typescript@7.0.2)(zod@4.4.3))
+      '@clickhouse/client':
+        specifier: 'catalog:'
+        version: 1.23.1
+      '@nestjs/common':
+        specifier: 'catalog:'
+        version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@packages/clickhouse':
+        specifier: workspace:*
+        version: link:../../clickhouse
+      '@packages/indexing':
+        specifier: workspace:*
+        version: link:../../indexing
+      '@packages/ops':
+        specifier: workspace:*
+        version: link:../../ops
+      reflect-metadata:
+        specifier: 'catalog:'
+        version: 0.2.2
+      rxjs:
+        specifier: 'catalog:'
+        version: 7.8.2
+      viem:
+        specifier: 'catalog:'
+        version: 2.55.10(typescript@7.0.2)(zod@4.4.3)
+    devDependencies:
+      '@nestjs/testing':
+        specifier: 'catalog:'
+        version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
 
   packages/clickhouse:
     dependencies:
@@ -252,6 +298,11 @@ importers:
         version: 13.1.3
 
 packages:
+
+  '@aave-dao/aave-address-book@4.61.2':
+    resolution: {integrity: sha512-ihju24LNZzqNEcYILxk8CZbLvtJR+yedFQOBZ0ypWAs9aUumuw6/Rg5YZVSAadE7uAjMC9lF7F6DYI6V5BVrjw==}
+    peerDependencies:
+      viem: ^2.23.5
 
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
@@ -1989,6 +2040,10 @@ packages:
     resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
 
 snapshots:
+
+  '@aave-dao/aave-address-book@4.61.2(viem@2.55.10(typescript@7.0.2)(zod@4.4.3))':
+    dependencies:
+      viem: 2.55.10(typescript@7.0.2)(zod@4.4.3)
 
   '@adraffy/ens-normalize@1.11.1': {}
 

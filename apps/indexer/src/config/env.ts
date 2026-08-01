@@ -1,5 +1,26 @@
+import { MAIN_SPOKE_ADDRESS } from '@aave-positions/events';
 import { LOG_LEVELS } from '@packages/ops';
 import { z } from 'zod';
+
+/**
+ * How to reach ClickHouse.
+ *
+ * Its own fragment because the migration entry point needs exactly these and
+ * none of the chain configuration — it applies DDL and exits, so demanding a
+ * `CHAIN_ID` from it would be asking for a value it has no use for.
+ */
+const clickHouseEnv = {
+  CLICKHOUSE_URL: z.url().default('http://localhost:8123'),
+  CLICKHOUSE_DATABASE: z.string().min(1).default('default'),
+  CLICKHOUSE_USER: z.string().min(1).default('default'),
+  // Empty is legitimate: a container started with CLICKHOUSE_SKIP_USER_SETUP
+  // has no password, which is how the test and CI instances run.
+  CLICKHOUSE_PASSWORD: z.string().default(''),
+};
+
+export const clickHouseEnvSchema = z.object(clickHouseEnv);
+
+export type ClickHouseEnv = z.infer<typeof clickHouseEnvSchema>;
 
 /**
  * Environment contract for the indexer process.
@@ -74,6 +95,19 @@ export const envSchema = z.object({
     .enum(['true', 'false', '1', '0'])
     .default('true')
     .transform((value) => value === 'true' || value === '1'),
+
+  /**
+   * Which Spoke to follow. Defaults to the Main Spoke on mainnet, but it is
+   * configuration rather than a constant: the processor takes its address as an
+   * option, so a second Spoke is a second registration.
+   */
+  MAIN_SPOKE_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
+    .default(MAIN_SPOKE_ADDRESS)
+    .transform((value) => value.toLowerCase()),
+
+  ...clickHouseEnv,
 });
 
 export type Env = z.infer<typeof envSchema>;
