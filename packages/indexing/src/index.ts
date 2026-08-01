@@ -47,6 +47,12 @@ export {
 } from './indexing/observability/indexer-status';
 export { IndexerHealthIndicator } from './indexing/observability/indexer.health-indicator';
 
+export {
+  BackfillRunner,
+  type BackfillRequest,
+  type BackfillResult,
+} from './backfill/backfill-runner';
+
 export { IndexerService, type IterationResult } from './indexing/indexer.service';
 export { INDEXING_OPTIONS, type IndexingOptions } from './indexing/indexing.options';
 export { IndexingModule, type IndexingAsyncOptions } from './indexing/indexing.module';

@@ -213,6 +213,7 @@ Two details that exist so the drain actually works in a container:
 | ----------------------------------- | -------------------------------------------- |
 | `pnpm build`                        | compile both services to `apps/*/dist`       |
 | `pnpm dev:api` / `pnpm dev:indexer` | watch mode                                   |
+| `pnpm backfill --from X --to Y`     | push one block range through the processors  |
 | `pnpm test`                         | every project's tests in one run             |
 | `pnpm test:watch` / `pnpm test:cov` | watch mode / V8 coverage                     |
 | `pnpm typecheck`                    | `tsc --noEmit` across the workspace          |
@@ -500,6 +501,49 @@ Three limits are worth stating plainly:
   what we processed. `bootstrap` holds one hash, finds nothing retained, and answers
   `unrecoverable`. It costs nothing today, since the cursor is in memory too and there is no resume
   to get wrong, but it is why the cursor and the window want to become durable in the same change.
+
+### Backfilling a range on demand
+
+"Backfill" means two things here. The loop backfills to _reach_ the tip: once, from wherever its
+cursor sits, as fast as wide ranges allow. The command backfills a range you _name_, and moves
+nothing:
+
+```bash
+pnpm backfill --from 24720899 --to 24730899
+pnpm backfill --from 24720899 --to 24730899 --dry-run
+```
+
+It exists for work the loop cannot be asked for — a processor whose decoding was wrong over a known
+range, a processor that joined after the loop had walked past the history it needs, a range being
+checked by hand. Re-running a range is defined behaviour rather than a repair: dispatch is
+at-least-once and processors are required to be idempotent, so this needs no coordination with a
+running indexer.
+
+It shares the indexer's wiring — same config, same processors, resolved through the same DI — and
+deliberately not its state:
+
+- **No cursor.** `BackfillRunner` does not inject `CursorStore`, so it cannot move a running
+  indexer's resume point. Interrupted, it prints the block to pass to `--from` next.
+- **No reorgs.** It injects the detector narrowed to `Pick<ReorgDetector, 'safeHead'>` — the one
+  question with no side effect — so the compiler, not a comment, is what stops it committing or
+  rewinding a header window.
+- **Nothing above the safe head.** Having no way to unwind a fork, it refuses a range reaching into
+  the unsettled zone rather than clamping it, and names the highest block it would accept. The tip
+  is the loop's job.
+
+Retries are bounded here (`--max-attempts`, default 5) where the loop's are unbounded. Unbounded is
+right for a daemon, whose wedging surfaces on `/health/ready`; a command that never gives up just
+hangs a terminal with nothing watching it.
+
+`--processors` narrows a run to a subset, matched against `BlockProcessor.name`. The Spoke processor
+names itself after the address it follows, so that is what to pass — quoted, since it contains
+parentheses:
+
+```bash
+pnpm backfill --from 24720899 --to 24730899 --processors 'aave-events(0x94e7a5dc)'
+```
+
+`--help` lists the rest.
 
 ## Event ingestion
 
