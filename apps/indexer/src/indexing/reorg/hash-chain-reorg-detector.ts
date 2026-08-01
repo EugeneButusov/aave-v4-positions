@@ -22,9 +22,10 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
  *   when a header does not continue it, and {@link findAncestor} stops at a
  *   hole rather than assume what is inside it.
  * - **A reported fork stays owed until applied**, with nothing written down for
- *   it: the cursor is saved last, so an unfinished unwind leaves it naming a
- *   block the chain lacks and the window holding the ancestry to place it, and
- *   {@link bootstrap} reports the same range until it sticks.
+ *   it: an unfinished unwind leaves the cursor and the window disagreeing, and
+ *   {@link bootstrap} vets the higher of the two and reports the same range
+ *   until it sticks. The loop rewinds only after the cursor is durable, so the
+ *   window is the side left holding the abandoned branch.
  *
  * A fork reaching at or below `safeHead` is reported, never repaired: those
  * blocks went out as settled ranges and were never inspected.
@@ -279,12 +280,11 @@ export class HashChainReorgDetector implements ReorgDetector {
    * Turns a failed ancestry check into a verdict.
    *
    * `impliedLastInvalid` is the highest block the caller knows was processed on
-   * the abandoned branch; the window may know of a higher one, and the two
-   * disagree in both directions after a partly applied step — the loop commits
-   * a header before saving the cursor, and rewinds the window before saving the
-   * cursor. Reporting the larger of them is what keeps the range from inverting
-   * on the one side and from orphaning a block's writes on the other.
-   * Over-reporting is free: `onReorg` is an idempotent discard.
+   * the abandoned branch. Reporting the larger of it and the window's top keeps
+   * the range from inverting when a caller rewinds before it commits, which
+   * this loop does not do — it saves the cursor first — but which the detector
+   * has no way to require. Over-reporting is free: `onReorg` is an idempotent
+   * discard, and under-reporting orphans a block's writes.
    */
   private async locateFork(
     retained: readonly BlockHeader[],

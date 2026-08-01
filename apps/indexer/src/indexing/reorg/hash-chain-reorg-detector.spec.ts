@@ -510,18 +510,31 @@ describe('HashChainReorgDetector — an owed reorg survives the process', () => 
     await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(reported);
   });
 
+  it('reports the same fork again when the cursor landed but the rewind did not', async () => {
+    const h = harness();
+    await commit(h, ...blocks(494, 500));
+    h.chain.forkAbove(496, 'b');
+    const reported = await h.detector.inspect(h.chain.headerAt(501));
+
+    // The gap the loop actually leaves: it saves the cursor before rewinding,
+    // so a crash here has the cursor already naming 496 while the window still
+    // holds 497..500 from the branch that lost.
+    await expect(h.detector.bootstrap(cursorAt(496))).resolves.toEqual(reported);
+  });
+
   it('reports the same fork again when the rewind landed but the cursor did not', async () => {
     const h = harness();
     await commit(h, ...blocks(494, 500));
     h.chain.forkAbove(496, 'b');
     const reported = await h.detector.inspect(h.chain.headerAt(501));
 
-    // Everything the loop does before its one durable write.
+    // The opposite gap. The loop no longer produces it — the rewind runs after
+    // the cursor save — but the detector does not get to assume its caller's
+    // ordering, and this is the direction that inverts: the window now stops
+    // three blocks below the cursor, so reporting its top as the last invalid
+    // block would hand back onReorg(497, 496).
     await h.detector.rewindTo(496);
 
-    // The window now stops three blocks below the cursor. Reporting its top as
-    // the last invalid block would hand back onReorg(497, 496) — inverted, and
-    // three blocks of writes left orphaned.
     await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(reported);
   });
 

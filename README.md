@@ -259,7 +259,10 @@ the depth heuristic for `getBlock({ blockTag: 'finalized' })` later changes one 
 **Processors gate the cursor.** They return `ok` / `retry` / `failed` rather than throwing, and run
 sequentially in registration order, stopping at the first non-`ok`. The cursor advances only when all
 of them succeeded, and it is saved **last** — it is the single durable commit point, so a crash
-anywhere earlier replays the range rather than skipping it. The corollary is that dispatch is
+anywhere earlier replays the range rather than skipping it. Unwinding a fork is the one place
+something follows it, and for the same reason: the detector's rewind discards the headers that are
+the evidence of the abandoned branch, so it waits until the cursor is durable. The corollary is that
+dispatch is
 **at-least-once per processor per range**, and processors must be idempotent. That is not a wart: the
 analysis already models positions as a fold over an immutable log, so replay is the repair primitive
 (§8, §9.4).
@@ -304,17 +307,19 @@ than absorbed.
 
 **A reported fork is owed until it is applied, and the window is what remembers.** A verdict handed
 to the loop lives only as long as the process, so a crash mid-unwind must not lose it. Nothing extra
-is written down for that, because the cursor and the window already say it between them: the cursor
-is saved **last**, so until the unwinding has finished it names a block the chain does not have, and
-the window holds the ancestry to place it.
+is written down for that, because the cursor and the window already say it between them: while an
+unwind is unfinished the two disagree, and the disagreement is the record.
+
+**The rewind is the last step, after the cursor is durable.** A rewind discards the retained headers,
+and those headers are the evidence of the branch being abandoned — throwing them away for a write
+that has not landed yet gets the order backwards. So the gap the loop can die in leaves the cursor
+already correct and the window still holding the run above it, which is strictly more to work with
+than the reverse would leave.
 
 Every point the process can die therefore lands on the same answer. Before the discard was
-dispatched, after it, or after the rewind — `bootstrap` walks to the same ancestor and reports the
-same range, the loop re-dispatches, and `onReorg` is an idempotent discard. Only once the rewound
-cursor is durably saved does the question stop being asked. That last case is the one with a sharp
-edge: the rewind has already truncated the window, so it now stops below the cursor, and reporting
-its top as the last invalid block would give an inverted range and orphan the blocks between. Taking
-the higher of the cursor and the window is what closes it.
+dispatched, after it, or after the cursor save — `bootstrap` vets the higher of the cursor and the
+window, walks to the same ancestor and reports the same range, the loop re-dispatches, and `onReorg`
+is an idempotent discard. Only once the rewind has also run does the question stop being asked.
 
 The same check covers a fork that happened while the process was down and was never detected at all —
 same cursor, same window, same answer. There is one condition here, not two. A separate record of
@@ -328,9 +333,10 @@ unaided. A match settles it: a chain is ancestor-closed, so a canonical block ma
 beneath it canonical too, and the ordinary resume costs exactly one call. A mismatch means the
 process was stopped across a fork, and the retained headers are what locate it.
 
-The block it vets is the **highest one processed, which is not always the cursor**. `commit` runs
-before the cursor is saved, so a rejected save leaves the window one block ahead — and those events
-are already in the projection. If the chain then replaces exactly that block, its parent is
+The block it vets is the **highest one processed, which is not always the cursor**. Two things leave
+the window ahead: `commit` runs before the cursor is saved, so a rejected save leaves it one block
+up, and an unwind that saved the cursor but died before rewinding leaves it a whole run up. In the
+first case those events are already in the projection. If the chain then replaces exactly that block, its parent is
 untouched and the cursor still looks perfectly canonical; checking only the cursor would answer
 continuous and fold the replacement on top of a branch nothing ever discarded. `inspect` guards the
 same height for the same reason, since the loop replays that block whether or not the process

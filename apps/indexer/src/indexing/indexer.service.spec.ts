@@ -416,7 +416,7 @@ describe('IndexerService — the detector owns the chain shape', () => {
     expect(detector.inspected).toEqual([]);
   });
 
-  it('unwinds a fork in order: processors, then detector, then cursor', async () => {
+  it('unwinds a fork in order: processors, then cursor, then detector', async () => {
     const { service, detector, store, trace } = harness({
       chain: new FakeChainClient({ head: 105 }),
       store: new RecordingCursorStore(cursorAt(102)),
@@ -459,6 +459,28 @@ describe('IndexerService — the detector owns the chain shape', () => {
     // would be worse than none at all.
     expect(detector.rewoundTo).toEqual([]);
     expect(store.saved).toEqual([]);
+  });
+
+  it('keeps the retained headers when the cursor save rejects', async () => {
+    const { service, detector, store } = harness({
+      chain: new FakeChainClient({ head: 105 }),
+      store: new RecordingCursorStore(cursorAt(102)).failSave(1),
+    });
+    detector.queue({
+      type: 'reorg',
+      firstInvalidBlock: 101,
+      lastInvalidBlock: 102,
+      lastValidHash: hashOf('a', 100),
+    });
+
+    await service.runOnce();
+
+    // Those headers are the evidence of the branch being abandoned, and the
+    // rewind is what throws them away. Discarding them for a write that then
+    // failed would leave the detector holding less than it started with, having
+    // committed to nothing — so the rewind waits until the cursor is durable.
+    expect(store.saved).toEqual([]);
+    expect(detector.rewoundTo).toEqual([]);
   });
 
   it('stops rather than guessing when a fork runs deeper than the detector can see', async () => {
