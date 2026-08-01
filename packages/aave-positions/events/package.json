@@ -1,0 +1,39 @@
+{
+  "name": "@aave-positions/events",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Aave v4 Spoke event extraction: the ABI binding, the decoder, and the append-only ClickHouse event log",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/migrations','dist/store/migrations',{recursive:true})\"",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@aave-dao/aave-address-book": "catalog:",
+    "@packages/clickhouse": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@packages/ops": "workspace:*",
+    "@clickhouse/client": "catalog:",
+    "@nestjs/common": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:",
+    "viem": "catalog:"
+  },
+  "devDependencies": {
+    "@nestjs/testing": "catalog:"
+  }
+}

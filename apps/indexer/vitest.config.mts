@@ -14,6 +14,12 @@ export default defineConfig({
   // package: nothing derives these from package.json.
   resolve: {
     alias: {
+      '@aave-positions/events': fileURLToPath(
+        new URL('../../packages/aave-positions/events/src/index.ts', import.meta.url),
+      ),
+      '@packages/clickhouse': fileURLToPath(
+        new URL('../../packages/clickhouse/src/index.ts', import.meta.url),
+      ),
       '@packages/indexing': fileURLToPath(
         new URL('../../packages/indexing/src/index.ts', import.meta.url),
       ),

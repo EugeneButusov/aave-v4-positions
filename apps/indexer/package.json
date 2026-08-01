@@ -13,11 +13,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:cov": "vitest run --coverage"
+    "test:cov": "vitest run --coverage",
+    "migrate": "node dist/migrate.js"
   },
   "dependencies": {
+    "@aave-positions/events": "workspace:*",
+    "@packages/clickhouse": "workspace:*",
     "@packages/indexing": "workspace:*",
     "@packages/ops": "workspace:*",
+    "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
     "@nestjs/config": "catalog:",
     "@nestjs/core": "catalog:",
