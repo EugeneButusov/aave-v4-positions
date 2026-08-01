@@ -27,12 +27,18 @@ import type { BlockHeader } from '../../chain/chain-client';
  */
 export interface BlockHeaderStore {
   /**
-   * Every retained header for this chain, ascending by block number.
+   * Every retained header for this chain, in any order.
    *
-   * Ascending order is part of the contract, not an accident of the
-   * implementation — the detector walks the window from the top down. The array
-   * is the caller's to keep: an adapter must not hand out storage a reader
-   * could mutate.
+   * Deliberately not an ordering promise. The detector reads the window
+   * positionally and re-sorts what it gets, because an adapter returning rows
+   * in whatever order its store handed them back would not fail loudly — it
+   * would under-report a reorg, and that is the direction that loses writes. An
+   * obligation whose breach is silent is not worth placing on every future
+   * adapter. Returning them in block order anyway is kinder to anyone reading
+   * the store directly.
+   *
+   * The array is the caller's to keep: an adapter must not hand out storage a
+   * reader could mutate.
    *
    * What comes back should be an unbroken run of block numbers. That is the
    * detector's invariant rather than this port's to enforce — it only ever

@@ -56,8 +56,21 @@ class ForkingChain implements ChainClient {
   }
 }
 
+/**
+ * A store that hands its window back in the worst order it could. Stands in for
+ * an adapter that reads rows without an `ORDER BY`, which the port permits.
+ */
+class ShufflingStore extends InMemoryBlockHeaderStore {
+  override async load(chainId: number): Promise<BlockHeader[]> {
+    return (await super.load(chainId)).toReversed();
+  }
+}
+
 /** Commits the chain's header for each block, as the chain reads it right now. */
-async function commit({ detector, chain }: Harness, ...blockNumbers: number[]): Promise<void> {
+async function commit(
+  { detector, chain }: Pick<Harness, 'detector' | 'chain'>,
+  ...blockNumbers: number[]
+): Promise<void> {
   for (const blockNumber of blockNumbers) {
     // Sequential on purpose: each commit prunes relative to its own height, so
     // the order they land in is the retention behaviour under test.
@@ -256,6 +269,27 @@ describe('HashChainReorgDetector — inspect', () => {
     await expect(h.detector.inspect(h.chain.headerAt(105))).resolves.toEqual({
       type: 'unrecoverable',
       reason: 'no retained header between 100 and 103 is still canonical',
+    });
+  });
+
+  it('does not depend on the order the store returns the window in', async () => {
+    const chain = new FakeChainClient({ head: 1_000 });
+    const detector = new HashChainReorgDetector(
+      { chainId: CHAIN_ID, finalityDepth: 10 } as IndexingOptions,
+      chain,
+      new ShufflingStore(),
+    );
+    await commit({ detector, chain }, ...blocks(100, 104));
+    chain.forkAbove(102, 'b');
+
+    // Nearly everything reads the window positionally — the last entry bounds
+    // the invalid range, the first bounds a failed walk, and the walk descends.
+    // Taken in the wrong order this under-reports, which loses writes.
+    await expect(detector.inspect(chain.headerAt(105))).resolves.toEqual({
+      type: 'reorg',
+      firstInvalidBlock: 103,
+      lastInvalidBlock: 104,
+      lastValidHash: hashOf('a', 102),
     });
   });
 

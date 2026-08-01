@@ -73,7 +73,7 @@ export class HashChainReorgDetector implements ReorgDetector {
       // path. Reading headers here would record the branch that won and erase
       // the only evidence of the one that lost, making every fork look one
       // block deep. What was durably retained is all there is to go on.
-      const retained = await this.headers.load(this.options.chainId);
+      const retained = await this.retainedWindow();
       return this.locateFork(retained, cursor.lastBlock - 1, cursor.lastBlock);
     }
 
@@ -159,8 +159,24 @@ export class HashChainReorgDetector implements ReorgDetector {
     return this.safeHead(this.observedHead ?? (await this.chain.getHeadBlockNumber()));
   }
 
-  async inspect(header: BlockHeader): Promise<ReorgVerdict> {
+  /**
+   * The retained window, ascending.
+   *
+   * Sorted here rather than taken on trust from the adapter. Almost everything
+   * below reads the window positionally — the last entry is the top the invalid
+   * range is measured against, the first is the floor a failed walk reports,
+   * and the walk itself must descend — so rows arriving in whatever order a
+   * store happened to hand back would not fail loudly. They would under-report
+   * a reorg, which is the one direction that loses writes. At `finalityDepth +
+   * 1` entries the sort costs nothing worth naming.
+   */
+  private async retainedWindow(): Promise<BlockHeader[]> {
     const retained = await this.headers.load(this.options.chainId);
+    return retained.toSorted((left, right) => left.number - right.number);
+  }
+
+  async inspect(header: BlockHeader): Promise<ReorgVerdict> {
+    const retained = await this.retainedWindow();
 
     // Nothing retained means nothing processed: a cold start at `startBlock`,
     // with no ancestry to contradict. After bootstrap's seeding this is the
@@ -188,7 +204,7 @@ export class HashChainReorgDetector implements ReorgDetector {
   }
 
   async commit(header: BlockHeader): Promise<void> {
-    const retained = await this.headers.load(this.options.chainId);
+    const retained = await this.retainedWindow();
     const parent = retained.find((entry) => entry.number === header.number - 1);
 
     if (parent && parent.hash !== header.parentHash) {
