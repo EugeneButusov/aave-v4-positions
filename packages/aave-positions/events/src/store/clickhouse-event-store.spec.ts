@@ -9,7 +9,8 @@ import {
   EVENTS_VIEW,
   EVENT_MIGRATIONS_DIR,
 } from './clickhouse-event-store';
-import { loadMigrations, migrate } from '@packages/clickhouse';
+import { migrate } from '@packages/clickhouse';
+import { loadMigrations } from '@packages/migrations';
 
 const CHAIN_ID = 1;
 const SPOKE: Address = '0x94e7a5dcbe816e498b89ab752661904e2f56c485';

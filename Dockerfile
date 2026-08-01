@@ -18,6 +18,7 @@ COPY packages/aave-positions/events/package.json ./packages/aave-positions/event
 COPY packages/aave-positions/positions/package.json ./packages/aave-positions/positions/
 COPY packages/clickhouse/package.json ./packages/clickhouse/
 COPY packages/indexing/package.json ./packages/indexing/
+COPY packages/migrations/package.json ./packages/migrations/
 COPY packages/ops/package.json ./packages/ops/
 
 # --ignore-scripts skips the `prepare` hook, which installs git hooks: there is

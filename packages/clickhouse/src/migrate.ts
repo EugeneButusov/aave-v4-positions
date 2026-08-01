@@ -1,8 +1,7 @@
 import { join } from 'node:path';
 
 import type { ClickHouseClient } from '@clickhouse/client';
-
-import { loadMigrations, ordered, type Migration } from './migration';
+import { loadMigrations, ordered, type Migration } from '@packages/migrations';
 
 const LEDGER = 'schema_migrations';
 

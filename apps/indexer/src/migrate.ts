@@ -1,6 +1,7 @@
 import { EVENT_MIGRATIONS_DIR } from '@aave-positions/events';
 import { POSITION_MIGRATIONS_DIR } from '@aave-positions/positions';
-import { loadMigrations, migrate } from '@packages/clickhouse';
+import { migrate } from '@packages/clickhouse';
+import { loadMigrations } from '@packages/migrations';
 import { createClient } from '@clickhouse/client';
 
 import { clickHouseEnvSchema } from './config/env';

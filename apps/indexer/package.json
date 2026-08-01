@@ -27,6 +27,7 @@
     "@nestjs/platform-express": "catalog:",
     "@packages/clickhouse": "workspace:*",
     "@packages/indexing": "workspace:*",
+    "@packages/migrations": "workspace:*",
     "@packages/ops": "workspace:*",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",

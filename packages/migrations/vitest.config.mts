@@ -1,16 +1,10 @@
-import { fileURLToPath } from 'node:url';
-
 import { defineConfig } from 'vitest/config';
 
+// No `resolve.alias` block, unlike every other package here: this one has no
+// workspace dependencies to resolve to source, which is the point of it.
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@packages/migrations': fileURLToPath(new URL('../migrations/src/index.ts', import.meta.url)),
-      '@packages/ops': fileURLToPath(new URL('../ops/src/index.ts', import.meta.url)),
-    },
-  },
   test: {
-    name: 'clickhouse',
+    name: 'migrations',
     globals: true,
     environment: 'node',
     include: ['src/**/*.spec.ts'],
