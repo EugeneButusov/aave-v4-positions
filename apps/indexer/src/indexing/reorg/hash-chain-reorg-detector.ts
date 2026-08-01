@@ -70,12 +70,17 @@ export class HashChainReorgDetector implements ReorgDetector {
     const top = retained.at(-1);
 
     // The cursor is the durable commit point, but it is not always the highest
-    // block the processors have folded. `commit` runs before the cursor is
-    // saved, so a rejected save leaves the window one ahead — and those events
-    // are already in the projection. Vetting only the cursor would call that
-    // block's replacement continuous and fold it on top of a branch nothing
-    // ever discarded. Vet the higher of the two instead; if it is canonical,
-    // everything beneath it is.
+    // block the window knows about, and two partly applied steps leave it
+    // behind: `commit` runs before the cursor is saved, so a rejected save
+    // leaves the window one block up with those events already folded; and an
+    // unwind saves the cursor before rewinding, so a crash between the two
+    // leaves a whole stale run up there.
+    //
+    // Vetting only the cursor would answer continuous in both, and the fork
+    // would then surface a beat later on the next `inspect` — except where the
+    // block above has since fallen below the safe head, which is dispatched as
+    // a range and never inspected at all. Vet the higher of the two instead; if
+    // it is canonical, everything beneath it is.
     const ahead = top && top.number > cursor.lastBlock ? top : null;
     const highest = ahead?.number ?? cursor.lastBlock;
     const ourHash = ahead?.hash ?? cursor.lastHash;
@@ -279,12 +284,12 @@ export class HashChainReorgDetector implements ReorgDetector {
   /**
    * Turns a failed ancestry check into a verdict.
    *
-   * `impliedLastInvalid` is the highest block the caller knows was processed on
-   * the abandoned branch. Reporting the larger of it and the window's top keeps
-   * the range from inverting when a caller rewinds before it commits, which
-   * this loop does not do — it saves the cursor first — but which the detector
-   * has no way to require. Over-reporting is free: `onReorg` is an idempotent
-   * discard, and under-reporting orphans a block's writes.
+   * `impliedLastInvalid` is the highest block known to have been processed on
+   * the abandoned branch, and every caller works it out before walking:
+   * {@link bootstrap} takes the higher of the cursor and the window, and
+   * {@link inspect} is looking at the block itself. Widening it here against
+   * the window's top as well would never change the answer, and an unreachable
+   * guard is one a later reader trusts for a case it does not actually cover.
    */
   private async locateFork(
     retained: readonly BlockHeader[],
@@ -300,7 +305,7 @@ export class HashChainReorgDetector implements ReorgDetector {
     return {
       type: 'reorg',
       firstInvalidBlock: search.ancestor.number + 1,
-      lastInvalidBlock: Math.max(impliedLastInvalid, retained.at(-1)?.number ?? -1),
+      lastInvalidBlock: impliedLastInvalid,
       lastValidHash: search.ancestor.hash,
     };
   }
