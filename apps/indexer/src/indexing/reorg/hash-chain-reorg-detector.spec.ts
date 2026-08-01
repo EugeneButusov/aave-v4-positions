@@ -428,6 +428,25 @@ describe('HashChainReorgDetector — bootstrap', () => {
     });
   });
 
+  it('catches a fork that replaced only the resume point itself', async () => {
+    const h = harness();
+    await commit(h, ...blocks(494, 500));
+    // Only 500 is replaced. 499 is untouched, so 500's replacement names the
+    // very same parent — the link between them checks out on both branches.
+    h.chain.forkAbove(499, 'b');
+
+    // Which is why the comparison is against the hash we recorded for 500 and
+    // not against its parent link: a check that asked whether the canonical 500
+    // descends from our 499 would answer yes and fold the losing branch's
+    // events under its replacement.
+    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual({
+      type: 'reorg',
+      firstInvalidBlock: 500,
+      lastInvalidBlock: 500,
+      lastValidHash: hashOf('a', 499),
+    });
+  });
+
   it('refuses to resume when the window did not survive the restart', async () => {
     const h = harness();
     h.chain.forkAbove(499, 'b');
