@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 
 import { CHAIN_CLIENT, type BlockHeader, type ChainClient } from '../../chain/chain-client';
 import { BLOCK_HEADER_STORE, type BlockHeaderStore } from './block-header-store';
@@ -56,6 +56,8 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
  */
 @Injectable()
 export class HashChainReorgDetector implements ReorgDetector {
+  private readonly logger = new Logger(HashChainReorgDetector.name);
+
   constructor(
     @Inject(INDEXING_OPTIONS) private readonly options: IndexingOptions,
     @Inject(CHAIN_CLIENT) private readonly chain: ChainClient,
@@ -198,8 +200,23 @@ export class HashChainReorgDetector implements ReorgDetector {
 
   async commit(header: BlockHeader): Promise<void> {
     const retained = await this.headers.load(this.options.chainId);
+    const parent = retained.find((entry) => entry.number === header.number - 1);
 
-    if (!joinsTheRun(retained, header.number)) {
+    if (parent && parent.hash !== header.parentHash) {
+      // `inspect` makes this check for every block at the tip, but a settled
+      // range is dispatched without inspection — and a one-block one (the
+      // range that truncates on the boundary, or a range narrowed to 1 by a
+      // fussy provider) would otherwise seat a header on a parent nothing ever
+      // compared it against. A break here means the chain changed at or below
+      // the safe head, which the finality assumption says cannot happen and
+      // which nothing else in the design would notice.
+      this.logger.warn(
+        `block ${header.number} does not extend retained block ${parent.number}; ` +
+          'something changed at or below the safe head, so the window is being restarted',
+      );
+    }
+
+    if (!continuesTheRun(retained, header)) {
       // A header that does not touch the retained run would leave a hole, and
       // a run on the far side of a hole cannot be walked back through — so it
       // is not evidence of anything and is dropped rather than kept as
@@ -300,15 +317,25 @@ type AncestorSearch =
   | { readonly kind: 'hole'; readonly missing: number };
 
 /**
- * Whether `blockNumber` extends, replaces or sits inside the retained run —
- * that is, whether writing it leaves the window a single unbroken sequence.
+ * Whether writing `header` leaves the window a single unbroken **hash** chain,
+ * not merely an unbroken sequence of numbers.
+ *
+ * When the run already holds the block below this one, that is settled by the
+ * link between them and nothing else — adjacent numbers over mismatched hashes
+ * are two branches stacked on top of each other, which is worse than a hole
+ * because it still looks walkable. Only where there is no such neighbour does
+ * the number decide, and then only to tell an extension or a re-commit apart
+ * from a jump.
  */
-function joinsTheRun(retained: readonly BlockHeader[], blockNumber: number): boolean {
+function continuesTheRun(retained: readonly BlockHeader[], header: BlockHeader): boolean {
   const oldest = retained[0];
   const newest = retained.at(-1);
   if (!oldest || !newest) return true;
 
-  return blockNumber >= oldest.number - 1 && blockNumber <= newest.number + 1;
+  const parent = retained.find((entry) => entry.number === header.number - 1);
+  if (parent) return parent.hash === header.parentHash;
+
+  return header.number >= oldest.number - 1 && header.number <= newest.number + 1;
 }
 
 /** Names which of the three ways to fail actually happened. */

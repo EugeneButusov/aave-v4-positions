@@ -483,6 +483,20 @@ describe('HashChainReorgDetector — retention', () => {
     await expect(retained(h)).resolves.toEqual([]);
   });
 
+  it('restarts the window when a block does not extend the header below it', async () => {
+    const h = harness();
+    await commit(h, 100);
+    // A change at or below the safe head, which the settled path dispatches
+    // without inspecting. Adjacent numbers alone would have accepted this.
+    h.chain.forkAbove(99, 'b');
+
+    await commit(h, 101);
+
+    // Two branches stacked on one another would still look walkable, which is
+    // worse than a hole — the walk would stop at a block we never processed.
+    await expect(retained(h)).resolves.toEqual([101]);
+  });
+
   it('replaces a height re-committed on another branch', async () => {
     const h = harness();
     await commit(h, 100);
