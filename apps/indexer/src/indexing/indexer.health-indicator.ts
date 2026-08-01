@@ -1,7 +1,7 @@
 import type { HealthIndicator } from '@aave-v4-positions/ops';
 import { Inject, Injectable } from '@nestjs/common';
 
-import { IndexerService } from './indexer.service';
+import { IndexerStatus } from './indexer-status';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
 
 /**
@@ -22,12 +22,12 @@ export class IndexerHealthIndicator implements HealthIndicator {
   readonly name = 'indexer';
 
   constructor(
-    private readonly indexer: IndexerService,
+    private readonly status: IndexerStatus,
     @Inject(INDEXING_OPTIONS) private readonly options: IndexingOptions,
   ) {}
 
   check(): void {
-    const { state, reason, lastBlock, head, lastProgressAt } = this.indexer.snapshot;
+    const { state, reason, lastBlock, head, lastProgressAt } = this.status.snapshot;
 
     if (state === 'failed') {
       throw new Error(`indexing stopped: ${reason ?? 'unknown reason'}`);

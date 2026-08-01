@@ -10,6 +10,7 @@ import {
 import { CHAIN_CLIENT, type ChainClient, type Hash } from '../chain/chain-client';
 import { BLOCK_PROCESSORS, type BlockProcessor, type ProcessorOutcome } from './block-processor';
 import { CURSOR_STORE, type Cursor, type CursorStore } from './cursor-store';
+import { IndexerStatus } from './indexer-status';
 import {
   INDEXING_OPTIONS,
   RETRY_BASE_MS,
@@ -18,8 +19,6 @@ import {
   type IndexingOptions,
 } from './indexing.options';
 import { REORG_DETECTOR, type ReorgDetector } from './reorg-detector';
-
-export type IndexerState = 'starting' | 'running' | 'retrying' | 'failed' | 'stopped';
 
 /**
  * What one iteration accomplished. Drives both the backoff and, through
@@ -32,14 +31,6 @@ export type IterationResult =
   | { readonly kind: 'idle' }
   | { readonly kind: 'retry'; readonly reason: string }
   | { readonly kind: 'failed'; readonly reason: string };
-
-export interface IndexerSnapshot {
-  readonly state: IndexerState;
-  readonly reason: string | null;
-  readonly lastBlock: number | null;
-  readonly head: number | null;
-  readonly lastProgressAt: number;
-}
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -71,10 +62,7 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
   private readonly logger = new Logger(IndexerService.name);
   private readonly abort = new AbortController();
 
-  private state: IndexerState = 'starting';
-  private failureReason: string | null = null;
   private cursor: Cursor | null = null;
-  private head = -1;
   private chainIdVerified = false;
   private bootstrapped = false;
   /**
@@ -86,8 +74,6 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
    * to record one loop's local backoff.
    */
   private effectiveMaxRange: number;
-  private attempts = 0;
-  private lastProgressAt = Date.now();
   private started = false;
   private runner: Promise<void> | undefined;
 
@@ -96,22 +82,12 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     @Inject(CHAIN_CLIENT) private readonly chain: ChainClient,
     @Inject(REORG_DETECTOR) private readonly detector: ReorgDetector,
     @Inject(CURSOR_STORE) private readonly cursorStore: CursorStore,
+    private readonly status: IndexerStatus,
     @Optional()
     @Inject(BLOCK_PROCESSORS)
     private readonly processors: BlockProcessor[] = [],
   ) {
     this.effectiveMaxRange = options.maxRangeSize;
-  }
-
-  /** Everything the health indicator needs, and nothing it can mutate. */
-  get snapshot(): IndexerSnapshot {
-    return {
-      state: this.state,
-      reason: this.failureReason,
-      lastBlock: this.cursor?.lastBlock ?? null,
-      head: this.head < 0 ? null : this.head,
-      lastProgressAt: this.lastProgressAt,
-    };
   }
 
   onApplicationBootstrap(): void {
@@ -149,25 +125,26 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
    * stopped indexer by calling again.
    */
   async runOnce(): Promise<IterationResult> {
-    if (this.state === 'failed') {
-      return { kind: 'failed', reason: this.failureReason ?? 'indexing stopped' };
+    if (this.status.isFailed) {
+      return { kind: 'failed', reason: this.status.failureReason ?? 'indexing stopped' };
     }
     return this.record(await this.iterate());
   }
 
+  /** Translates what happened into a state transition. */
   private record(result: IterationResult): IterationResult {
-    if (result.kind === 'failed') {
-      this.state = 'failed';
-      this.failureReason = result.reason;
-    } else if (result.kind === 'retry') {
-      this.state = 'retrying';
-      this.attempts += 1;
-    } else {
-      this.state = 'running';
-      this.attempts = 0;
-      // Idle counts as progress: being caught up is the healthy steady state,
-      // and the stall alarm must not fire on a quiet chain.
-      this.lastProgressAt = Date.now();
+    switch (result.kind) {
+      case 'failed':
+        this.status.failed(result.reason);
+        break;
+      case 'retry':
+        this.status.retried(result.reason);
+        break;
+      case 'idle':
+        this.status.idled();
+        break;
+      default:
+        this.status.progressed(result.cursorAt);
     }
     return result;
   }
@@ -180,19 +157,14 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       const resumed = await this.bootstrap();
       if (resumed) return resumed;
 
-      const observed = await this.chain.getHeadBlockNumber();
-      if (observed < this.head) {
-        // Providers are not synchronised, and viem's fallback does not
-        // reconcile them: failing over to a lagging node makes the head appear
-        // to move backwards, which is otherwise indistinguishable from a reorg.
-        this.logger.warn(`head regressed ${this.head} -> ${observed}; clamping to the high mark`);
-      }
-      this.head = Math.max(this.head, observed);
+      // Clamped to the high-water mark inside the status — a provider failover
+      // can otherwise make the head appear to move backwards.
+      const head = this.status.observeHead(await this.chain.getHeadBlockNumber());
 
       const next = this.cursor ? this.cursor.lastBlock + 1 : this.options.startBlock;
-      if (next > this.head) return { kind: 'idle' };
+      if (next > head) return { kind: 'idle' };
 
-      const safeHead = await this.detector.safeHead(this.head);
+      const safeHead = await this.detector.safeHead(head);
 
       // Awaited inside the try rather than returned from it: a returned promise
       // settles after the try block has exited, so a rejection from either
@@ -425,21 +397,23 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       }
 
       if (result.kind === 'retry') {
-        this.logger.warn(`iteration failed (attempt ${this.attempts}): ${result.reason}`);
+        this.logger.warn(
+          `iteration failed (attempt ${this.status.consecutiveFailures}): ${result.reason}`,
+        );
       }
 
       // oxlint-disable-next-line no-await-in-loop
       await this.sleep(this.delayFor(result));
     }
 
-    this.state = 'stopped';
+    this.status.stopped();
   }
 
   private delayFor(result: IterationResult): number {
     if (result.kind === 'progressed') return 0;
     if (result.kind === 'idle') return this.options.pollIntervalMs;
 
-    const exponent = Math.min(this.attempts - 1, 16);
+    const exponent = Math.min(this.status.consecutiveFailures - 1, 16);
     return Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, exponent));
   }
 

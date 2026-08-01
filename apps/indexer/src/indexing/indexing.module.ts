@@ -12,6 +12,7 @@ import { BLOCK_PROCESSORS, type BlockProcessor } from './block-processor';
 import { CURSOR_STORE } from './cursor-store';
 import { IndexerHealthIndicator } from './indexer.health-indicator';
 import { IndexerService } from './indexer.service';
+import { IndexerStatus } from './indexer-status';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
 import { REORG_DETECTOR } from './reorg-detector';
 
@@ -101,10 +102,17 @@ export class IndexingModule {
         // Constructing the adapter does no I/O, so this cannot make boot depend
         // on a reachable node. The chain id is checked on the first iteration.
         { provide: CHAIN_CLIENT, useClass: ViemChainClient },
+        IndexerStatus,
         IndexerService,
         IndexerHealthIndicator,
       ],
-      exports: [IndexerService, IndexerHealthIndicator, INDEXING_OPTIONS, CHAIN_CLIENT],
+      exports: [
+        IndexerService,
+        IndexerStatus,
+        IndexerHealthIndicator,
+        INDEXING_OPTIONS,
+        CHAIN_CLIENT,
+      ],
     };
   }
 }

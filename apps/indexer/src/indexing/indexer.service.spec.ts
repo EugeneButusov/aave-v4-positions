@@ -7,6 +7,7 @@ import { ScriptedReorgDetector } from '../../test/fakes/scripted-reorg-detector'
 import { failed, retry } from './block-processor';
 import type { Cursor } from './cursor-store';
 import { IndexerService } from './indexer.service';
+import { IndexerStatus } from './indexer-status';
 import type { IndexingOptions } from './indexing.options';
 
 const BASE_OPTIONS: IndexingOptions = {
@@ -23,6 +24,7 @@ const BASE_OPTIONS: IndexingOptions = {
 
 interface Harness {
   readonly service: IndexerService;
+  readonly status: IndexerStatus;
   readonly chain: FakeChainClient;
   readonly detector: ScriptedReorgDetector;
   readonly store: RecordingCursorStore;
@@ -52,15 +54,17 @@ function harness(
       (_, i) => new RecordingProcessor(`p${i + 1}`, trace),
     );
 
+  const status = new IndexerStatus();
   const service = new IndexerService(
     { ...BASE_OPTIONS, ...setup.options },
     chain,
     detector,
     store,
+    status,
     processors,
   );
 
-  return { service, chain, detector, store, processors, trace };
+  return { service, status, chain, detector, store, processors, trace };
 }
 
 function cursorAt(lastBlock: number, branch = 'a'): Cursor {
@@ -302,7 +306,7 @@ describe('IndexerService — outcome gates the cursor', () => {
   });
 
   it('does no further work once a processor has failed', async () => {
-    const { service, detector, store, processors } = harness();
+    const { service, status, detector, store, processors } = harness();
     detector.settledThrough(1_000);
     processors[0]?.queue(failed('schema mismatch'));
 
@@ -312,11 +316,11 @@ describe('IndexerService — outcome gates the cursor', () => {
     expect(second.kind).toBe('failed');
     expect(ranges(processors[0]!)).toHaveLength(1);
     expect(store.saved).toEqual([]);
-    expect(service.snapshot.state).toBe('failed');
+    expect(status.snapshot.state).toBe('failed');
   });
 
   it('treats a thrown error as retryable and keeps going', async () => {
-    const { service, detector, store, processors } = harness();
+    const { service, status, detector, store, processors } = harness();
     detector.settledThrough(1_000);
     processors[0]?.throwOnCall(new TypeError('cannot read property of undefined'));
 
@@ -327,7 +331,7 @@ describe('IndexerService — outcome gates the cursor', () => {
       reason: 'p1 threw: cannot read property of undefined',
     });
     expect(store.saved).toEqual([]);
-    expect(service.snapshot.state).toBe('retrying');
+    expect(status.snapshot.state).toBe('retrying');
   });
 
   it('halves the range when a processor asks to narrow', async () => {
@@ -519,7 +523,7 @@ describe('IndexerService — loop guards', () => {
 
   it('clamps a head that goes backwards when a provider lags', async () => {
     const chain = new FakeChainClient({ head: 1_000 });
-    const { service, detector, processors } = harness({ chain });
+    const { service, status, detector, processors } = harness({ chain });
     detector.settledThrough(1_000);
 
     await service.runOnce();
@@ -532,7 +536,7 @@ describe('IndexerService — loop guards', () => {
       [100, 149],
       [150, 199],
     ]);
-    expect(service.snapshot.head).toBe(1_000);
+    expect(status.snapshot.head).toBe(1_000);
   });
 
   it('stops when the providers serve a different chain than configured', async () => {
@@ -559,13 +563,13 @@ describe('IndexerService — loop guards', () => {
   });
 
   it('retries rather than stopping when the chain is unreachable', async () => {
-    const { service, chain } = harness();
+    const { service, status, chain } = harness();
     chain.failNext(1, new Error('ECONNREFUSED'));
 
     const result = await service.runOnce();
 
     expect(result).toEqual({ kind: 'retry', reason: 'unhandled: ECONNREFUSED' });
-    expect(service.snapshot.state).toBe('retrying');
+    expect(status.snapshot.state).toBe('retrying');
   });
 
   it('does not start a loop when autostart is off', async () => {
@@ -592,17 +596,17 @@ describe('IndexerService — loop guards', () => {
   });
 
   it('stops the loop on shutdown', async () => {
-    const { service, detector } = harness({ options: { autoStart: true } });
+    const { service, status, detector } = harness({ options: { autoStart: true } });
     detector.settledThrough(1_000);
 
     service.onApplicationBootstrap();
     await service.onApplicationShutdown();
-    const afterShutdown = service.snapshot.lastBlock;
+    const afterShutdown = status.snapshot.lastBlock;
 
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(service.snapshot.state).toBe('stopped');
-    expect(service.snapshot.lastBlock).toBe(afterShutdown);
+    expect(status.snapshot.state).toBe('stopped');
+    expect(status.snapshot.lastBlock).toBe(afterShutdown);
   });
 
   it('tells processors that shutdown has begun', async () => {

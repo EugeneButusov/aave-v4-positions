@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { IndexerService, IndexerSnapshot } from './indexer.service';
+import type { IndexerSnapshot, IndexerStatus } from './indexer-status';
 import { IndexerHealthIndicator } from './indexer.health-indicator';
 import type { IndexingOptions } from './indexing.options';
 
@@ -13,11 +13,12 @@ function indicator(snapshot: Partial<IndexerSnapshot>): IndexerHealthIndicator {
     lastBlock: 500,
     head: 1_000,
     lastProgressAt: Date.now(),
+    consecutiveFailures: 0,
     ...snapshot,
   };
 
   return new IndexerHealthIndicator(
-    { snapshot: full } as IndexerService,
+    { snapshot: full } as IndexerStatus,
     {
       stallThresholdMs: STALL_THRESHOLD_MS,
     } as IndexingOptions,
