@@ -69,20 +69,22 @@ export class HashChainReorgDetector implements ReorgDetector {
     const retained = await this.retainedWindow();
     const top = retained.at(-1);
 
-    // The cursor is the durable commit point, but it is not always the highest
-    // block the window knows about, and two partly applied steps leave it
-    // behind: `commit` runs before the cursor is saved, so a rejected save
-    // leaves the window one block up with those events already folded; and an
-    // unwind saves the cursor before rewinding, so a crash between the two
-    // leaves a whole stale run up there.
+    // The window's top is the highest block we processed, and the cursor never
+    // runs ahead of it: both writes that move them run the window first — the
+    // loop commits before saving the cursor, and rewinds only after saving it.
+    // So the two are equal in the steady state and the window is one block or
+    // one run up while a step is part-applied.
     //
-    // Vetting only the cursor would answer continuous in both, and the fork
-    // would then surface a beat later on the next `inspect` — except where the
-    // block above has since fallen below the safe head, which is dispatched as
-    // a range and never inspected at all. Vet the higher of the two instead; if
-    // it is canonical, everything beneath it is.
-    const ahead = top && top.number > cursor.lastBlock ? top : null;
-    const ours = ahead ?? { number: cursor.lastBlock, hash: cursor.lastHash };
+    // Vetting the cursor instead would answer continuous on both of those gaps.
+    // The fork would surface a beat later on the next `inspect`, except where
+    // the block above has since fallen below the safe head — that goes out as a
+    // range, is never inspected, and the events already folded on the losing
+    // branch would simply stay.
+    //
+    // The cursor is the fallback for an empty window, which is a cold start or
+    // a window that did not outlive the process. Its hash is a complete answer
+    // on its own: a block hash commits to its whole ancestry.
+    const ours = top ?? { number: cursor.lastBlock, hash: cursor.lastHash };
 
     const canonical = await this.chain.getBlockHeader(ours.number);
 

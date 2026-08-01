@@ -91,7 +91,18 @@ export interface ReorgDetector {
    */
   commit(header: BlockHeader): void | Promise<void>;
 
-  /** Discard every retained header above `lastValidBlock`. */
+  /**
+   * Discard every retained header above `lastValidBlock`.
+   *
+   * **Called after the rewound cursor has been saved, never before.** What a
+   * detector retains is the evidence of the branch being abandoned, so
+   * discarding it for a write that has not landed yet would leave the detector
+   * holding less than it started with, having committed to nothing. Running it
+   * afterwards means a crash in between leaves the *window* ahead of the
+   * cursor, which is the direction a detector can resolve on its own — and one
+   * it may rely on: {@link bootstrap} is entitled to treat its highest retained
+   * header as the highest block processed.
+   */
   rewindTo(lastValidBlock: number): void | Promise<void>;
 }
 

@@ -470,33 +470,14 @@ describe('HashChainReorgDetector — bootstrap', () => {
     // the loop bootstraps again from scratch.
     await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(first);
   });
-
-  it('re-reports the whole range after a rewind whose cursor save failed', async () => {
-    const h = harness();
-    await commit(h, ...blocks(494, 500));
-    h.chain.forkAbove(496, 'b');
-
-    await h.detector.bootstrap(cursorAt(500));
-    await h.detector.rewindTo(496);
-
-    // The window is now three blocks below the cursor, which still points into
-    // the abandoned branch. Reporting the window's top as the last invalid
-    // block would hand the loop onReorg(497, 496) — an inverted range.
-    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual({
-      type: 'reorg',
-      firstInvalidBlock: 497,
-      lastInvalidBlock: 500,
-      lastValidHash: hashOf('a', 496),
-    });
-  });
 });
 
 /**
- * The loop saves the cursor last, so until a fork has been fully unwound the
- * cursor names a block the chain no longer has and the window still holds the
- * ancestry to place it. Between them they are the record that a reorg is owed;
- * nothing else is written down. These cover every point the process can die
- * between reporting a fork and finishing with it.
+ * The loop rewinds only after the cursor is durable, so until a fork has been
+ * fully unwound the window still holds the run above a cursor that has already
+ * moved. That disagreement is the record that a reorg is owed; nothing else is
+ * written down. These cover every point the process can die between reporting a
+ * fork and finishing with it.
  */
 describe('HashChainReorgDetector — an owed reorg survives the process', () => {
   it('reports the same fork again when nothing was applied', async () => {
@@ -520,22 +501,6 @@ describe('HashChainReorgDetector — an owed reorg survives the process', () => 
     // so a crash here has the cursor already naming 496 while the window still
     // holds 497..500 from the branch that lost.
     await expect(h.detector.bootstrap(cursorAt(496))).resolves.toEqual(reported);
-  });
-
-  it('reports the same fork again when the rewind landed but the cursor did not', async () => {
-    const h = harness();
-    await commit(h, ...blocks(494, 500));
-    h.chain.forkAbove(496, 'b');
-    const reported = await h.detector.inspect(h.chain.headerAt(501));
-
-    // The opposite gap. The loop no longer produces it — the rewind runs after
-    // the cursor save — but the detector does not get to assume its caller's
-    // ordering, and this is the direction that inverts: the window now stops
-    // three blocks below the cursor, so reporting its top as the last invalid
-    // block would hand back onReorg(497, 496).
-    await h.detector.rewindTo(496);
-
-    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(reported);
   });
 
   it('stops reporting it once the rewound cursor has been saved', async () => {
