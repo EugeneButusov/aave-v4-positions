@@ -21,16 +21,13 @@ import type { BlockHeaderStore } from './block-header-store';
 export class InMemoryBlockHeaderStore implements BlockHeaderStore {
   private readonly windows = new Map<number, BlockHeader[]>();
 
+  /** A copy: a caller that mutated what it read would be writing through a read. */
   load(chainId: number): Promise<BlockHeader[]> {
-    // A copy: the window is the store's, and a caller that mutated what it read
-    // would be writing through a read.
     return Promise.resolve([...(this.windows.get(chainId) ?? [])]);
   }
 
+  /** Dropping any entry at this height first is what makes the write an upsert. */
   append(chainId: number, header: BlockHeader, retainFrom: number): Promise<void> {
-    // Dropping any existing entry at this height first is what makes the write
-    // an upsert; the loop re-commits a block whose cursor save failed, and after
-    // a fork it re-commits the same height with a different hash.
     const others = (this.windows.get(chainId) ?? []).filter(
       (entry) => entry.number !== header.number,
     );
