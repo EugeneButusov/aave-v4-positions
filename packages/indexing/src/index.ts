@@ -1,12 +1,22 @@
 export {
   CHAIN_CLIENT,
   CHAIN_CLIENT_OPTIONS,
+  type Address,
   type BlockHeader,
   type ChainClient,
   type ChainClientOptions,
   type Hash,
+  type Hex,
 } from './chain/chain-client';
 export { ViemChainClient } from './chain/viem-chain-client';
+export { ViemLogReader } from './chain/viem-log-reader';
+export {
+  LOG_READER,
+  LogRangeTooLargeError,
+  type LogFilter,
+  type LogReader,
+  type RawLog,
+} from './chain/log-reader';
 
 export { CURSOR_STORE, type Cursor, type CursorStore } from './indexing/cursor/cursor-store';
 export { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';

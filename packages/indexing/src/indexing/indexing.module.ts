@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 
 import { CHAIN_CLIENT, CHAIN_CLIENT_OPTIONS } from '../chain/chain-client';
+import { LOG_READER } from '../chain/log-reader';
 import { ViemChainClient } from '../chain/viem-chain-client';
+import { ViemLogReader } from '../chain/viem-log-reader';
 import { BLOCK_PROCESSORS, type BlockProcessor } from './processors/block-processor';
 import { CURSOR_STORE } from './cursor/cursor-store';
 import { IndexerHealthIndicator } from './observability/indexer.health-indicator';
@@ -99,9 +101,18 @@ export class IndexingModule {
         // chain layer reads the same object under its own narrower token rather
         // than taking a dependency on the indexing options type.
         { provide: CHAIN_CLIENT_OPTIONS, useExisting: INDEXING_OPTIONS },
-        // Constructing the adapter does no I/O, so this cannot make boot depend
-        // on a reachable node. The chain id is checked on the first iteration.
+        // One adapter per port, so what a consumer can do is decided by the
+        // token it injects: the loop cannot read a log, and a processor cannot
+        // move the loop. Constructing either does no I/O, so this cannot make
+        // boot depend on a reachable node — the chain id is checked on the
+        // first iteration.
+        //
+        // They hold separate transports. Both are built from the same ordered
+        // provider list and try it in the same order, so they only diverge if
+        // one fails over and the other does not; the loop clamps the head
+        // monotonically, which is what keeps that from reading as a reorg.
         { provide: CHAIN_CLIENT, useClass: ViemChainClient },
+        { provide: LOG_READER, useClass: ViemLogReader },
         IndexerStatus,
         IndexerService,
         IndexerHealthIndicator,
@@ -112,6 +123,7 @@ export class IndexingModule {
         IndexerHealthIndicator,
         INDEXING_OPTIONS,
         CHAIN_CLIENT,
+        LOG_READER,
       ],
     };
   }

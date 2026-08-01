@@ -17,10 +17,10 @@ and hands block ranges to injected processors.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
-lefthook, the [indexing framework](#indexing) — chain client with provider failover, cursor and
-processor seams, and hash-chain reorg detection over a retained header window, with a detected fork
-re-reported on the next start until it has actually been applied — and the shared ClickHouse layer:
-client, readiness probe and the [migration runner](#schema-and-migrations).
+lefthook, the [indexing framework](#indexing) — chain client with provider failover, log reader,
+cursor and processor seams, and hash-chain reorg detection over a retained header window, with a
+detected fork re-reported on the next start until it has actually been applied — and the shared
+ClickHouse layer: client, readiness probe and the [migration runner](#schema-and-migrations).
 
 **Not yet:** any tables to migrate, event decoding, the enrichment source, the positions endpoints,
 Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and watches for
@@ -32,18 +32,20 @@ forks, but its processors are placeholders. See [Not here yet](#not-here-yet).
 .
 ├── apps/
 │   ├── api/                 read API — indexed and enriched positions
-│   └── indexer/             worker — Spoke/Hub event ingestion
-│       └── src/
-│           ├── chain/       RPC access — the ChainClient port and its viem adapter
-│           └── indexing/    the loop, plus one folder per seam
-│               ├── processors/     what to do with a block range
-│               ├── reorg/          finality, fork detection, and what outlives the process
-│               ├── cursor/         durable position
-│               └── observability/  state machine and health indicator
+│   └── indexer/             worker — configuration and wiring, nothing else
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
 │   ├── clickhouse/          the client, its Nest module, a probe, the migration runner
+│   ├── indexing/            the chain-agnostic indexing engine
+│   │   └── src/
+│   │       ├── chain/           RPC access — the ChainClient and LogReader ports
+│   │       ├── indexing/        the loop, plus one folder per seam
+│   │       │   ├── processors/      what to do with a block range
+│   │       │   ├── reorg/           finality, fork detection, and what outlives the process
+│   │       │   ├── cursor/          durable position
+│   │       │   └── observability/   state machine and health indicator
+│   │       └── test-support/    fakes, exported so consumers test against them
 │   └── ops/                 probes, logging, graceful shutdown — no domain logic
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
@@ -68,6 +70,12 @@ there also means no app depends on it directly.
 readiness probe and the [migration runner](#schema-and-migrations), and nothing that knows what is
 stored in it. Repositories live with whatever owns their tables and inject the client from here, so
 this package never becomes a catalogue of every table in the system.
+
+`packages/indexing` is the [loop](#indexing) and the seams it drives. It knows about block numbers,
+forks and cursors, and nothing about Aave — a processor is something a consumer writes. It had to
+leave `apps/indexer` for that to be true at all: a package cannot import from an app. What remains
+in the app is about 220 lines — `main.ts`, `AppModule` and env validation — and everything it _does_
+comes from the packages it wires together.
 
 `pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
 no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config
@@ -395,10 +403,36 @@ so a total outage surfaces immediately instead of after four full sweeps of the 
 clamped monotonically in the loop — viem does not reconcile block height between providers, so
 failing over to a lagging node otherwise looks exactly like a reorg.
 
-**What is real and what is not.** The chain client, the loop, the cursor seam, the outcome protocol
-and reorg detection all work. `LoggingBlockProcessor` only logs, so nothing is decoded or stored
-yet, and the loop's own failure paths are exercised by tests through scripted fakes rather than by
-the running service.
+**Reading logs is a fourth port, and not a seam of the loop.** `IndexerService` never reads a log;
+processors do. `LogReader` is therefore a separate interface rather than a third method on
+`ChainClient`, which would have made every loop spec grow a method the loop never calls. The module
+binds it from the RPC configuration it already holds, so a processor injects `LOG_READER` without
+the application configuring anything further.
+
+**One adapter per port.** `ViemLogReader` extends `ViemChainClient` for the transport and the header
+read, but is bound as its own provider, so what a consumer can do is decided by the token it
+injects — the loop cannot read a log, a processor cannot move the loop. Nothing outside `chain/`
+ever holds a viem client. The two connections are built from the same ordered provider list and try
+it in the same order, so they diverge only if one fails over and the other does not; the monotonic
+head clamp is what keeps that from reading as a reorg.
+
+The port hides two viem behaviours, both measured. viem's typed `getLogs` **silently ignores a
+`topics` argument** — the same 124 logs came back filtered and unfiltered — so a filter that appears
+to narrow to a handful of events would in fact fetch everything a contract emits; the adapter uses
+`client.request`. And `eth_getLogs` returns `blockTimestamp` on some providers but not all, and viem
+types it optional: the port makes it unconditional and the adapter fills it from headers when a
+provider omits it, one read per distinct block rather than per log.
+
+`LogRangeTooLargeError` is matched on the provider's message, not its error class or JSON-RPC code,
+because neither separates the cases — 1rpc's range rejection and publicnode's archive-plan refusal
+are both `InvalidParamsRpcError` with code `-32602`. The match needs a range word _and_ a limit word
+together, so a rate-limit message carrying only the second does not narrow the range. Both halves
+are pinned by tests built from the literal strings four public endpoints returned.
+
+**What is real and what is not.** The chain client, the log reader, the loop, the cursor seam, the
+outcome protocol and reorg detection all work. `LoggingBlockProcessor` only logs, so nothing is
+decoded or stored yet, and the loop's own failure paths are exercised by tests through scripted
+fakes rather than by the running service.
 
 Three limits are worth stating plainly:
 

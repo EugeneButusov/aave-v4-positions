@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
-  "description": "Chain-agnostic indexing engine: the block loop, and the processor, reorg and cursor seams it drives",
+  "description": "Chain-agnostic indexing engine: the block loop, and the processor, reorg, cursor and log-reading seams it drives",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
