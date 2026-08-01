@@ -69,14 +69,6 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
   private cursor: Cursor | null = null;
   private chainIdVerified = false;
   private bootstrapped = false;
-  /**
-   * The range width actually in use, which is not `options.maxRangeSize` — that
-   * is the configured ceiling, and this drops below it for good the first time a
-   * processor answers `narrowRange`. It cannot live on the options object:
-   * those are readonly, and the same instance is shared with the chain adapter
-   * under `CHAIN_CLIENT_OPTIONS`, so narrowing there would be a module-wide edit
-   * to record one loop's local backoff.
-   */
   private effectiveMaxRange: number;
   private started = false;
   private runner: Promise<void> | undefined;
