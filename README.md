@@ -282,9 +282,10 @@ matching its parent at exactly `safeHead`.
 it is not a parent-hash chain; it is spot checks joined by an assumption. The assumption does hold —
 a chain is ancestor-closed, so a header that still matches proves its ancestors do — but leaning on
 it makes a hole indistinguishable from a healthy window, and the walk then rewinds past blocks it
-can say nothing about. So the run is kept whole from three directions: `commit` restarts the window
-whenever a header does not continue it, the walk stops dead at a discontinuity instead of stepping
-over one, and a restarted window immediately **pulls its predecessors back in**.
+can say nothing about. So the run is kept whole at the point it is written rather than guarded at
+the point it is read: `commit` restarts the window whenever a header does not continue it, and a
+restarted window immediately **pulls its predecessors back in**. The walk itself carries no
+gap-handling, because there is no gap to handle.
 
 "Continues it" is a hash question, not a numeric one. Adjacent block numbers over mismatched hashes
 are two branches stacked on each other, which is worse than a hole because it still looks walkable —
@@ -301,8 +302,9 @@ nothing could ever consult it: that is not thrift but necessity, since pulling `
 headers per dispatched range would cost more calls than the backfill itself. In practice it fires
 once, on the range that lands on the boundary, and the window is full from the first inspected block.
 
-A hole can therefore only come from a store that lost rows, and it is reported as corruption rather
-than absorbed.
+A hole is therefore outside the model — nothing the loop does can produce one, and a test drives the
+window through every shape the loop can leave it in to say so. Only a store that lost rows could,
+and defending the walk against that would mean carrying a branch no test can reach.
 
 **A reported fork is owed until it is applied, and the window is what remembers.** A verdict handed
 to the loop lives only as long as the process, so a crash mid-unwind must not lose it. Nothing extra
