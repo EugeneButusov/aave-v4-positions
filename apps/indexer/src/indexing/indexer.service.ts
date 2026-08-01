@@ -7,7 +7,7 @@ import {
   type OnApplicationShutdown,
 } from '@nestjs/common';
 
-import { CHAIN_CLIENT, type ChainClient, type Hash } from '../chain/chain-client';
+import { CHAIN_CLIENT, type BlockHeader, type ChainClient, type Hash } from '../chain/chain-client';
 import {
   BLOCK_PROCESSORS,
   type BlockProcessor,
@@ -154,17 +154,17 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       const next = this.cursor ? this.cursor.lastBlock + 1 : this.options.startBlock;
       if (next > head) return { kind: 'idle' };
 
+      // The boundary decides how wide to dispatch and nothing else. At or below
+      // it the blocks are settled, so they go out in ranges — which is what
+      // makes a ~932k-block backfill take minutes; above it, one at a time. A
+      // range never straddles it.
       const safeHead = await this.detector.safeHead(head);
+      const to = next <= safeHead ? Math.min(next + this.effectiveMaxRange - 1, safeHead) : next;
 
       // Awaited inside the try rather than returned from it: a returned promise
-      // settles after the try block has exited, so a rejection from either
-      // branch would escape this catch and take down the loop.
-      const result =
-        next <= safeHead
-          ? await this.indexSettled(next, safeHead)
-          : await this.indexUnsettled(next);
-
-      return result;
+      // settles after the try block has exited, so a rejection would escape
+      // this catch and take down the loop.
+      return await this.indexRange(next, to);
     } catch (error) {
       // Reached only by a fault outside a processor — an RPC failure, a cursor
       // store throwing. Retries are unbounded, so a genuine code defect keeps
@@ -237,27 +237,45 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     return null;
   }
 
-  /** Settled blocks: a wide range, no inspection, one header read to anchor it. */
-  private async indexSettled(from: number, safeHead: number): Promise<IterationResult> {
-    const to = Math.min(from + this.effectiveMaxRange - 1, safeHead);
+  /**
+   * Indexes `[from, to]`, inclusive, having asked the detector about it first.
+   *
+   * One path for settled and unsettled alike. The width is the only thing that
+   * differs, and the width is all the loop decides: a wide range means one
+   * header read for many blocks, so the top is the only header there is to
+   * anchor on or ask about. Whether that header needs checking is the
+   * detector's call, not this one's — it knows where the boundary is, and a
+   * settled top it can wave through without looking.
+   *
+   * Reading the top header even for a settled range costs one call per range —
+   * ~940 across the whole backfill — and is what lets `Cursor.lastHash` mean the
+   * same thing always, so the detector can re-anchor from the cursor alone.
+   */
+  private async indexRange(from: number, to: number): Promise<IterationResult> {
+    const header = await this.chain.getBlockHeader(to);
+
+    const forked = await this.verifyAncestry(header);
+    if (forked) return forked;
 
     const failure = await this.dispatch((p, signal) => p.onBlockRange(from, to, signal));
     if (failure) return failure;
 
-    // Read even though these blocks cannot reorg. It costs one call per range —
-    // ~94 across the entire backfill — and it is what lets `Cursor.lastHash`
-    // mean the same thing always, so the detector can re-anchor from the cursor
-    // alone when the loop crosses into the unsettled range or restarts.
-    const header = await this.chain.getBlockHeader(to);
     await this.detector.commit(header);
     await this.saveCursor(header.number, header.hash);
 
     return { kind: 'progressed', cursorAt: to };
   }
 
-  /** Unsettled blocks: one at a time, and the reorg question asked first. */
-  private async indexUnsettled(next: number): Promise<IterationResult> {
-    const header = await this.chain.getBlockHeader(next);
+  /**
+   * Asks the detector whether this header extends the chain we folded, and
+   * answers `null` when it does — the same shape as {@link verifyChainId} and
+   * {@link bootstrap}, where a value means the iteration is already decided.
+   *
+   * It does not only report. A fork is unwound here, which dispatches the
+   * discard and moves the cursor, so the `progressed` that comes back is the
+   * rewind rather than the range the caller was about to index.
+   */
+  private async verifyAncestry(header: BlockHeader): Promise<IterationResult | null> {
     const verdict = await this.detector.inspect(header);
 
     if (verdict.type === 'unrecoverable') {
@@ -266,7 +284,7 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
 
     if (verdict.type === 'reorg') {
       this.logger.warn(
-        `reorg at block ${next}: blocks ${verdict.firstInvalidBlock}..${verdict.lastInvalidBlock} are stale`,
+        `reorg at block ${header.number}: blocks ${verdict.firstInvalidBlock}..${verdict.lastInvalidBlock} are stale`,
       );
       return this.applyReorg(
         verdict.firstInvalidBlock,
@@ -275,13 +293,7 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       );
     }
 
-    const failure = await this.dispatch((p, signal) => p.onBlockRange(next, next, signal));
-    if (failure) return failure;
-
-    await this.detector.commit(header);
-    await this.saveCursor(header.number, header.hash);
-
-    return { kind: 'progressed', cursorAt: next };
+    return null;
   }
 
   /**

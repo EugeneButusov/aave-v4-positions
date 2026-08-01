@@ -145,6 +145,13 @@ export class HashChainReorgDetector implements ReorgDetector {
    * to contradict.
    */
   async inspect(header: BlockHeader): Promise<ReorgVerdict> {
+    // Settled, so nothing can reach it — and nothing could check it if it
+    // could: it arrives as the top of a range whose other blocks were never
+    // fetched, and the window restarts on each such top. Deciding that here
+    // rather than in the loop is the point; the loop only chooses how wide to
+    // dispatch, and asks about every header it commits.
+    if (header.number <= (await this.currentSafeHead())) return { type: 'continuous' };
+
     const retained = await this.retainedWindow();
 
     if (retained.length === 0) return { type: 'continuous' };

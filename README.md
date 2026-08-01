@@ -250,11 +250,18 @@ interface CursorStore {
 ```
 
 **The detector owns the shape of the chain.** The loop never computes `head - finalityDepth`; it
-calls `safeHead()` and branches on the answer. Blocks at or below it are settled, so they are
-dispatched in wide ranges with no per-block inspection — which is what makes a ~932k-block backfill
-take minutes. Above it, one block at a time, inspected first. That boundary is recomputed from a
-fresh head every iteration rather than latched as a mode, and a range never straddles it. Swapping
-the depth heuristic for `getBlock({ blockTag: 'finalized' })` later changes one file.
+calls `safeHead()` and uses the answer for one thing — **how wide to dispatch**. At or below the
+boundary the blocks are settled, so they go out in ranges, which is what makes a ~932k-block backfill
+take minutes; above it, one at a time. That boundary is recomputed from a fresh head every iteration
+rather than latched as a mode, and a range never straddles it. Swapping the depth heuristic for
+`getBlock({ blockTag: 'finalized' })` later changes one file.
+
+Width is all the loop decides. **Every header it commits goes to `inspect()` first**, settled or not,
+and whether that header needs checking is the detector's call — it knows where the boundary is and
+waves a settled top through without looking. Which is not the same as inspecting less: a range yields
+one header for a thousand blocks, so a backfill asks ~940 questions rather than 932k. Leaving the
+loop to decide what was worth asking about would have put a finality judgement in the one component
+that is supposed to hold none.
 
 **Processors gate the cursor.** They return `ok` / `retry` / `failed` rather than throwing, and run
 sequentially in registration order, stopping at the first non-`ok`. The cursor advances only when all
