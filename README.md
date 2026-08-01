@@ -19,7 +19,7 @@ and hands block ranges to injected processors.
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook, and the [indexing framework](#indexing) — chain client with provider failover, cursor and
 processor seams, and hash-chain reorg detection over a retained header window, with a detected fork
-replayed on the next start until it has actually been applied.
+re-reported on the next start until it has actually been applied.
 
 **Not yet:** database and migrations, event decoding, the enrichment source, the positions
 endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and
@@ -302,22 +302,24 @@ once, on the range that lands on the boundary, and the window is full from the f
 A hole can therefore only come from a store that lost rows, and it is reported as corruption rather
 than absorbed.
 
-**A reported fork is owed until it is applied.** A verdict handed to the loop lives only as long as
-the process. Crash between detecting a fork and rewinding the cursor and it is simply gone — the
-cursor still points into the branch that lost, and whether anyone notices again depends on the
-window having survived. So the fork is written to `PendingReorgStore` before it is reported, and
-cleared only once the loop has committed a block that fork invalidated, which it can reach only by
-having dispatched the discard and saved the rewound cursor beneath it. Clearing at the rewind
-instead would leave a gap between forgetting the reorg and durably recording that it happened.
+**A reported fork is owed until it is applied, and the window is what remembers.** A verdict handed
+to the loop lives only as long as the process, so a crash mid-unwind must not lose it. Nothing extra
+is written down for that, because the cursor and the window already say it between them: the cursor
+is saved **last**, so until the unwinding has finished it names a block the chain does not have, and
+the window holds the ancestry to place it.
 
-`bootstrap` replays an outstanding one ahead of every other question, and from the record rather than
-from the window — the record carries the whole verdict, so no headers, no walk and no ancestry are
-needed to reproduce it. The loop cannot index anything until it has been handed that reorg again and
-applied it. A crash mid-unwind therefore costs a repeat of an idempotent discard, not an indexer
-quietly carrying on down a dead branch. The one thing the replay does re-read is the block the rewind
-lands on: it is verified against the hash the record carries and becomes the window's new anchor,
-because otherwise the first block re-indexed after the replay would be accepted with nothing to check
-it against.
+Every point the process can die therefore lands on the same answer. Before the discard was
+dispatched, after it, or after the rewind — `bootstrap` walks to the same ancestor and reports the
+same range, the loop re-dispatches, and `onReorg` is an idempotent discard. Only once the rewound
+cursor is durably saved does the question stop being asked. That last case is the one with a sharp
+edge: the rewind has already truncated the window, so it now stops below the cursor, and reporting
+its top as the last invalid block would give an inverted range and orphan the blocks between. Taking
+the higher of the cursor and the window is what closes it.
+
+The same check covers a fork that happened while the process was down and was never detected at all —
+same cursor, same window, same answer. There is one condition here, not two. A separate record of
+"a reorg is owed" would have to be durable to help, and would then be repeating what the cursor and
+the window already say, with the added job of never drifting out of step with them.
 
 **Resume is a detector question too.** On start the loop loads the cursor and hands it to
 `bootstrap()`, which asks the chain for the header at that height and compares it against
@@ -353,14 +355,12 @@ Three limits are worth stating plainly:
   guessing which of them are wrong. That class of corruption is what reconciliation exists to catch.
 - **A head that jumps well ahead re-enters wide ranges** with no ancestry check on the block the
   cursor sits at — the boundary moves above it and it becomes settled by arithmetic alone.
-- **A fork that first happens while the process is down cannot be repaired from an in-memory
-  window.** Worth separating from the case above it: a fork that was _detected_ survives a restart,
-  because the record of it is what gets replayed. One that was never detected has only the window to
-  go on, and the rebuild is no help there by construction — the resume point is exactly what was
-  reorged out, so the chain can no longer say what we processed. `bootstrap` holds one hash, finds
-  nothing retained to walk, and answers `unrecoverable`. It costs nothing today, since the cursor is
-  in memory too and there is no resume to get wrong, but it is why the cursor, the window and the
-  owed-reorg record all want to become durable in the same change.
+- **No fork survives a restart with an in-memory window**, whether it was detected first or not.
+  Both cases need the same thing — retained headers to walk — and the rebuild cannot supply them,
+  by construction: the resume point is exactly what was reorged out, so the chain can no longer say
+  what we processed. `bootstrap` holds one hash, finds nothing retained, and answers
+  `unrecoverable`. It costs nothing today, since the cursor is in memory too and there is no resume
+  to get wrong, but it is why the cursor and the window want to become durable in the same change.
 
 ## Operational shape
 
@@ -490,11 +490,11 @@ Deliberate, in rough order of what comes next.
   from `INDEXER_START_BLOCK` every time** rather than resuming. The port is real and its resume
   behaviour is tested; the adapter is what is missing. That adapter will also need a
   `withTransaction` seam so a processor's writes and the cursor advance commit together — the gap
-  between them is the one at-least-once window the design cannot close on its own, and the same
-  transaction is where clearing an owed reorg belongs. It should bring `BlockHeaderStore` and
-  `PendingReorgStore` adapters with it rather than leaving them to follow: a durable cursor over an
-  in-memory window turns every undetected cross-restart fork into `unrecoverable`, which is strictly
-  worse than today, where nothing survives and there is no resume to get wrong.
+  between them is the one at-least-once window the design cannot close on its own. It should bring a
+  `BlockHeaderStore` adapter with it rather than leaving it to follow: those two are what make an
+  unapplied reorg re-derivable, and a durable cursor over an in-memory window turns every
+  cross-restart fork into `unrecoverable`, which is strictly worse than today, where nothing survives
+  and there is no resume to get wrong.
 - **Event decoding** — the Spoke and Hub processors, and the Hub asset mirror. That mirror is the
   highest-risk component: one mishandled transition silently corrupts every supply valuation for that
   asset, with no error, just wrong numbers.

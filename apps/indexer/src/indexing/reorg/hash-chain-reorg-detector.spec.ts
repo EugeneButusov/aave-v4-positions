@@ -5,9 +5,7 @@ import type { BlockHeader, ChainClient } from '../../chain/chain-client';
 import type { Cursor } from '../cursor/cursor-store';
 import { HashChainReorgDetector } from './hash-chain-reorg-detector';
 import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
-import { InMemoryPendingReorgStore } from './in-memory-pending-reorg-store';
 import type { IndexingOptions } from '../indexing.options';
-import type { PendingReorg } from './pending-reorg-store';
 
 const CHAIN_ID = 1;
 
@@ -15,21 +13,18 @@ interface Harness {
   readonly detector: HashChainReorgDetector;
   readonly chain: FakeChainClient;
   readonly store: InMemoryBlockHeaderStore;
-  readonly owed: InMemoryPendingReorgStore;
 }
 
 function harness(finalityDepth = 10): Harness {
   const chain = new FakeChainClient({ head: 1_000 });
   const store = new InMemoryBlockHeaderStore();
-  const owed = new InMemoryPendingReorgStore();
   const detector = new HashChainReorgDetector(
     { chainId: CHAIN_ID, finalityDepth } as IndexingOptions,
     chain,
     store,
-    owed,
   );
 
-  return { detector, chain, store, owed };
+  return { detector, chain, store };
 }
 
 /**
@@ -344,7 +339,6 @@ describe('HashChainReorgDetector — bootstrap', () => {
       // so 995 comes back on a branch 996 never named as its parent.
       new ForkingChain(chain, 3, 994),
       store,
-      new InMemoryPendingReorgStore(),
     );
 
     await detector.bootstrap(cursorAt(998));
@@ -427,98 +421,65 @@ describe('HashChainReorgDetector — bootstrap', () => {
   });
 });
 
+/**
+ * The loop saves the cursor last, so until a fork has been fully unwound the
+ * cursor names a block the chain no longer has and the window still holds the
+ * ancestry to place it. Between them they are the record that a reorg is owed;
+ * nothing else is written down. These cover every point the process can die
+ * between reporting a fork and finishing with it.
+ */
 describe('HashChainReorgDetector — an owed reorg survives the process', () => {
-  it('records a fork before reporting it', async () => {
+  it('reports the same fork again when nothing was applied', async () => {
     const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b');
+    await commit(h, ...blocks(494, 500));
+    h.chain.forkAbove(496, 'b');
+    const reported = await h.detector.inspect(h.chain.headerAt(501));
 
-    await h.detector.inspect(h.chain.headerAt(105));
-
-    // Written before the verdict is handed over, so from here on the reorg is
-    // owed whatever happens to this process.
-    await expect(h.owed.load(CHAIN_ID)).resolves.toEqual({
-      firstInvalidBlock: 103,
-      lastInvalidBlock: 104,
-      lastValidHash: hashOf('a', 102),
-    });
+    // Died before the discard was even dispatched. The cursor was never moved,
+    // so it still names 500 on the branch that lost.
+    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(reported);
   });
 
-  it('replays an unapplied reorg ahead of every other question', async () => {
+  it('reports the same fork again when the rewind landed but the cursor did not', async () => {
     const h = harness();
-    const owed: PendingReorg = {
-      firstInvalidBlock: 995,
-      lastInvalidBlock: 998,
-      lastValidHash: hashOf('a', 994),
-    };
-    await h.owed.save(CHAIN_ID, owed);
+    await commit(h, ...blocks(494, 500));
+    h.chain.forkAbove(496, 'b');
+    const reported = await h.detector.inspect(h.chain.headerAt(501));
 
-    // The cursor still points into the branch that lost, and the window did not
-    // survive — neither matters, because the record carries the whole verdict.
-    await expect(h.detector.bootstrap(cursorAt(998))).resolves.toEqual({
+    // Everything the loop does before its one durable write.
+    await h.detector.rewindTo(496);
+
+    // The window now stops three blocks below the cursor. Reporting its top as
+    // the last invalid block would hand back onReorg(497, 496) — inverted, and
+    // three blocks of writes left orphaned.
+    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual(reported);
+  });
+
+  it('stops reporting it once the rewound cursor has been saved', async () => {
+    const h = harness();
+    await commit(h, ...blocks(494, 500));
+    h.chain.forkAbove(496, 'b');
+    await h.detector.inspect(h.chain.headerAt(501));
+    await h.detector.rewindTo(496);
+
+    // The cursor is the single durable commit point: once it names 496, the
+    // unwinding is done and the loop may go forward.
+    await expect(h.detector.bootstrap(cursorAt(496))).resolves.toEqual({ type: 'continuous' });
+  });
+
+  it('cannot tell an unapplied fork from one that happened while it was down', async () => {
+    const h = harness();
+    await commit(h, ...blocks(494, 500));
+    h.chain.forkAbove(496, 'b');
+
+    // No inspect: this process never saw the fork at all. Same cursor, same
+    // window, same answer — which is why one mechanism covers both.
+    await expect(h.detector.bootstrap(cursorAt(500))).resolves.toEqual({
       type: 'reorg',
-      ...owed,
+      firstInvalidBlock: 497,
+      lastInvalidBlock: 500,
+      lastValidHash: hashOf('a', 496),
     });
-  });
-
-  it('re-anchors on the rewind point so the replay is not blind afterwards', async () => {
-    const h = harness();
-    await h.owed.save(CHAIN_ID, {
-      firstInvalidBlock: 995,
-      lastInvalidBlock: 998,
-      lastValidHash: hashOf('a', 994),
-    });
-
-    await h.detector.bootstrap(cursorAt(998));
-
-    // The loop is about to rewind onto 994 and index forward. With an empty
-    // window the first of those blocks would be accepted unchecked.
-    await expect(retained(h)).resolves.toEqual(blocks(984, 994));
-  });
-
-  it('refuses when the rewind point of an owed reorg is itself gone', async () => {
-    const h = harness();
-    await h.owed.save(CHAIN_ID, {
-      firstInvalidBlock: 995,
-      lastInvalidBlock: 998,
-      lastValidHash: hashOf('a', 994),
-    });
-    // A second fork, reaching under the first, while the process was down.
-    h.chain.forkAbove(990, 'b');
-
-    await expect(h.detector.bootstrap(cursorAt(998))).resolves.toEqual({
-      type: 'unrecoverable',
-      reason: 'block 994, the rewind point of an unapplied reorg, is no longer canonical',
-    });
-  });
-
-  it('keeps owing the reorg until the loop indexes into the range it invalidated', async () => {
-    const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b');
-    await h.detector.inspect(h.chain.headerAt(105));
-
-    // Everything the loop does up to and including the rewind. The cursor save
-    // that follows it is the one step that is not durable yet, so the record
-    // has to outlive all of this.
-    await h.detector.rewindTo(102);
-    await commit(h, 102);
-
-    await expect(h.owed.load(CHAIN_ID)).resolves.not.toBeNull();
-  });
-
-  it('forgets the reorg once a block it invalidated has been re-indexed', async () => {
-    const h = harness();
-    await commit(h, ...blocks(100, 104));
-    h.chain.forkAbove(102, 'b');
-    await h.detector.inspect(h.chain.headerAt(105));
-    await h.detector.rewindTo(102);
-
-    // 103 is the first block the fork invalidated. Reaching it means the
-    // discard was dispatched and the rewound cursor was saved beneath it.
-    await commit(h, 103);
-
-    await expect(h.owed.load(CHAIN_ID)).resolves.toBeNull();
   });
 });
 

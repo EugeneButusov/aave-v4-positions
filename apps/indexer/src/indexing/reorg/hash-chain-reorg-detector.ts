@@ -4,11 +4,6 @@ import { CHAIN_CLIENT, type BlockHeader, type ChainClient } from '../../chain/ch
 import { BLOCK_HEADER_STORE, type BlockHeaderStore } from './block-header-store';
 import type { Cursor } from '../cursor/cursor-store';
 import { INDEXING_OPTIONS, type IndexingOptions } from '../indexing.options';
-import {
-  PENDING_REORG_STORE,
-  type PendingReorg,
-  type PendingReorgStore,
-} from './pending-reorg-store';
 import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
 
 /**
@@ -52,13 +47,21 @@ import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
  * block at a time up to `finalityDepth + 1`. A hole can therefore only come
  * from a store that lost rows, and it is reported as such.
  *
- * **A reported fork is owed until it is applied.** The verdict alone lives only
- * as long as the process, so it is written to {@link PendingReorgStore} before
- * it is returned and cleared only once the loop has committed a block the fork
- * invalidated. `bootstrap` replays an outstanding one ahead of every other
- * question, from the record rather than from the window — so a crash between
- * detecting a fork and unwinding it costs a repeat of an idempotent discard
- * rather than an indexer that quietly carries on down the branch that lost.
+ * **A reported fork is owed until it is applied, and the window is the record.**
+ * No separate note is kept, because the cursor and the window already say it:
+ * the loop saves the cursor last, so until the unwinding has finished the
+ * cursor names a block the chain does not have, and the window holds the
+ * ancestry to place it. Crash anywhere in between — before the discard was
+ * dispatched, after it, or after the rewind — and `bootstrap` walks to the same
+ * ancestor and reports the same range. The `Math.max` in
+ * {@link HashChainReorgDetector.locateFork} is what closes the last of those:
+ * a truncated window would otherwise under-report a range the cursor still
+ * remembers the top of. The reorg is re-dispatched, `onReorg` is an idempotent
+ * discard, and the loop cannot index anything until it has been applied.
+ *
+ * A second record would have to be durable to help, and would then be saying
+ * what the cursor and the window already say — with the added job of not
+ * drifting out of step with them.
  *
  * The standing limit is the design's rather than this class's: a fork reaching
  * at or below `safeHead` is *reported*, never repaired. Those blocks went out
@@ -80,7 +83,6 @@ export class HashChainReorgDetector implements ReorgDetector {
     @Inject(INDEXING_OPTIONS) private readonly options: IndexingOptions,
     @Inject(CHAIN_CLIENT) private readonly chain: ChainClient,
     @Inject(BLOCK_HEADER_STORE) private readonly headers: BlockHeaderStore,
-    @Inject(PENDING_REORG_STORE) private readonly pending: PendingReorgStore,
   ) {}
 
   /**
@@ -96,14 +98,6 @@ export class HashChainReorgDetector implements ReorgDetector {
    * already settle.
    */
   async bootstrap(cursor: Cursor | null): Promise<ReorgVerdict> {
-    // Ahead of every other question: a fork that was reported but never
-    // finished unwinding. The cursor still points into the branch that lost, so
-    // nothing may be indexed until the loop has been handed it again — and
-    // answering it must not depend on the window having survived, which is the
-    // entire reason the record exists.
-    const owed = await this.pending.load(this.options.chainId);
-    if (owed) return this.resumePending(owed);
-
     if (!cursor) {
       // Nothing has been indexed, so nothing retained can be about this run.
       await this.headers.truncate(this.options.chainId, -1);
@@ -124,43 +118,6 @@ export class HashChainReorgDetector implements ReorgDetector {
 
     await this.commit(canonical);
     return { type: 'continuous' };
-  }
-
-  /**
-   * Hands back a reorg the loop was told about but never finished applying.
-   *
-   * The record carries the whole verdict, so no walk and no retained header is
-   * needed to reproduce it — which is what makes this survivable with a window
-   * that does not. What it cannot skip is re-anchoring: the loop is about to
-   * rewind onto `firstInvalidBlock - 1` and index forward from there, and with
-   * an empty window the first of those blocks would be accepted with nothing to
-   * check it against. So that block is verified against the hash the record
-   * carries and becomes the new anchor.
-   */
-  private async resumePending(owed: PendingReorg): Promise<ReorgVerdict> {
-    const lastValidBlock = owed.firstInvalidBlock - 1;
-    const anchor = await this.chain.getBlockHeader(lastValidBlock);
-
-    if (anchor.hash !== owed.lastValidHash) {
-      // A second fork, reaching under the rewind point of the first, while the
-      // process was down. Unwinding to a block that is itself gone would just
-      // move the corruption, so this is where a human comes in.
-      return {
-        type: 'unrecoverable',
-        reason: `block ${lastValidBlock}, the rewind point of an unapplied reorg, is no longer canonical`,
-      };
-    }
-
-    // Below `firstInvalidBlock`, so this cannot clear the very record it is
-    // re-anchoring for — see the clearing rule in `commit`.
-    await this.commit(anchor);
-
-    return {
-      type: 'reorg',
-      firstInvalidBlock: owed.firstInvalidBlock,
-      lastInvalidBlock: owed.lastInvalidBlock,
-      lastValidHash: owed.lastValidHash,
-    };
   }
 
   /**
@@ -319,25 +276,6 @@ export class HashChainReorgDetector implements ReorgDetector {
     // run it had was just dropped. Pull the predecessors back in rather than
     // waiting `finalityDepth` blocks to earn them one at a time.
     if (!continues || retained.length === 0) await this.fillRunBelow(header);
-
-    await this.forgetPendingOncePast(header.number);
-  }
-
-  /**
-   * A reorg stays owed until the loop commits a block that reorg invalidated,
-   * which it can only reach by having dispatched the discard, rewound the
-   * detector and saved the cursor beneath it.
-   *
-   * Clearing at the rewind instead would leave a gap between forgetting the
-   * reorg and durably recording that it happened — the one crash window this
-   * record exists to cover. Clearing late costs a replay of an idempotent
-   * discard; clearing early costs the reorg.
-   */
-  private async forgetPendingOncePast(blockNumber: number): Promise<void> {
-    const owed = await this.pending.load(this.options.chainId);
-    if (owed && blockNumber >= owed.firstInvalidBlock) {
-      await this.pending.clear(this.options.chainId);
-    }
   }
 
   rewindTo(lastValidBlock: number): Promise<void> {
@@ -366,18 +304,12 @@ export class HashChainReorgDetector implements ReorgDetector {
       return { type: 'unrecoverable', reason: describeSearch(search, retained, walkFrom) };
     }
 
-    const reorg: PendingReorg = {
+    return {
+      type: 'reorg',
       firstInvalidBlock: search.ancestor.number + 1,
       lastInvalidBlock: Math.max(impliedLastInvalid, retained.at(-1)?.number ?? -1),
       lastValidHash: search.ancestor.hash,
     };
-
-    // Recorded before it is reported. From here on the reorg is owed whatever
-    // happens to this process, and the loop cannot index past it without first
-    // being handed it again.
-    await this.pending.save(this.options.chainId, reorg);
-
-    return { type: 'reorg', ...reorg };
   }
 
   /**
