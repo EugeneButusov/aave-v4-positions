@@ -94,12 +94,6 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     this.start();
   }
 
-  /**
-   * The loop is deliberately not awaited — boot would never finish. Assigning
-   * the promise rather than discarding it keeps it available to shutdown, and
-   * satisfies `no-floating-promises` without a `void` that would also discard
-   * the handle.
-   */
   start(): void {
     if (this.started) return;
     this.started = true;
@@ -136,11 +130,11 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       case 'retry':
         this.status.retried(result.reason);
         break;
-      case 'idle':
-        this.status.idled();
+      case 'progressed':
+        this.status.progressed(result.cursorAt);
         break;
       default:
-        this.status.progressed(result.cursorAt);
+        this.status.idled();
     }
     return result;
   }
