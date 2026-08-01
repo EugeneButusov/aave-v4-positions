@@ -563,6 +563,20 @@ describe('HashChainReorgDetector — retention', () => {
     await expect(retained(h)).resolves.toEqual(blocks(744, 872));
   });
 
+  it('tops the window back up after a rewind strips it', async () => {
+    // Head 1000, depth 10: the tip, where forks actually happen.
+    const h = harness(10);
+    await commit(h, ...blocks(990, 1_000));
+    // A nine-block unwind leaves two entries where eleven belong.
+    await h.detector.rewindTo(991);
+
+    await commit(h, 992);
+
+    // Re-earning that depth one block at a time would leave the window unable
+    // to size a second fork for most of the way back.
+    await expect(retained(h)).resolves.toEqual(blocks(982, 992));
+  });
+
   it('pulls nothing more once the run continues on its own', async () => {
     const h = harness(128);
     await commit(h, 872);

@@ -235,16 +235,17 @@ export class HashChainReorgDetector implements ReorgDetector {
     // The floor is inclusive, so this retains `finalityDepth + 1` headers. The
     // extra one is load-bearing: the deepest recoverable fork begins at
     // `safeHead + 1`, and placing it needs its parent at exactly `safeHead`.
-    await this.headers.append(
-      this.options.chainId,
-      header,
-      header.number - this.options.finalityDepth,
-    );
+    const floor = Math.max(0, header.number - this.options.finalityDepth);
+    await this.headers.append(this.options.chainId, header, floor);
 
-    // The window now stands on this header alone — either it was empty, or the
-    // run it had was just dropped. Pull the predecessors back in rather than
-    // waiting `finalityDepth` blocks to earn them one at a time.
-    if (!continues || retained.length === 0) await this.fillRunBelow(header);
+    // Top the window back up whenever it does not reach as deep as a fork could.
+    // That covers the two ways it ends up short — a restart leaves this header
+    // standing alone, and a deep rewind can strip it to a couple of entries —
+    // without asking which happened. In the steady state the run already
+    // reaches the floor, so this is a comparison and no more.
+    const oldest = continues ? retained[0] : undefined;
+    const bottom = oldest ? Math.max(oldest.number, floor) : header.number;
+    if (bottom > floor) await this.fillRunBelow(header);
   }
 
   rewindTo(lastValidBlock: number): Promise<void> {
@@ -291,6 +292,14 @@ export class HashChainReorgDetector implements ReorgDetector {
    * cover blocks whose hashes were never recorded, quietly widening the rewind
    * to whatever the hole happened to be. A window with a hole in it is a broken
    * window; say so rather than paper over it.
+   *
+   * Filling the hole from the chain is not the answer either, tempting as it
+   * looks. By the time this runs the chain has already forked, so a header read
+   * by height is the branch that *won*; writing it in and then comparing it
+   * against itself matches trivially, names that block the common ancestor, and
+   * under-reports the fork — losing exactly the writes above it that should
+   * have been discarded. Whatever the window is missing has to be pulled while
+   * the chain still agrees with us, which is what {@link fillRunBelow} is for.
    */
   private async findAncestor(
     retained: readonly BlockHeader[],
