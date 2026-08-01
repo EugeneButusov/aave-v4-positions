@@ -18,7 +18,8 @@ and hands block ranges to injected processors.
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook, and the [indexing framework](#indexing) — chain client with provider failover, cursor and
-processor seams, and hash-chain reorg detection over a retained header window.
+processor seams, and hash-chain reorg detection over a retained header window, with a detected fork
+replayed on the next start until it has actually been applied.
 
 **Not yet:** database and migrations, event decoding, the enrichment source, the positions
 endpoints, Kubernetes manifests. The API serves one stub endpoint; the indexer walks the chain and
@@ -35,7 +36,7 @@ watches for forks, but its processors are placeholders. See [Not here yet](#not-
 │           ├── chain/       RPC access — the ChainClient port and its viem adapter
 │           └── indexing/    the loop, plus one folder per seam
 │               ├── processors/     what to do with a block range
-│               ├── reorg/          finality, fork detection, header retention
+│               ├── reorg/          finality, fork detection, and what outlives the process
 │               ├── cursor/         durable position
 │               └── observability/  state machine and health indicator
 ├── docs/
@@ -279,14 +280,44 @@ matching its parent at exactly `safeHead`.
 it is not a parent-hash chain; it is spot checks joined by an assumption. The assumption does hold —
 a chain is ancestor-closed, so a header that still matches proves its ancestors do — but leaning on
 it makes a hole indistinguishable from a healthy window, and the walk then rewinds past blocks it
-can say nothing about. So `commit` restarts the window whenever a header does not join the retained
-run, and the walk stops dead at a discontinuity instead of stepping over it.
+can say nothing about. So the run is kept whole from three directions: `commit` restarts the window
+whenever a header does not continue it, the walk stops dead at a discontinuity instead of stepping
+over one, and a restarted window immediately **pulls its predecessors back in**.
 
-That falls out of how the loop dispatches. While catching up it commits only the top header of each
-range, and each of those jumps, so the window collapses to that single anchor — which is exactly
-what the first inspected block is checked against, and all a settled range can honestly supply.
-From there it grows one block at a time up to `FINALITY_DEPTH + 1`. A hole can therefore only come
-from a store that lost rows, and it is reported as corruption rather than absorbed.
+"Continues it" is a hash question, not a numeric one. Adjacent block numbers over mismatched hashes
+are two branches stacked on each other, which is worse than a hole because it still looks walkable —
+the walk would find a block it thinks is shared, and under-report the fork. `inspect` makes that
+comparison for every block at the tip, but a settled range is dispatched without inspection, so
+`commit` makes it too, for nothing, from data already in hand.
+
+The pull is what keeps a restart from costing depth. While catching up the loop commits only the top
+header of each range, and each of those lands clear of the last, so the window would otherwise
+collapse to a single anchor and have to earn its depth back one block at a time. Instead the
+predecessors are followed down by `parentHash` — each link checked, so every one of them is proven
+rather than read on trust. It is skipped below the boundary, where a predecessor is settled and
+nothing could ever consult it: that is not thrift but necessity, since pulling `FINALITY_DEPTH`
+headers per dispatched range would cost more calls than the backfill itself. In practice it fires
+once, on the range that lands on the boundary, and the window is full from the first inspected block.
+
+A hole can therefore only come from a store that lost rows, and it is reported as corruption rather
+than absorbed.
+
+**A reported fork is owed until it is applied.** A verdict handed to the loop lives only as long as
+the process. Crash between detecting a fork and rewinding the cursor and it is simply gone — the
+cursor still points into the branch that lost, and whether anyone notices again depends on the
+window having survived. So the fork is written to `PendingReorgStore` before it is reported, and
+cleared only once the loop has committed a block that fork invalidated, which it can reach only by
+having dispatched the discard and saved the rewound cursor beneath it. Clearing at the rewind
+instead would leave a gap between forgetting the reorg and durably recording that it happened.
+
+`bootstrap` replays an outstanding one ahead of every other question, and from the record rather than
+from the window — the record carries the whole verdict, so no headers, no walk and no ancestry are
+needed to reproduce it. The loop cannot index anything until it has been handed that reorg again and
+applied it. A crash mid-unwind therefore costs a repeat of an idempotent discard, not an indexer
+quietly carrying on down a dead branch. The one thing the replay does re-read is the block the rewind
+lands on: it is verified against the hash the record carries and becomes the window's new anchor,
+because otherwise the first block re-indexed after the replay would be accepted with nothing to check
+it against.
 
 **Resume is a detector question too.** On start the loop loads the cursor and hands it to
 `bootstrap()`, which asks the chain for the header at that height and compares it against
@@ -295,21 +326,13 @@ unaided. A match settles it: a chain is ancestor-closed, so a canonical cursor m
 beneath it canonical too, and the ordinary resume costs exactly one call. A mismatch means the
 process was stopped across a fork, and the retained headers are what locate it.
 
-On the matching path `bootstrap` then **rebuilds the window under that block**, following
-`parentHash` down to the safe head and checking each link. Otherwise the window would hold a single
-header until the loop had committed `FINALITY_DEPTH` more, and a restart would leave the indexer
-unable to place a fork on its very next block — growing back into a depth the chain will hand over
-in one pass is the slowest possible way to get there. It skips the rebuild when the resume point is
-still below the safe head, since a mid-backfill restart is about to re-anchor the window on its
-first settled range anyway.
-
-Every header it retains is proven rather than assumed, and the difference matters. The anchor is
-ours because the cursor says so; its parent is ours because the anchor names that exact hash; and so
-on down. Reading headers by height and trusting them would look identical and be worth nothing —
-which is exactly why the rebuild cannot run on the mismatch path. Once the resume point has been
-reorged out, headers read by height describe the branch that won, and recording them would erase the
-only evidence of the branch that lost, leaving every fork looking one block deep. That path has
-whatever was durably retained and nothing else, which is why the window sits behind its own port,
+On the matching path the resume point becomes the window's anchor and the pull above rebuilds
+beneath it, so the indexer starts full-depth rather than blind. On the mismatch path it cannot, and
+that asymmetry is the point rather than a shortfall. Reading headers by height and trusting them
+looks identical to following verified links and is worth nothing: once the resume point has been
+reorged out, those headers describe the branch that won, and recording them would erase the only
+evidence of the branch that lost — leaving every fork looking one block deep. That path has whatever
+was durably retained and nothing else, which is why the window sits behind its own port,
 `BlockHeaderStore`; `InMemoryBlockHeaderStore` is the only adapter today.
 
 **Provider failover is viem's `fallback`**, tried in list order. Two of its defaults are overridden,
@@ -330,12 +353,14 @@ Three limits are worth stating plainly:
   guessing which of them are wrong. That class of corruption is what reconciliation exists to catch.
 - **A head that jumps well ahead re-enters wide ranges** with no ancestry check on the block the
   cursor sits at — the boundary moves above it and it becomes settled by arithmetic alone.
-- **A fork that happens while the process is down cannot be repaired from an in-memory window.**
-  The rebuild above is no help on that path, by construction: the resume point is exactly what has
-  been reorged out, so the chain can no longer say what we processed. `bootstrap` holds one hash,
-  finds nothing retained to walk, and answers `unrecoverable`. It costs nothing today — the cursor
-  is in memory too, so there is no resume to get wrong — but it is the reason a durable cursor store
-  wants a durable `BlockHeaderStore` in the same change.
+- **A fork that first happens while the process is down cannot be repaired from an in-memory
+  window.** Worth separating from the case above it: a fork that was _detected_ survives a restart,
+  because the record of it is what gets replayed. One that was never detected has only the window to
+  go on, and the rebuild is no help there by construction — the resume point is exactly what was
+  reorged out, so the chain can no longer say what we processed. `bootstrap` holds one hash, finds
+  nothing retained to walk, and answers `unrecoverable`. It costs nothing today, since the cursor is
+  in memory too and there is no resume to get wrong, but it is why the cursor, the window and the
+  owed-reorg record all want to become durable in the same change.
 
 ## Operational shape
 
@@ -465,10 +490,11 @@ Deliberate, in rough order of what comes next.
   from `INDEXER_START_BLOCK` every time** rather than resuming. The port is real and its resume
   behaviour is tested; the adapter is what is missing. That adapter will also need a
   `withTransaction` seam so a processor's writes and the cursor advance commit together — the gap
-  between them is the one at-least-once window the design cannot close on its own. It should bring a
-  `BlockHeaderStore` adapter with it rather than following later: a durable cursor over an in-memory
-  retention window turns every cross-restart fork into `unrecoverable`, which is strictly worse than
-  today, where neither survives and there is no resume to get wrong.
+  between them is the one at-least-once window the design cannot close on its own, and the same
+  transaction is where clearing an owed reorg belongs. It should bring `BlockHeaderStore` and
+  `PendingReorgStore` adapters with it rather than leaving them to follow: a durable cursor over an
+  in-memory window turns every undetected cross-restart fork into `unrecoverable`, which is strictly
+  worse than today, where nothing survives and there is no resume to get wrong.
 - **Event decoding** — the Spoke and Hub processors, and the Hub asset mirror. That mirror is the
   highest-risk component: one mishandled transition silently corrupts every supply valuation for that
   asset, with no error, just wrong numbers.

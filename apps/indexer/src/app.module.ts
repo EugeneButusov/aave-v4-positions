@@ -9,7 +9,9 @@ import { IndexerHealthIndicator } from './indexing/observability/indexer.health-
 import { IndexingModule } from './indexing/indexing.module';
 import { InMemoryBlockHeaderStore } from './indexing/reorg/in-memory-block-header-store';
 import { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';
+import { InMemoryPendingReorgStore } from './indexing/reorg/in-memory-pending-reorg-store';
 import { LoggingBlockProcessor } from './indexing/processors/logging-block-processor';
+import { PENDING_REORG_STORE } from './indexing/reorg/pending-reorg-store';
 
 /**
  * Built once and referenced twice below. Nest identifies a dynamic module by
@@ -38,12 +40,13 @@ const indexing = IndexingModule.forRootAsync({
   providers: [
     LoggingBlockProcessor,
     HashChainReorgDetector,
-    // Both stores are in memory, which is the pairing that keeps the detector
-    // honest: neither the cursor nor the retention window survives a restart,
-    // so there is no resume to get wrong. A durable cursor store arriving
-    // without a durable window would be worse than either alone — see
-    // BlockHeaderStore.
+    // All three stores are in memory, which is the pairing that keeps the
+    // detector honest: nothing survives a restart, so there is no resume to get
+    // wrong. They want to become durable together — a cursor that outlives the
+    // process while the window and the owed-reorg record do not is worse than
+    // none of them doing so. See BlockHeaderStore and PendingReorgStore.
     { provide: BLOCK_HEADER_STORE, useClass: InMemoryBlockHeaderStore },
+    { provide: PENDING_REORG_STORE, useClass: InMemoryPendingReorgStore },
     InMemoryCursorStore,
   ],
 });
