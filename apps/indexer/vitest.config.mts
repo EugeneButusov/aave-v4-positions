@@ -23,8 +23,17 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.spec.ts', 'test/**/*.e2e-spec.ts'],
-    // Hermetic: NODE_ENV=test makes ConfigModule skip any local .env file.
-    env: { NODE_ENV: 'test', LOG_LEVEL: 'silent' },
+    // Hermetic: NODE_ENV=test makes ConfigModule skip any local .env file, so
+    // the variables with no default have to be supplied here or booting the
+    // AppModule fails validation. INDEXER_AUTOSTART=false keeps a real indexing
+    // loop — and real RPC traffic — out of the test run.
+    env: {
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'silent',
+      CHAIN_ID: '1',
+      RPC_URLS: 'https://rpc.invalid',
+      INDEXER_AUTOSTART: 'false',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

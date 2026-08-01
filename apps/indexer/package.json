@@ -23,6 +23,7 @@
     "@nestjs/platform-express": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
+    "viem": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

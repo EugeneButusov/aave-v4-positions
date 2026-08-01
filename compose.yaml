@@ -56,6 +56,17 @@ services:
       SHUTDOWN_GRACE_SECONDS: '5'
       INDEXER_HOST: 0.0.0.0
       INDEXER_PORT: '3001'
+      # Ethereum mainnet against a public endpoint, so `docker compose up`
+      # indexes something without any setup. It does mean the stack makes real
+      # requests to a third party on start; point RPC_URLS at your own node to
+      # avoid that. The list is comma-separated and tried in order.
+      CHAIN_ID: '1'
+      RPC_URLS: ${RPC_URLS:-https://eth.drpc.org}
+      FINALITY_DEPTH: '128'
+      # Main Spoke genesis: the log shows the catch-up walking wide ranges up to
+      # the tip, then switching to one block at a time.
+      INDEXER_START_BLOCK: '24720899'
+      INDEXER_MAX_RANGE_SIZE: '1000'
     ports:
       - '${INDEXER_PORT:-3001}:3001'
     healthcheck:

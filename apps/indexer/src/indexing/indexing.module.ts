@@ -1,0 +1,120 @@
+import {
+  Module,
+  type DynamicModule,
+  type InjectionToken,
+  type ModuleMetadata,
+  type OptionalFactoryDependency,
+} from '@nestjs/common';
+
+import { CHAIN_CLIENT, VIEM_PUBLIC_CLIENT } from '../chain/chain-client';
+import { ViemChainClient, buildPublicClient } from '../chain/viem-chain-client';
+import { BLOCK_PROCESSORS, type BlockProcessor } from './block-processor';
+import { CURSOR_STORE } from './cursor-store';
+import { IndexerHealthIndicator } from './indexer.health-indicator';
+import { IndexerService } from './indexer.service';
+import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
+import { REORG_DETECTOR } from './reorg-detector';
+
+/**
+ * `TDeps` is inferred from the factory's own parameter list, so the injected
+ * dependencies stay typed end to end rather than collapsing to `any[]`.
+ */
+export interface IndexingAsyncOptions<TDeps extends unknown[] = unknown[]> extends Pick<
+  ModuleMetadata,
+  'imports' | 'providers'
+> {
+  /**
+   * Injection tokens for the factory, not providers — this binds a factory
+   * provider directly, where `LoggingModule` hands its `inject` to a
+   * third-party module that accepts a looser shape.
+   */
+  inject?: (InjectionToken | OptionalFactoryDependency)[];
+  useFactory: (...args: TDeps) => IndexingOptions | Promise<IndexingOptions>;
+
+  /**
+   * Tokens resolving to {@link BlockProcessor}, dispatched in this order. Each
+   * is resolved through DI, so a processor can inject a database connection or
+   * the raw viem client. Declare them in `providers`, or import a module that
+   * exports them.
+   */
+  processors?: InjectionToken[];
+
+  reorgDetector: InjectionToken;
+  cursorStore: InjectionToken;
+}
+
+/**
+ * Wires the indexing loop to a chain, a reorg detector, a cursor store and a
+ * list of processors.
+ *
+ * ```ts
+ * const indexing = IndexingModule.forRootAsync({
+ *   inject: [ConfigService],
+ *   useFactory: (config) => ({ chainId: 1, rpcUrls: [...], ... }),
+ *   processors: [EventIngestProcessor],
+ *   reorgDetector: HashChainReorgDetector,
+ *   cursorStore: DatabaseCursorStore,
+ *   providers: [EventIngestProcessor, HashChainReorgDetector, DatabaseCursorStore],
+ * });
+ * ```
+ *
+ * **Call `forRootAsync` once per application and reuse the returned object.**
+ * Nest identifies a dynamic module by reference, so calling it twice — say once
+ * for `imports` and once to hand the health indicator to `HealthModule` —
+ * produces two modules, two `IndexerService` instances and two loops racing the
+ * same cursor. Assign it to a `const` and pass that same value everywhere.
+ *
+ * Multiple chains would need per-chain tokens rather than class tokens, since
+ * the second registration silently overwrites `IndexerService` in the importing
+ * module's provider map. Not built: the scope is one chain.
+ */
+@Module({})
+export class IndexingModule {
+  static forRootAsync<TDeps extends unknown[]>(
+    options: IndexingAsyncOptions<TDeps>,
+  ): DynamicModule {
+    const { imports = [], providers = [], processors = [] } = options;
+
+    return {
+      module: IndexingModule,
+      imports,
+      providers: [
+        ...providers,
+        {
+          provide: INDEXING_OPTIONS,
+          useFactory: options.useFactory,
+          inject: options.inject,
+        },
+        {
+          provide: BLOCK_PROCESSORS,
+          // Resolved positionally from `inject`, which is what lets each
+          // processor be a fully injected service rather than a bare value.
+          useFactory: (...resolved: BlockProcessor[]) => resolved,
+          inject: processors,
+        },
+        { provide: REORG_DETECTOR, useExisting: options.reorgDetector },
+        { provide: CURSOR_STORE, useExisting: options.cursorStore },
+        {
+          // Construction does no I/O, so this cannot make boot depend on a
+          // reachable node. The chain id is checked on the first iteration.
+          provide: VIEM_PUBLIC_CLIENT,
+          useFactory: (resolved: IndexingOptions) => buildPublicClient(resolved),
+          inject: [INDEXING_OPTIONS],
+        },
+        { provide: CHAIN_CLIENT, useClass: ViemChainClient },
+        IndexerService,
+        IndexerHealthIndicator,
+      ],
+      exports: [
+        IndexerService,
+        IndexerHealthIndicator,
+        INDEXING_OPTIONS,
+        CHAIN_CLIENT,
+        // Exported deliberately: the ChainClient port is shaped for the reorg
+        // detector, and processors that need getLogs are better served the real
+        // client than by widening that port until it re-implements viem.
+        VIEM_PUBLIC_CLIENT,
+      ],
+    };
+  }
+}
