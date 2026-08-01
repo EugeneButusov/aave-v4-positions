@@ -311,11 +311,17 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
    * Runs the processors in registration order, stopping at the first non-`ok`.
    * Returns `null` when all succeeded.
    *
-   * Sequential rather than concurrent: ordering has to be reproducible for the
-   * retry semantics to be testable, and fanning N processors' RPC calls out at
-   * once is exactly what the measured provider rate limits punish. Fail-fast
-   * means an earlier processor is re-invoked when a later one asks to retry,
-   * which is why the interface requires idempotence.
+   * Fail-fast means an earlier processor is re-invoked when a later one asks to
+   * retry, which is why the interface requires idempotence.
+   *
+   * TODO: parallelize once the real processors land — the Spoke, Hub and price
+   * streams have no ordering dependency during backfill (analysis §8). Needs
+   * `allSettled`, not `all`: outcomes are returned rather than thrown, so
+   * `Promise.all` cannot fail fast here, and it does not cancel its siblings
+   * either. Also needs a concurrency cap for the measured provider rate limits,
+   * `narrowRange` halving once per dispatch rather than once per processor that
+   * asks, and registration order dropped from the {@link BlockProcessor}
+   * contract.
    */
   private async dispatch(
     invoke: (
@@ -326,9 +332,6 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     for (const processor of this.processors) {
       let outcome: ProcessorOutcome;
       try {
-        // Sequential on purpose — see the doc comment. Running these
-        // concurrently would make the ordering unreproducible and fan every
-        // processor's RPC calls out at once.
         // oxlint-disable-next-line no-await-in-loop
         outcome = await invoke(processor, this.abort.signal);
       } catch (error) {
