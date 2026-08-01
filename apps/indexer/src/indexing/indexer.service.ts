@@ -254,8 +254,8 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
   private async indexRange(from: number, to: number): Promise<IterationResult> {
     const header = await this.chain.getBlockHeader(to);
 
-    const fork = await this.classify(header);
-    if (fork) return fork;
+    const forked = await this.verifyAncestry(header);
+    if (forked) return forked;
 
     const failure = await this.dispatch((p, signal) => p.onBlockRange(from, to, signal));
     if (failure) return failure;
@@ -267,10 +267,15 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
   }
 
   /**
-   * Puts a header to the detector, and answers non-null when the range must not
-   * be dispatched — because the chain forked, or because nobody can say where.
+   * Asks the detector whether this header extends the chain we folded, and
+   * answers `null` when it does — the same shape as {@link verifyChainId} and
+   * {@link bootstrap}, where a value means the iteration is already decided.
+   *
+   * It does not only report. A fork is unwound here, which dispatches the
+   * discard and moves the cursor, so the `progressed` that comes back is the
+   * rewind rather than the range the caller was about to index.
    */
-  private async classify(header: BlockHeader): Promise<IterationResult | null> {
+  private async verifyAncestry(header: BlockHeader): Promise<IterationResult | null> {
     const verdict = await this.detector.inspect(header);
 
     if (verdict.type === 'unrecoverable') {
