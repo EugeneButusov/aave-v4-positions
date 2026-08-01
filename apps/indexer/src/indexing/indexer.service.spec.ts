@@ -74,7 +74,7 @@ function ranges(processor: RecordingProcessor): [number, number][] {
     .map((call) => [call.from, call.to]);
 }
 
-describe('IndexerService — processors (R2)', () => {
+describe('IndexerService — processors', () => {
   it('advances with no processors registered', async () => {
     const { service, store } = harness({ processors: [] });
 
@@ -121,7 +121,7 @@ describe('IndexerService — processors (R2)', () => {
   });
 });
 
-describe('IndexerService — dispatch shape (R3)', () => {
+describe('IndexerService — dispatch shape', () => {
   it('dispatches a full-width range while catching up', async () => {
     const { service, detector, processors } = harness({ options: { maxRangeSize: 200 } });
     detector.settledThrough(1_000);
@@ -174,7 +174,7 @@ describe('IndexerService — dispatch shape (R3)', () => {
   });
 });
 
-describe('IndexerService — resume (R4)', () => {
+describe('IndexerService — resume', () => {
   it('bootstraps the detector once, before reading the head', async () => {
     const { service, chain, detector } = harness();
 
@@ -276,7 +276,7 @@ describe('IndexerService — resume (R4)', () => {
   });
 });
 
-describe('IndexerService — outcome gates the cursor (R5)', () => {
+describe('IndexerService — outcome gates the cursor', () => {
   it('saves the cursor with the hash of the range top', async () => {
     const { service, detector, store } = harness();
     detector.settledThrough(1_000);
@@ -363,7 +363,7 @@ describe('IndexerService — outcome gates the cursor (R5)', () => {
   });
 });
 
-describe('IndexerService — the detector owns the chain shape (R6)', () => {
+describe('IndexerService — the detector owns the chain shape', () => {
   it('takes the range path for everything when the detector settles the head', async () => {
     const { service, detector, processors } = harness();
     detector.settledThrough(1_000);
