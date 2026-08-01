@@ -1,6 +1,6 @@
 import type { BlockHeader } from '../../src/chain/chain-client';
-import type { Cursor } from '../../src/indexing/cursor-store';
-import type { ReorgDetector, ReorgVerdict } from '../../src/indexing/reorg-detector';
+import type { Cursor } from '../../src/indexing/cursor/cursor-store';
+import type { ReorgDetector, ReorgVerdict } from '../../src/indexing/reorg/reorg-detector';
 
 const CONTINUOUS: ReorgVerdict = { type: 'continuous' };
 

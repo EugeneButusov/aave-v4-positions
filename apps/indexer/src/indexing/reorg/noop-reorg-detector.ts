@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 
-import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
+import { INDEXING_OPTIONS, type IndexingOptions } from '../indexing.options';
 import type { ReorgDetector, ReorgVerdict } from './reorg-detector';
 
 /**

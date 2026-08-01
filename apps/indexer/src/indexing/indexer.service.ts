@@ -8,9 +8,13 @@ import {
 } from '@nestjs/common';
 
 import { CHAIN_CLIENT, type ChainClient, type Hash } from '../chain/chain-client';
-import { BLOCK_PROCESSORS, type BlockProcessor, type ProcessorOutcome } from './block-processor';
-import { CURSOR_STORE, type Cursor, type CursorStore } from './cursor-store';
-import { IndexerStatus } from './indexer-status';
+import {
+  BLOCK_PROCESSORS,
+  type BlockProcessor,
+  type ProcessorOutcome,
+} from './processors/block-processor';
+import { CURSOR_STORE, type Cursor, type CursorStore } from './cursor/cursor-store';
+import { IndexerStatus } from './observability/indexer-status';
 import {
   INDEXING_OPTIONS,
   RETRY_BASE_MS,
@@ -18,7 +22,7 @@ import {
   SHUTDOWN_DRAIN_MS,
   type IndexingOptions,
 } from './indexing.options';
-import { REORG_DETECTOR, type ReorgDetector } from './reorg-detector';
+import { REORG_DETECTOR, type ReorgDetector } from './reorg/reorg-detector';
 
 /**
  * What one iteration accomplished. Drives both the backoff and, through

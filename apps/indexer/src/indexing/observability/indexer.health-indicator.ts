@@ -2,7 +2,7 @@ import type { HealthIndicator } from '@aave-v4-positions/ops';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { IndexerStatus } from './indexer-status';
-import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
+import { INDEXING_OPTIONS, type IndexingOptions } from '../indexing.options';
 
 /**
  * Surfaces the indexing loop on `/health/ready`.

@@ -3,11 +3,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { HealthModule, LoggingModule } from '@aave-v4-positions/ops';
 
 import { validateEnv, type Env } from './config/env';
-import { IndexerHealthIndicator } from './indexing/indexer.health-indicator';
+import { IndexerHealthIndicator } from './indexing/observability/indexer.health-indicator';
 import { IndexingModule } from './indexing/indexing.module';
-import { InMemoryCursorStore } from './indexing/in-memory-cursor-store';
-import { LoggingBlockProcessor } from './indexing/logging-block-processor';
-import { NoopReorgDetector } from './indexing/noop-reorg-detector';
+import { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';
+import { LoggingBlockProcessor } from './indexing/processors/logging-block-processor';
+import { NoopReorgDetector } from './indexing/reorg/noop-reorg-detector';
 
 /**
  * Built once and referenced twice below. Nest identifies a dynamic module by

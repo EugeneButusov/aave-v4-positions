@@ -34,7 +34,11 @@ the chain but its processors and reorg detector are placeholders. See
 │   └── indexer/             worker — Spoke/Hub event ingestion
 │       └── src/
 │           ├── chain/       RPC access — the ChainClient port and its viem adapter
-│           └── indexing/    the loop, and the processor / reorg / cursor seams
+│           └── indexing/    the loop, plus one folder per seam
+│               ├── processors/     what to do with a block range
+│               ├── reorg/          finality, fork detection, resume
+│               ├── cursor/         durable position
+│               └── observability/  state machine and health indicator
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/

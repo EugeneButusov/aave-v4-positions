@@ -1,4 +1,4 @@
-import type { Hash } from '../chain/chain-client';
+import type { Hash } from '../../chain/chain-client';
 
 /**
  * How far indexing has got on one chain.

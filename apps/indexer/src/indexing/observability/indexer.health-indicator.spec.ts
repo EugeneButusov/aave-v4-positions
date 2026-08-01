@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { IndexerSnapshot, IndexerStatus } from './indexer-status';
 import { IndexerHealthIndicator } from './indexer.health-indicator';
-import type { IndexingOptions } from './indexing.options';
+import type { IndexingOptions } from '../indexing.options';
 
 const STALL_THRESHOLD_MS = 60_000;
 

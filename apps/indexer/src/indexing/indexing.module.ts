@@ -8,13 +8,13 @@ import {
 
 import { CHAIN_CLIENT, CHAIN_CLIENT_OPTIONS } from '../chain/chain-client';
 import { ViemChainClient } from '../chain/viem-chain-client';
-import { BLOCK_PROCESSORS, type BlockProcessor } from './block-processor';
-import { CURSOR_STORE } from './cursor-store';
-import { IndexerHealthIndicator } from './indexer.health-indicator';
+import { BLOCK_PROCESSORS, type BlockProcessor } from './processors/block-processor';
+import { CURSOR_STORE } from './cursor/cursor-store';
+import { IndexerHealthIndicator } from './observability/indexer.health-indicator';
 import { IndexerService } from './indexer.service';
-import { IndexerStatus } from './indexer-status';
+import { IndexerStatus } from './observability/indexer-status';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
-import { REORG_DETECTOR } from './reorg-detector';
+import { REORG_DETECTOR } from './reorg/reorg-detector';
 
 /**
  * `TDeps` is inferred from the factory's own parameter list, so the injected

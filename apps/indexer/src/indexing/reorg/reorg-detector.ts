@@ -1,5 +1,5 @@
-import type { BlockHeader, Hash } from '../chain/chain-client';
-import type { Cursor } from './cursor-store';
+import type { BlockHeader, Hash } from '../../chain/chain-client';
+import type { Cursor } from '../cursor/cursor-store';
 
 /**
  * What the detector makes of a block, or of a resume point.

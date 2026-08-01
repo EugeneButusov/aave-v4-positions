@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { IndexingOptions } from './indexing.options';
+import type { IndexingOptions } from '../indexing.options';
 import { NoopReorgDetector } from './noop-reorg-detector';
 
 function detector(finalityDepth: number): NoopReorgDetector {

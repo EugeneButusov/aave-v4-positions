@@ -4,10 +4,10 @@ import { FakeChainClient, hashOf } from '../../test/fakes/fake-chain-client';
 import { RecordingCursorStore } from '../../test/fakes/recording-cursor-store';
 import { RecordingProcessor } from '../../test/fakes/recording-processor';
 import { ScriptedReorgDetector } from '../../test/fakes/scripted-reorg-detector';
-import { failed, retry } from './block-processor';
-import type { Cursor } from './cursor-store';
+import { failed, retry } from './processors/block-processor';
+import type { Cursor } from './cursor/cursor-store';
 import { IndexerService } from './indexer.service';
-import { IndexerStatus } from './indexer-status';
+import { IndexerStatus } from './observability/indexer-status';
 import type { IndexingOptions } from './indexing.options';
 
 const BASE_OPTIONS: IndexingOptions = {

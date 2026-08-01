@@ -14,14 +14,14 @@ import {
   ok,
   type BlockProcessor,
   type ProcessorOutcome,
-} from './block-processor';
-import { CURSOR_STORE, type CursorStore } from './cursor-store';
-import { InMemoryCursorStore } from './in-memory-cursor-store';
-import { IndexerHealthIndicator } from './indexer.health-indicator';
+} from './processors/block-processor';
+import { CURSOR_STORE, type CursorStore } from './cursor/cursor-store';
+import { InMemoryCursorStore } from './cursor/in-memory-cursor-store';
+import { IndexerHealthIndicator } from './observability/indexer.health-indicator';
 import { IndexerService } from './indexer.service';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
 import { IndexingModule } from './indexing.module';
-import { NoopReorgDetector } from './noop-reorg-detector';
+import { NoopReorgDetector } from './reorg/noop-reorg-detector';
 
 const SETTINGS = Symbol('SETTINGS');
 
