@@ -16,14 +16,14 @@
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {
-    "@aave-v4-positions/ops": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@packages/ops": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/config": "catalog:",
     "@nestjs/core": "catalog:",
     "@nestjs/platform-express": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
-    "viem": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

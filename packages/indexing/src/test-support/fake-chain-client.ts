@@ -1,4 +1,4 @@
-import type { BlockHeader, ChainClient, Hash } from '../../src/chain/chain-client';
+import type { BlockHeader, ChainClient, Hash } from '../chain/chain-client';
 
 export type ChainCall =
   | { readonly method: 'getChainId' }

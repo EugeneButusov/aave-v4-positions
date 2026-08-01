@@ -6,6 +6,21 @@
 export type Hash = `0x${string}`;
 
 /**
+ * A 20-byte contract or account address, hex-encoded and lower-cased.
+ *
+ * Plain `string`, where `Hash` and `Hex` are `0x${string}` templates, because
+ * addresses are the one thing here that gets normalised: RPC returns them lower
+ * cased and address books publish EIP-55 checksums, so every one goes through
+ * `toLowerCase()` on the way in. Tightening this to a template would turn each
+ * of those call sites into a type assertion for no added safety — the template
+ * accepts `'0x'` and `'0xzz'` just as happily.
+ */
+export type Address = string;
+
+/** Arbitrary hex-encoded bytes — a log's `data` payload, for instance. */
+export type Hex = `0x${string}`;
+
+/**
  * The only part of a block the framework itself needs: enough to establish
  * ancestry. Nothing here describes transactions or logs — that is a processor's
  * business, and the port stays narrow until one actually needs it.

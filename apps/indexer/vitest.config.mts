@@ -8,14 +8,16 @@ import { defineConfig } from 'vitest/config';
  * tsconfig — no separate SWC step is needed.
  */
 export default defineConfig({
-  // Resolve the workspace package to its source, not its build output. Without
-  // this, editing packages/ops and running tests would silently exercise a
-  // stale dist — and watch mode would never see the change at all.
+  // Resolve the workspace packages to their source, not their build output.
+  // Without this, editing a package and running tests would silently exercise a
+  // stale dist — and watch mode would never see the change at all. One entry per
+  // package: nothing derives these from package.json.
   resolve: {
     alias: {
-      '@aave-v4-positions/ops': fileURLToPath(
-        new URL('../../packages/ops/src/index.ts', import.meta.url),
+      '@packages/indexing': fileURLToPath(
+        new URL('../../packages/indexing/src/index.ts', import.meta.url),
       ),
+      '@packages/ops': fileURLToPath(new URL('../../packages/ops/src/index.ts', import.meta.url)),
     },
   },
   test: {

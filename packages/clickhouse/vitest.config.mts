@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
-      '@aave-v4-positions/ops': fileURLToPath(new URL('../ops/src/index.ts', import.meta.url)),
+      '@packages/ops': fileURLToPath(new URL('../ops/src/index.ts', import.meta.url)),
     },
   },
   test: {

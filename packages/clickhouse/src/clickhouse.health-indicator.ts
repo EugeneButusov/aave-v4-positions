@@ -1,5 +1,5 @@
 import type { ClickHouseClient } from '@clickhouse/client';
-import type { HealthIndicator } from '@aave-v4-positions/ops';
+import type { HealthIndicator } from '@packages/ops';
 import { Inject, Injectable } from '@nestjs/common';
 
 import { CLICKHOUSE_CLIENT } from './clickhouse.options';

@@ -8,7 +8,9 @@ import {
   type ChainClient,
   type ChainClientOptions,
 } from '../chain/chain-client';
+import { LOG_READER, type LogReader } from '../chain/log-reader';
 import { ViemChainClient } from '../chain/viem-chain-client';
+import { ViemLogReader } from '../chain/viem-log-reader';
 import {
   BLOCK_PROCESSORS,
   ok,
@@ -176,6 +178,15 @@ describe('IndexingModule', () => {
       'https://a.example.com',
       'https://b.example.com',
     ]);
+  });
+
+  it('binds the log reader for processors, separately from the loop client', async () => {
+    const moduleRef = await build();
+
+    // Its own adapter rather than the chain client widened: the loop is handed
+    // a port that cannot read a log, and a processor one that cannot move it.
+    expect(moduleRef.get<LogReader>(LOG_READER)).toBeInstanceOf(ViemLogReader);
+    expect(moduleRef.get<ChainClient>(CHAIN_CLIENT)).not.toBe(moduleRef.get<LogReader>(LOG_READER));
   });
 
   it('reaches no network while building the module', async () => {

@@ -1,15 +1,17 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { HealthModule, LoggingModule } from '@aave-v4-positions/ops';
+import {
+  BLOCK_HEADER_STORE,
+  HashChainReorgDetector,
+  IndexerHealthIndicator,
+  IndexingModule,
+  InMemoryBlockHeaderStore,
+  InMemoryCursorStore,
+  LoggingBlockProcessor,
+} from '@packages/indexing';
+import { HealthModule, LoggingModule } from '@packages/ops';
 
-import { BLOCK_HEADER_STORE } from './indexing/reorg/block-header-store';
 import { validateEnv, type Env } from './config/env';
-import { HashChainReorgDetector } from './indexing/reorg/hash-chain-reorg-detector';
-import { IndexerHealthIndicator } from './indexing/observability/indexer.health-indicator';
-import { IndexingModule } from './indexing/indexing.module';
-import { InMemoryBlockHeaderStore } from './indexing/reorg/in-memory-block-header-store';
-import { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';
-import { LoggingBlockProcessor } from './indexing/processors/logging-block-processor';
 
 /**
  * Built once and referenced twice below. Nest identifies a dynamic module by

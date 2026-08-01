@@ -2,7 +2,7 @@ import {
   ok,
   type BlockProcessor,
   type ProcessorOutcome,
-} from '../../src/indexing/processors/block-processor';
+} from '../indexing/processors/block-processor';
 
 /** Both processor methods take an inclusive `[from, to]`, so one shape covers them. */
 export interface ProcessorCall {

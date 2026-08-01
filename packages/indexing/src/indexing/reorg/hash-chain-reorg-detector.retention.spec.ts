@@ -7,7 +7,7 @@ import {
   cursorAt,
   harness,
   retained,
-} from '../../../test/fakes/reorg-harness';
+} from '../../test-support/reorg-harness';
 
 describe('HashChainReorgDetector — retention', () => {
   it('never leaves a gap in the window, whatever the loop does to it', async () => {

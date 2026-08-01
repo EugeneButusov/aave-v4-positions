@@ -5,7 +5,7 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
 import type { Env } from './config/env';
-import { Logger, installGracefulShutdown } from '@aave-v4-positions/ops';
+import { Logger, installGracefulShutdown } from '@packages/ops';
 import { setupOpenApi } from './openapi/openapi';
 
 async function bootstrap(): Promise<void> {
