@@ -609,6 +609,24 @@ describe('IndexerService — loop guards', () => {
     expect(status.snapshot.lastBlock).toBe(afterShutdown);
   });
 
+  it('does not sit out the poll interval before shutting down', async () => {
+    const { service } = harness({
+      // Start block above the head, so the first iteration idles and sleeps.
+      chain: new FakeChainClient({ head: 100 }),
+      options: { autoStart: true, startBlock: 101, pollIntervalMs: 5_000 },
+    });
+
+    service.onApplicationBootstrap();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const startedAt = Date.now();
+    await service.onApplicationShutdown();
+
+    // The sleep wakes on the abort signal rather than expiring, so a deploy
+    // does not pay the poll interval on every pod.
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
   it('tells processors that shutdown has begun', async () => {
     const { service, detector, processors } = harness({ options: { autoStart: true } });
     detector.settledThrough(1_000);
