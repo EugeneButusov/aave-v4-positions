@@ -6,7 +6,11 @@ import {
   SPOKE_EVENT_PROCESSOR,
   SpokeEventsModule,
 } from '@aave-positions/events';
-import { TOKEN_ENRICHMENT_PROCESSOR, TokenEnrichmentModule } from '@aave-positions/positions';
+import {
+  PendingTokens,
+  TOKEN_ENRICHMENT_PROCESSOR,
+  TokenEnrichmentModule,
+} from '@aave-positions/positions';
 import {
   BLOCK_HEADER_STORE,
   HashChainReorgDetector,
@@ -38,6 +42,15 @@ import type { Env } from './config/env';
  * two roots each call it once, and never load together.
  */
 export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}): DynamicModule {
+  /**
+   * The handoff from ingestion to enrichment.
+   *
+   * Owned here because neither module can reach the other: dynamic-module
+   * exports flow outward to importers, and these are siblings. The composition
+   * root is the only place that holds both, so it holds the thing between them.
+   */
+  const listedTokens = new PendingTokens();
+
   /**
    * Everything Aave-specific: the client, the event log and the processor that
    * fills it. The application names which Spoke to follow and nothing else.
@@ -73,6 +86,11 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     useFactory: (config: ConfigService<Env, true>) => ({
       chainId: config.get('CHAIN_ID', { infer: true }),
       hub: config.get('CORE_HUB_ADDRESS', { infer: true }),
+      // The push. Enrichment learns about a token from the event that listed
+      // it, instead of asking a database every range whether one appeared.
+      onListed: (tokens) => {
+        listedTokens.add(tokens);
+      },
       rpc: {
         rpcUrls: config.get('RPC_URLS', { infer: true }),
         rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),
@@ -112,6 +130,7 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     inject: [ConfigService],
     useFactory: (config: ConfigService<Env, true>) => ({
       chainId: config.get('CHAIN_ID', { infer: true }),
+      pending: listedTokens,
       retryDelayMs: config.get('TOKEN_ENRICHMENT_RETRY_MS', { infer: true }),
       concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
       rpc: {

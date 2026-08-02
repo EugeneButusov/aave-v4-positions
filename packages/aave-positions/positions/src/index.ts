@@ -37,6 +37,8 @@ export {
   type Valuation,
 } from './valuation/valuation';
 
+export { PendingTokens } from './enrichment/pending-tokens';
+
 export {
   TOKEN_ENRICHMENT_OPTIONS,
   TokenEnrichmentProcessor,

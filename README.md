@@ -1512,28 +1512,28 @@ At most one run is in flight, and a run that leaves a gap open waits
 retried on a timer rather than on every block. A run that resolved everything
 imposes no delay, so a newly listed token is picked up on the next dispatch.
 
-**It is woken by the event, not by a timer.** `AddAsset` is the only event that
-can change which tokens are listed — the Hub has no delisting event at all, and
-`Remove` is a liquidity withdrawal (§4.5) — so a range carrying none cannot have
-work to do. The usual dispatch asks `hub_events` about its own range, gets
-nothing, and stops: no Postgres, no chain. That query binds
-`(chain_id, block_number)`, which is the sorting key, so it is a granule-pruned
-seek.
+**It is pushed, not polled.** `AddAsset` is the only event that can change
+which tokens are listed — the Hub has no delisting event at all, and `Remove` is
+a liquidity withdrawal (§4.5) — and the Hub processor decodes it, address and
+all, as it writes it. That address goes straight into a small in-memory buffer,
+so an ordinary dispatch is a `Set.size` check and nothing else: **no query, no
+Postgres, no chain.** Going back to a database every range to rediscover a token
+the process already had in hand was the thing worth removing.
+
+The handoff is a **write-only listener on the event source**, called after the
+append and never awaited: a listener reacts to what landed, and must not be able
+to fail ingestion or make it report a write it did not do. Both are pinned —
+notifying before the write turns a test red, and so does an event source with no
+listener behaving differently.
 
 Two cases still need the whole listing set, and both are _states_ rather than a
 schedule. **Nothing checked yet** — every `AddAsset` on mainnet fired at block
-24,722,784, far behind any live cursor, so a fresh indexer would see no trigger
-for tokens it has never read. And **the last run left a gap open** — the
-addresses it failed on are behind the ranges it will be handed next, so the
-retry has to re-derive them. One flag covers both, so a full check happens
-exactly when it is needed rather than on a timer nobody tuned. Mutation tests
-pin both directions: never doing a full check breaks the cold start, always
-doing one makes the trigger pointless.
-
-The trigger reaches one range further back than the current one. Today that is
-belt and braces — dispatch is ordered and fail-fast, so the Hub processor has
-always written first — but `dispatch.ts` plans to drop that guarantee, and a
-missed range never comes back.
+24,722,784, far behind any live cursor, so nothing pushes those tokens to a fresh
+indexer. That is also what covers the buffer being in memory: a restart loses it,
+and the full check already owed on start is the recovery, rather than a second
+durable copy of a guarantee that exists. And **the last run left a gap open** —
+those addresses have been drained and will not be pushed again, so the retry has
+to re-derive them. One flag covers both.
 
 **The full check looks worse than it is**, which is worth recording because the
 plan reads like a scan. `SELECT DISTINCT underlying FROM hub_asset_state WHERE underlying IS NOT NULL`

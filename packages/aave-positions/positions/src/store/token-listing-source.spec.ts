@@ -63,36 +63,6 @@ describe('ClickHouseTokenListings', () => {
     expect(await listings.all(8453)).toEqual([]);
   });
 
-  describe('addedIn — the trigger', () => {
-    it('finds a token listed inside the range', async () => {
-      await events.append([addAsset({ block: 25_000_000 }, USDC, 6, '1')]);
-
-      expect(await listings.addedIn(CHAIN_ID, 24_999_000, 25_001_000)).toEqual([USDC]);
-    });
-
-    it('finds nothing in a range that listed nothing', async () => {
-      await events.append([
-        addAsset({ block: 25_000_000 }, USDC, 6, '1'),
-        updateAsset({ block: 25_500_000 }, undefined, undefined, undefined, '1'),
-      ]);
-
-      // Which is every range after genesis, and the reason enrichment is not a
-      // poll: `AddAsset` is the only event that can change the answer, so this
-      // is where the usual dispatch stops.
-      expect(await listings.addedIn(CHAIN_ID, 25_400_000, 25_600_000)).toEqual([]);
-    });
-
-    it('is inclusive at both ends, matching a dispatched range', async () => {
-      await events.append([
-        addAsset({ block: 25_000_000, log: 0 }, USDC, 6, '1'),
-        addAsset({ block: 25_000_100, log: 0 }, WETH, 18, '2'),
-      ]);
-
-      const found = await listings.addedIn(CHAIN_ID, 25_000_000, 25_000_100);
-      expect([...found].toSorted()).toEqual([USDC, WETH].toSorted());
-    });
-  });
-
   it('still reports a listing the ledger has retracted', async () => {
     await events.append([addAsset({ block: 25_000_000 }, USDC, 6, '1')]);
     await events.revert(CHAIN_ID, 25_000_000, 25_000_000);

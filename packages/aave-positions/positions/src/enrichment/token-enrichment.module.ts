@@ -19,6 +19,7 @@ import { PostgresModule, type PostgresOptions } from '@packages/postgres';
 import { PostgresTokenMetadataStore } from '../store/postgres-token-metadata-store';
 import { ClickHouseTokenListings, TOKEN_LISTINGS } from '../store/token-listing-source';
 import { TOKEN_METADATA_STORE } from '../store/token-metadata-store';
+import { PendingTokens } from './pending-tokens';
 import {
   TOKEN_ENRICHMENT_OPTIONS,
   TokenEnrichmentProcessor,
@@ -30,6 +31,15 @@ export const TOKEN_ENRICHMENT_PROCESSOR = Symbol('TOKEN_ENRICHMENT_PROCESSOR');
 const ENRICHMENT_OPTIONS = Symbol('ENRICHMENT_OPTIONS');
 
 export interface EnrichmentOptions extends TokenEnrichmentOptions {
+  /**
+   * Where ingestion drops newly listed tokens.
+   *
+   * Passed in rather than provided here, because the other end of it is the
+   * Hub event processor in a module this one cannot reach — dynamic-module
+   * exports flow outward to importers, not sideways. The composition root owns
+   * the instance and hands the same one to both.
+   */
+  readonly pending: PendingTokens;
   readonly rpc: ChainClientOptions;
   readonly clickhouse: ClickHouseOptions;
   readonly postgres: PostgresOptions;
@@ -130,6 +140,11 @@ export class TokenEnrichmentModule {
             retryDelayMs: resolved.retryDelayMs,
             concurrency: resolved.concurrency,
           }),
+          inject: [ENRICHMENT_OPTIONS],
+        },
+        {
+          provide: PendingTokens,
+          useFactory: (resolved: EnrichmentOptions) => resolved.pending,
           inject: [ENRICHMENT_OPTIONS],
         },
         { provide: token, useClass: TokenEnrichmentProcessor },

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TokenEnrichmentModule } from '@aave-positions/positions';
+import { PendingTokens, TokenEnrichmentModule } from '@aave-positions/positions';
 import { LoggingModule } from '@packages/ops';
 
 import { validateEnv, type Env } from '../config/env';
@@ -39,6 +39,9 @@ import { TokenEnricher } from './token-enricher';
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
         chainId: config.get('CHAIN_ID', { infer: true }),
+        // Its own, and always empty: nothing ingests during a one-shot run, so
+        // the command works from the full listing set every time.
+        pending: new PendingTokens(),
         retryDelayMs: 0,
         concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
         rpc: {

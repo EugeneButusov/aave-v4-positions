@@ -1,7 +1,9 @@
 import { IHubV4_ABI } from '@aave-dao/aave-address-book/abis';
 import { AaveV4Ethereum } from '@aave-dao/aave-address-book';
-import type { Hash } from '@packages/indexing';
+import type { Address, Hash } from '@packages/indexing';
 import { getAbiItem, toEventSelector } from 'viem';
+
+import type { DecodedEvent } from '../decode/decoded-event';
 
 /**
  * The Hub ABI, taken from the official address book rather than transcribed.
@@ -94,3 +96,32 @@ export const CORE_HUB_ADDRESS = AaveV4Ethereum.HUBS.CORE_HUB.toLowerCase();
  * event at 24,722,784, where all 17 `AddAsset` fire in one block.
  */
 export const CORE_HUB_GENESIS_BLOCK = 24_720_891;
+
+/**
+ * The ERC-20s a batch of Hub events listed, lower-cased.
+ *
+ * **`AddAsset` is the only event that can produce one.** The Hub has no
+ * delisting event at all — the generically named `Remove` is a liquidity
+ * withdrawal (§4.5) — so this is the complete set of moments at which the
+ * listed-token set can change, and a batch without one cannot have widened it.
+ *
+ * Lives here rather than with whoever consumes it because knowing that
+ * `AddAsset` carries `underlying`, and that nothing else does, is exactly the
+ * Aave knowledge this file exists to hold.
+ */
+export function listedTokens(events: readonly DecodedEvent[]): Address[] {
+  const tokens = new Set<Address>();
+
+  for (const event of events) {
+    if (event.eventName !== 'AddAsset') continue;
+    const underlying = event.body['underlying'];
+    // Decoded, so this is an address string — but `body` is
+    // `Record<string, unknown>` by design, and a wrong ABI would put anything
+    // here. Skipping the odd one out beats writing it to a keyed column.
+    if (typeof underlying === 'string' && underlying.length > 0) {
+      tokens.add(underlying.toLowerCase());
+    }
+  }
+
+  return [...tokens];
+}
