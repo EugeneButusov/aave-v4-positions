@@ -12,7 +12,9 @@ import { ClickHouseHubAssetStore } from './store/clickhouse-hub-asset-store';
 import { ClickHousePositionStore } from './store/clickhouse-position-store';
 import { HUB_ASSET_STORE } from './store/hub-asset-store';
 import { POSITION_STORE } from './store/position-store';
+import { PostgresReservePriceStore } from './store/postgres-reserve-price-store';
 import { PostgresTokenMetadataStore } from './store/postgres-token-metadata-store';
+import { RESERVE_PRICE_STORE } from './store/reserve-price-store';
 import { ClickHouseTokenListings, TOKEN_LISTINGS } from './store/token-listing-source';
 import { TOKEN_METADATA_STORE } from './store/token-metadata-store';
 
@@ -109,12 +111,17 @@ export class PositionsModule {
         { provide: HUB_ASSET_STORE, useClass: ClickHouseHubAssetStore },
         { provide: TOKEN_METADATA_STORE, useClass: PostgresTokenMetadataStore },
         { provide: TOKEN_LISTINGS, useClass: ClickHouseTokenListings },
+        // The read half of pricing. The *write* half lives in
+        // `ReservePriceModule`, which the indexer registers as a processor —
+        // this module is the read side and only ever selects from the table.
+        { provide: RESERVE_PRICE_STORE, useClass: PostgresReservePriceStore },
       ],
       exports: [
         POSITION_STORE,
         HUB_ASSET_STORE,
         TOKEN_METADATA_STORE,
         TOKEN_LISTINGS,
+        RESERVE_PRICE_STORE,
         clickhouse,
         postgres,
       ],

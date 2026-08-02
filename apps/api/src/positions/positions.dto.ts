@@ -83,6 +83,68 @@ export class PositionValueDto {
       'Published so a caller can reproduce the arithmetic rather than trust it.',
   })
   drawnIndex!: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '99971505',
+    description:
+      "What Aave's own oracle prices this reserve at, to **8 decimals** — so `99971505` is " +
+      "$0.99971505. This is the protocol's view rather than the market's, which is the " +
+      'right one for a position: it is the number that drives liquidation. Null when the ' +
+      'oracle has not been read for this reserve yet, or when `asOf` is set — see `pricing`.',
+  })
+  price!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '99971505000000000000000000000',
+    description:
+      "What `suppliedAmount` is worth, in the protocol's own `Value` unit where **`1e26` is " +
+      'one dollar**. Served in that unit rather than converted to dollars because it is what ' +
+      'the contract computes in, so it reconciles against `getUserAccountData` exactly; ' +
+      'dividing loses digits the chain does not. Null on the same terms as `price`.',
+  })
+  suppliedValue!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '0',
+    description:
+      'What `totalDebt` is worth, in the same unit. Note this prices the **rounded** token ' +
+      'amount, which is what is owed and what a caller should display. The health factor is ' +
+      'computed from an unrounded ray-scaled debt instead, so the two will differ in the last ' +
+      'digits by design. Null on the same terms as `price`.',
+  })
+  debtValue!: string | null;
+}
+
+export class PricingDto {
+  @ApiProperty({
+    example: '2026-08-02T11:04:17.000Z',
+    description: 'When the oldest price behind any number on this page was read.',
+  })
+  updatedAt!: string;
+
+  @ApiProperty({
+    example: 41,
+    description:
+      "Seconds since then, measured by the database clock rather than this process's, so " +
+      'clock skew between the two cannot be reported as staleness.',
+  })
+  ageSeconds!: number;
+
+  @ApiProperty({
+    example: false,
+    description:
+      "Whether that exceeds this deployment's threshold. It measures how long since **we** " +
+      'last read the oracle, never how long since a feed last moved — an hour without a ' +
+      'Chainlink update is normal behaviour, and a threshold set from feed cadence would ' +
+      'flag healthy feeds forever.',
+  })
+  stale!: boolean;
 }
 
 export class PositionDto {
@@ -242,6 +304,19 @@ export class PositionPageDto {
       'far as the indexer has folded, the amounts are those shares valued at this instant.',
   })
   valuedAt!: number;
+
+  @ApiProperty({
+    type: PricingDto,
+    nullable: true,
+    description:
+      'How current the prices behind this page are — **a third clock**, beside `sync` and ' +
+      '`valuedAt`, because prices have their own source and their own cadence. It reports ' +
+      'the *oldest* price used on this page, so it answers "how far can I trust the worst ' +
+      'number in front of me". Null when nothing here is priced, and null whenever `asOf` ' +
+      'is set: amounts are extrapolated to that instant and prices are not, so a value ' +
+      'mixing the two would be a number that never existed.',
+  })
+  pricing!: PricingDto | null;
 
   @ApiProperty({ type: [PositionDto] })
   items!: PositionDto[];

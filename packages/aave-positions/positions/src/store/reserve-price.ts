@@ -30,7 +30,7 @@ export interface ReservePriceRow {
   readonly price: string;
 }
 
-/** A stored price and the moment it was read. */
+/** A stored price, the moment it was read, and how long ago that was. */
 export interface ReservePrice {
   readonly price: string;
   /**
@@ -42,4 +42,15 @@ export interface ReservePrice {
    * block to give — see `011_reserve_prices.sql`.
    */
   readonly pricedAt: Date;
+  /**
+   * Whole seconds since this price was written, **measured by the database's
+   * own clock**.
+   *
+   * Not derivable from {@link pricedAt} by a reader, for the reason
+   * {@link SyncStatus.ageSeconds} gives: that timestamp is written by the
+   * database, so subtracting it from a different process's clock reports skew
+   * as staleness — and in the direction that matters, a fast reader declares a
+   * fresh price stale and a whole page's USD values suspect.
+   */
+  readonly ageSeconds: number;
 }

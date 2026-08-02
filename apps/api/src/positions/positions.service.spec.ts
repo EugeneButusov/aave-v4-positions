@@ -1,9 +1,12 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
+  reserveKey,
   type Position,
   type PositionPage,
   type PositionQuery,
   type PositionStore,
+  type ReservePrice,
+  type ReservePriceStore,
   type TokenLabel,
   type TokenMetadataStore,
 } from '@aave-positions/positions';
@@ -24,6 +27,11 @@ const RAY = '1000000000000000000000000000';
 const VALUED_AT = 1_785_000_000;
 
 const STALE_AFTER = 60;
+const PRICE_STALE_AFTER = 300;
+
+/** $0.99971505, which is what the USDC feed actually reads (§7.4.3). */
+const USDC_PRICE = '99971505';
+const PRICED_AT = new Date('2026-08-02T11:04:17.000Z');
 
 const cursors = new PositionCursors('spec-cursor-secret'.padEnd(32, '.'));
 
@@ -80,6 +88,25 @@ class RecordingTokens implements TokenMetadataStore {
   }
 }
 
+/** Records when it was asked, so "was it asked at all" is answerable. */
+class RecordingPrices implements ReservePriceStore {
+  pricesByReserve = new Map<string, ReservePrice>();
+  calls = 0;
+
+  latest(): Promise<ReadonlyMap<string, ReservePrice>> {
+    this.calls += 1;
+    return Promise.resolve(this.pricesByReserve);
+  }
+
+  put(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+function priced(price = USDC_PRICE, ageSeconds = 41): ReservePrice {
+  return { price, pricedAt: PRICED_AT, ageSeconds };
+}
+
 class FixedSync implements SyncStatusStore {
   constructor(private readonly status: SyncStatus | null) {}
 
@@ -102,8 +129,9 @@ function serviceWith(
   store: PositionStore,
   sync: SyncStatusStore,
   tokens: TokenMetadataStore = new RecordingTokens(),
+  prices: ReservePriceStore = new RecordingPrices(),
 ): PositionsService {
-  return new PositionsService(store, tokens, sync, STALE_AFTER, cursors);
+  return new PositionsService(store, tokens, prices, sync, STALE_AFTER, PRICE_STALE_AFTER, cursors);
 }
 
 describe('PositionsService', () => {
@@ -250,6 +278,9 @@ describe('PositionsService', () => {
           premiumDebt: '0',
           totalDebt: '0',
           drawnIndex: RAY,
+          price: null,
+          suppliedValue: null,
+          debtValue: null,
         },
       },
     ]);
@@ -306,6 +337,186 @@ describe('PositionsService', () => {
       // reached this call yet.
       await Promise.resolve();
       expect(tokens.calls).toBe(1);
+
+      releasePage();
+      await pending;
+    });
+  });
+
+  describe('prices', () => {
+    /**
+     * Rebuilds the subject with the given prices already stored.
+     *
+     * Reassigns the suite's `service` rather than returning a second one, so
+     * every test here still goes through the same `list` helper as the rest of
+     * the file — one way in, whatever is being set up.
+     */
+    function withPrices(entries: [string, ReservePrice][]): RecordingPrices {
+      const prices = new RecordingPrices();
+      for (const [reserveId, price] of entries) {
+        prices.pricesByReserve.set(reserveKey(SPOKE, reserveId), price);
+      }
+      service = serviceWith(store, new FixedSync(syncAt(7)), new RecordingTokens(), prices);
+      return prices;
+    }
+
+    const page = (over: Partial<Position> = {}): PositionPage => ({
+      valuedAt: VALUED_AT,
+      items: [position(over)],
+      next: null,
+    });
+
+    it('values an amount in the protocol’s own unit', async () => {
+      store.page = page();
+      withPrices([['7', priced()]]);
+
+      const { items } = await list();
+
+      // §7.1: `amount × price × 10^(18 − dec)`, where 1e26 is one dollar.
+      // 1000000000 (6dp USDC) × 99971505 (8dp) × 1e12 = 1000 USDC ≈ $999.71.
+      expect(items[0]?.value).toMatchObject({
+        price: USDC_PRICE,
+        suppliedValue: '99971505000000000000000000000',
+        debtValue: '0',
+      });
+    });
+
+    it('prices the debt from the rounded token amount, not the shares', async () => {
+      store.page = page({
+        value: {
+          suppliedAmount: '0',
+          drawnDebt: '500000000',
+          premiumDebt: '1',
+          totalDebt: '500000001',
+          drawnIndex: RAY,
+        },
+      });
+      withPrices([['7', priced()]]);
+
+      const { items } = await list();
+
+      // `totalDebt`, which is what is owed. The health factor deliberately does
+      // not reuse this — it divides an unrounded ray-scaled debt — so the two
+      // are meant to differ in the last digits.
+      expect(items[0]?.value?.debtValue).toBe((500_000_001n * 99_971_505n * 10n ** 12n).toString());
+    });
+
+    it('serves null rather than zero for a reserve with no price', async () => {
+      store.page = page();
+      withPrices([]);
+
+      const { items, pricing } = await list();
+
+      // A zero would be indistinguishable from a real one — and the oracle
+      // reverts rather than answer zero (§7.4), so a real one cannot occur.
+      expect(items[0]?.value).toMatchObject({
+        price: null,
+        suppliedValue: null,
+        debtValue: null,
+      });
+      expect(pricing).toBeNull();
+    });
+
+    it('keeps two spokes’ reserve 7 apart', async () => {
+      // Each Spoke has its own oracle over its own id space (§12.3). Keying on
+      // reserveId alone would price one spoke's position with another's feed.
+      const other = '0x973a023a77420ba610f06b3858ad991df6d85a08';
+      store.page = { valuedAt: VALUED_AT, items: [position({ spoke: other })], next: null };
+      withPrices([['7', priced()]]);
+
+      const { items } = await list();
+
+      expect(items[0]?.value?.price).toBeNull();
+    });
+
+    it('reports the oldest price behind the page', async () => {
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [position(), position({ reserveId: '9' })],
+        next: null,
+      };
+      withPrices([
+        ['7', priced(USDC_PRICE, 12)],
+        ['9', priced(USDC_PRICE, 900)],
+      ]);
+
+      const { pricing } = await list();
+
+      // The worst number in front of the caller, not the best or the mean.
+      // Prices are normally written in one upsert and agree; they diverge
+      // exactly when the oracle refused one and its last price was left to age.
+      expect(pricing).toEqual({
+        updatedAt: PRICED_AT.toISOString(),
+        ageSeconds: 900,
+        stale: true,
+      });
+    });
+
+    it('ignores the age of a price nothing on the page used', async () => {
+      store.page = page();
+      withPrices([
+        ['7', priced(USDC_PRICE, 12)],
+        ['99', priced(USDC_PRICE, 9_000)],
+      ]);
+
+      const { pricing } = await list();
+
+      expect(pricing).toMatchObject({ ageSeconds: 12, stale: false });
+    });
+
+    it('serves no prices at all when asOf is set', async () => {
+      store.page = page();
+      const prices = withPrices([['7', priced()]]);
+
+      const { items, pricing } = await list({ limit: 50, asOf: VALUED_AT - 3_600 });
+
+      // Amounts are extrapolated to that instant and the stored price is
+      // whatever the oracle last said, which is now. Pricing one against the
+      // other is a number that was never true.
+      expect(pricing).toBeNull();
+      expect(items[0]?.value).toMatchObject({ price: null, suppliedValue: null });
+      // Not fetched and discarded — not fetched.
+      expect(prices.calls).toBe(0);
+    });
+
+    it('still prices when asOf is merely absent', async () => {
+      // The store defaults `asOf` to now when the caller omits it, and that
+      // default is still "current" — the test has to be on the parameter, not
+      // on the resulting timestamp.
+      store.page = page();
+      const prices = withPrices([['7', priced()]]);
+
+      const { pricing } = await list();
+
+      expect(prices.calls).toBe(1);
+      expect(pricing).not.toBeNull();
+    });
+
+    it('asks for prices without waiting for the page', async () => {
+      const prices = new RecordingPrices();
+      let releasePage!: () => void;
+      const slowPage = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+
+      const blocking: PositionStore = {
+        list: async () => {
+          await slowPage;
+          return store.page;
+        },
+      };
+
+      const pending = serviceWith(
+        blocking,
+        new FixedSync(syncAt(7)),
+        new RecordingTokens(),
+        prices,
+      ).list({ chainId: CHAIN_ID, user: ALICE }, { limit: 50 });
+
+      // Three reads, one round trip. Sequential code would not have reached
+      // this call yet.
+      await Promise.resolve();
+      expect(prices.calls).toBe(1);
 
       releasePage();
       await pending;

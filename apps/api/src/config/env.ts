@@ -76,6 +76,22 @@ export const envSchema = z.object({
    * know long before an operator does.
    */
   API_SYNC_STALE_AFTER_SECONDS: z.coerce.number().int().min(1).default(60),
+
+  /**
+   * Above this, a page reports its prices stale.
+   *
+   * **It measures how long since we last read the oracle, never how long since
+   * a feed last moved.** That distinction is the trap §7.5 names: an hour
+   * without an `AnswerUpdated` is ordinary Chainlink behaviour, so a threshold
+   * derived from feed cadence would mark healthy feeds stale forever and teach
+   * readers to ignore the flag.
+   *
+   * Five times the indexer's `RESERVE_PRICE_REFRESH_MS` default, so one missed
+   * refresh is not an alarm and a dead poller still surfaces quickly. Longer
+   * than `API_SYNC_STALE_AFTER_SECONDS` because the two clocks run at different
+   * rates: the indexer advances every block, the oracle is read every minute.
+   */
+  API_PRICE_STALE_AFTER_SECONDS: z.coerce.number().int().min(1).default(300),
 });
 
 export type Env = z.infer<typeof envSchema>;

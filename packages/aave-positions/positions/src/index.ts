@@ -28,9 +28,11 @@ export { POSITION_POSTGRES_MIGRATIONS_DIR } from './postgres-migrations';
 
 export {
   RAY,
+  USD,
   drawnIndexAt,
   suppliedAssets,
   totalAddedAssets,
+  toValue,
   valuePosition,
   type AssetState,
   type PositionShares,
