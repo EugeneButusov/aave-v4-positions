@@ -15,6 +15,7 @@ import { BLOCK_PROCESSORS, type BlockProcessor } from './processors/block-proces
 import { CURSOR_STORE } from './cursor/cursor-store';
 import { IndexerHealthIndicator } from './observability/indexer.health-indicator';
 import { IndexerService } from './indexer.service';
+import { IndexerMetrics } from './observability/indexer-metrics';
 import { IndexerStatus } from './observability/indexer-status';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
 import { REORG_DETECTOR } from './reorg/reorg-detector';
@@ -115,6 +116,12 @@ export class IndexingModule {
         { provide: CHAIN_CLIENT, useClass: ViemChainClient },
         { provide: LOG_READER, useClass: ViemLogReader },
         IndexerStatus,
+        // Constructed eagerly rather than lazily, because its constructor is
+        // what registers the observable-gauge callback: a metrics provider that
+        // is only built when something injects it would report nothing at all
+        // until the first iteration, which is exactly the window where a
+        // failing boot is interesting.
+        IndexerMetrics,
         IndexerService,
         IndexerHealthIndicator,
         // Bound here rather than in a module of its own because the processor

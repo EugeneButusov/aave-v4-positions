@@ -1,6 +1,7 @@
 import { createPublicClient, fallback, http, type PublicClient } from 'viem';
 
 import type { ChainClientOptions } from './chain-client';
+import { measuredFetch } from './provider-health';
 
 /**
  * Builds the transport from the configured provider list.
@@ -41,7 +42,13 @@ import type { ChainClientOptions } from './chain-client';
 export function connect(options: ChainClientOptions): PublicClient {
   return createPublicClient({
     transport: fallback(
-      options.rpcUrls.map((url) => http(url, { timeout: options.rpcTimeoutMs })),
+      options.rpcUrls.map((url, index) =>
+        // `fetchFn` per transport is what makes provider health observable at
+        // all: `fallback` deliberately hides which URL served a call, and this
+        // is the last point where it is still known. See `provider-health.ts`
+        // for why it is this hook and not `onFetchRequest`/`onFetchResponse`.
+        http(url, { timeout: options.rpcTimeoutMs, fetchFn: measuredFetch(url, index) }),
+      ),
       { retryCount: 0, rank: false },
     ),
   });

@@ -142,7 +142,7 @@ export class AaveEventProcessor implements BlockProcessor {
     await this.store.append(events);
 
     if (events.length > 0) {
-      this.logger.log(`blocks ${from}..${to}: stored ${events.length} event(s)`);
+      this.logger.log({ from, to, events: events.length }, 'stored events');
     }
 
     // After the write, and not awaited. A listener is a downstream concern
@@ -159,7 +159,7 @@ export class AaveEventProcessor implements BlockProcessor {
    * reorg and a retry retract by the same call rather than two mechanisms.
    */
   async onReorg(from: number, to: number): Promise<ProcessorOutcome> {
-    this.logger.warn(`reorg: retracting blocks ${from}..${to}`);
+    this.logger.warn({ from, to }, 'reorg: retracting blocks');
     await this.store.revert(this.source.chainId, from, to);
     return ok();
   }

@@ -157,7 +157,8 @@ export class ViemLogReader extends ViemChainClient implements LogReader {
     const fetched = new Map<Hex, number>();
     if (missing.length > 0) {
       this.logger.warn(
-        `provider omitted blockTimestamp; reading ${missing.length} block header(s) to fill it`,
+        { headers: missing.length },
+        'provider omitted blockTimestamp; reading block headers to fill it',
       );
       const headers = await Promise.all(
         missing.map(async (blockNumber) => {

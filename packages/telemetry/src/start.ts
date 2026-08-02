@@ -1,4 +1,4 @@
-import { diag, DiagConsoleLogger, DiagLogLevel } from '@opentelemetry/api';
+import { diag, DiagConsoleLogger, DiagLogLevel, metrics } from '@opentelemetry/api';
 import { logs } from '@opentelemetry/api-logs';
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-proto';
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-proto';
@@ -111,6 +111,16 @@ function start(): void {
       }),
     ],
   });
+
+  // **Registered globally, not merely passed to `registerInstrumentations`.**
+  // The instrumentations take a provider directly, so their own metrics work
+  // either way — but everything this repo records by hand resolves through
+  // `metrics.getMeter()`, which reads the global. Without this line every
+  // hand-rolled instrument is silently a no-op while the auto-instrumented ones
+  // keep arriving, which is the most misleading shape the failure could take.
+  // `tracerProvider.register()` above does the equivalent for traces, and the
+  // asymmetry between the two APIs is exactly what hides this.
+  metrics.setGlobalMeterProvider(meterProvider);
 
   const loggerProvider = new LoggerProvider({
     resource,
