@@ -7,6 +7,17 @@ import type { Address } from '@packages/indexing';
 export interface TokenListings {
   /** Every underlying the Hub has listed on this chain. */
   all(chainId: number): Promise<readonly Address[]>;
+
+  /**
+   * The underlyings a listing named inside one block range.
+   *
+   * The trigger, and the reason enrichment is not a poll: `AddAsset` is the
+   * only event that can change the answer to {@link all}, so a range that
+   * carries none cannot have anything to do. There is no delisting event to
+   * watch for — `Remove` is a liquidity withdrawal (§4.5) — and a listing
+   * rolled back by a reorg leaves a metadata row nothing joins to.
+   */
+  addedIn(chainId: number, from: number, to: number): Promise<readonly Address[]>;
 }
 
 export const TOKEN_LISTINGS = Symbol('TOKEN_LISTINGS');
@@ -60,6 +71,32 @@ export class ClickHouseTokenListings implements TokenListings {
         WHERE chain_id = {chainId:UInt32} AND underlying IS NOT NULL
       `,
       query_params: { chainId },
+      format: 'JSONEachRow',
+    });
+
+    return (await result.json<{ underlying: Address }>())
+      .map((row) => row.underlying)
+      .filter((token) => token.length > 0);
+  }
+
+  async addedIn(chainId: number, from: number, to: number): Promise<readonly Address[]> {
+    const result = await this.client.query({
+      // Read from the ledger rather than re-fetching the logs: the Hub
+      // processor has already written them, so this costs a seek instead of a
+      // second `eth_getLogs` against the same range.
+      //
+      // `hub_events` is `ORDER BY (chain_id, block_number, log_index)` and
+      // partitioned by block, so binding the chain and a block range is a
+      // granule-pruned seek. `event_name` is not a key and does not need to
+      // be: the range has already narrowed the read to a granule or two.
+      query: `
+        SELECT DISTINCT lower(JSONExtractString(body, 'underlying')) AS underlying
+        FROM hub_events
+        WHERE chain_id = {chainId:UInt32}
+          AND block_number BETWEEN {from:UInt64} AND {to:UInt64}
+          AND event_name = 'AddAsset'
+      `,
+      query_params: { chainId, from, to },
       format: 'JSONEachRow',
     });
 

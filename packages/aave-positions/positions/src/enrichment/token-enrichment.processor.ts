@@ -66,6 +66,25 @@ function answered(metadata: TokenMetadata): boolean {
   );
 }
 
+/**
+ * Where to start the trigger query: one whole range before this one.
+ *
+ * Today this is belt and braces — `dispatchToProcessors` runs processors in
+ * order and stops at the first non-`ok`, so the Hub processor has always
+ * written the range's rows before this one is asked about them. But
+ * `dispatch.ts` plans to drop that guarantee, and under it the two could see a
+ * range at the same moment, with the write landing after the read. Overlapping
+ * the previous range means the next dispatch catches what this one raced past,
+ * and it scales with whatever range width the loop settles on rather than a
+ * constant nobody would revisit.
+ *
+ * A miss is not recoverable on its own — the range never comes back — so the
+ * cheap insurance is worth more than the granule it might cost.
+ */
+function lookBehind(from: number, to: number): number {
+  return Math.max(0, from - (to - from + 1));
+}
+
 /** Runs `work` over `items`, at most `limit` at a time, never rejecting. */
 async function mapLimit<T, R>(
   items: readonly T[],
@@ -101,11 +120,26 @@ async function mapLimit<T, R>(
  * derived from the difference between two tables, never from what this dispatch
  * happened to see. A run that is skipped, interrupted mid-flight by a shutdown,
  * or lost to a crash costs nothing — the gap is still there, and the next run
- * finds it. It is also why there is no fast-path/sweep split any more. That
- * split existed to keep an expensive listing query off the hot path — and the
- * query turned out not to be expensive: it reads 34 rows in 3 ms whether the
- * fold holds 29,631 rows or three million, because `underlying` is sparse. With
- * nothing to avoid, the cheap-but-narrow second path had nothing left to buy.
+ * finds it.
+ *
+ * **It is triggered by the event, not by a timer.** `AddAsset` is the only
+ * event that can change which tokens are listed — the Hub has no delisting
+ * event at all, and `Remove` is a liquidity withdrawal (§4.5) — so a range
+ * carrying none cannot have anything to do, and the usual dispatch stops after
+ * one granule-pruned seek without touching Postgres or the chain.
+ *
+ * Two cases still need the whole listing set rather than one range, and both
+ * are *states* rather than a schedule:
+ *
+ * - **nothing has been checked yet.** Every `AddAsset` on mainnet fired at
+ *   block 24,722,784, far behind any live cursor, so a freshly started indexer
+ *   would see no trigger for tokens it has never read. This is initialisation,
+ *   and it happens once.
+ * - **the last run left a gap open.** The addresses it failed on are not in any
+ *   range it will be handed again, so the retry has to re-derive them.
+ *
+ * One flag covers both, and it means a full check happens exactly when it is
+ * needed instead of on a timer nobody tuned.
  */
 @Injectable()
 export class TokenEnrichmentProcessor implements BlockProcessor {
@@ -118,6 +152,16 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
 
   /** Epoch ms before which not to try again, after a run left a gap open. */
   private retryAfter = 0;
+
+  /**
+   * Whether the next run has to ask for the whole listing set.
+   *
+   * True at construction — nothing has been checked yet — and true again after
+   * any run that left a gap open, because the addresses it failed on will not
+   * appear in a range it is handed later. False otherwise, which is the case
+   * that makes the usual dispatch cost one seek.
+   */
+  private needsFullCheck = true;
 
   constructor(
     @Inject(TOKEN_ENRICHMENT_OPTIONS) private readonly options: TokenEnrichmentOptions,
@@ -133,12 +177,12 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
    * Not `async`: the signature allows either, and a plain return makes it
    * impossible to add an `await` here without noticing what that would mean.
    */
-  onBlockRange(_from: number, _to: number, signal: AbortSignal): ProcessorOutcome {
+  onBlockRange(from: number, to: number, signal: AbortSignal): ProcessorOutcome {
     if (this.running === null && !signal.aborted && Date.now() >= this.retryAfter) {
       // Errors are handled inside `run`; the `void` is the point rather than an
       // oversight, and `finally` is what guarantees the guard is released even
       // if something escapes.
-      this.running = this.run(signal).finally(() => {
+      this.running = this.run(from, to, signal).finally(() => {
         this.running = null;
       });
     }
@@ -155,28 +199,50 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
   }
 
   /** Never rejects. A failure is logged and left for the next run to retry. */
-  private async run(signal: AbortSignal): Promise<void> {
+  private async run(from: number, to: number, signal: AbortSignal): Promise<void> {
     try {
-      const missing = await this.missing();
-      if (missing.length === 0 || signal.aborted) return;
+      const missing = await this.missing(from, to);
+      if (missing.length === 0) {
+        // Nothing outstanding, so whatever made the last run ask for everything
+        // is settled. The next dispatch costs one seek.
+        this.needsFullCheck = false;
+        return;
+      }
+      if (signal.aborted) return;
 
       const remaining = await this.enrich(missing, signal);
-      if (remaining > 0) this.backOff(`${remaining} token(s) still unresolved`);
+      if (remaining > 0) {
+        this.backOff(`${remaining} token(s) still unresolved`);
+      } else {
+        this.needsFullCheck = false;
+      }
     } catch (error) {
       this.backOff(error instanceof Error ? error.message : String(error));
     }
   }
 
   private backOff(reason: string): void {
+    // The addresses this run failed on will not appear in a range handed to a
+    // later one, so the retry has to go back to the whole set to find them.
+    this.needsFullCheck = true;
     this.retryAfter = Date.now() + this.options.retryDelayMs;
     this.logger.warn(
       `enrichment incomplete (${reason}); retrying in ${this.options.retryDelayMs}ms`,
     );
   }
 
-  /** Listed on the Hub, absent from the store. */
-  private async missing(): Promise<readonly Address[]> {
-    const listed = await this.listings.all(this.options.chainId);
+  /**
+   * Listed on the Hub, absent from the store.
+   *
+   * The usual answer comes from the range alone: `AddAsset` is the only event
+   * that can add a token, so a range without one has nothing to offer and this
+   * returns before touching Postgres.
+   */
+  private async missing(from: number, to: number): Promise<readonly Address[]> {
+    const listed = this.needsFullCheck
+      ? await this.listings.all(this.options.chainId)
+      : await this.listings.addedIn(this.options.chainId, lookBehind(from, to), to);
+
     if (listed.length === 0) return [];
 
     const known = await this.store.labels(this.options.chainId);

@@ -5,7 +5,7 @@ import type {
   Erc20MetadataReader,
   TokenMetadata,
 } from '@packages/indexing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TokenListings } from '../store/token-listing-source';
 import type { TokenLabel, TokenMetadataRow } from '../store/token-metadata';
@@ -37,11 +37,20 @@ const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolv
 
 class FakeListings implements TokenListings {
   listed: Address[] = [];
-  calls = 0;
+  addedByRange: Address[] = [];
+  /** Which shape each call took, in order — the whole set, or one range. */
+  readonly calls: ('all' | 'addedIn')[] = [];
+  readonly ranges: { from: number; to: number }[] = [];
 
   all(): Promise<readonly Address[]> {
-    this.calls += 1;
+    this.calls.push('all');
     return Promise.resolve(this.listed);
+  }
+
+  addedIn(_chainId: number, from: number, to: number): Promise<readonly Address[]> {
+    this.calls.push('addedIn');
+    this.ranges.push({ from, to });
+    return Promise.resolve(this.addedByRange);
   }
 }
 
@@ -114,11 +123,21 @@ function build(concurrency = 4): TokenEnrichmentProcessor {
 
 describe('TokenEnrichmentProcessor', () => {
   beforeEach(() => {
+    // Only `Date`, and always restored. Two tests move the clock to step over
+    // the back-off; left unscoped that shift leaks into whatever else is
+    // running in this process, and a sibling suite asserting on `Date.now()`
+    // fails somewhere else entirely. `setImmediate` stays real because
+    // `settle` depends on it.
+    vi.useFakeTimers({ toFake: ['Date'] });
     listings = new FakeListings();
     store = new FakeStore();
     reader = new FakeReader();
     chain = new FakeChain();
     processor = build();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe('what it does to the loop', () => {
@@ -171,7 +190,7 @@ describe('TokenEnrichmentProcessor', () => {
 
       // At head a dispatch lands every few seconds; without this each one would
       // pile another fan-out onto the same provider.
-      expect(listings.calls).toBe(1);
+      expect(listings.calls).toHaveLength(1);
 
       release();
       await settle();
@@ -199,11 +218,119 @@ describe('TokenEnrichmentProcessor', () => {
 
       processor.onBlockRange(100, 200, AbortSignal.abort());
 
-      expect(listings.calls).toBe(0);
+      expect(listings.calls).toEqual([]);
     });
 
     it('does nothing on a reorg, because a fork does not unmint an ERC-20', () => {
       expect(processor.onReorg()).toEqual({ status: 'ok' });
+    });
+  });
+
+  describe('what wakes it up', () => {
+    it('asks for the whole listing set the first time, because nothing has been checked', async () => {
+      listings.listed = [USDC];
+
+      processor.onBlockRange(25_000_000, 25_001_000, NEVER_ABORTED);
+      await settle();
+
+      // Every `AddAsset` on mainnet fired at block 24,722,784, far behind any
+      // live cursor. A trigger-only start would see nothing and enrich nothing.
+      expect(listings.calls).toEqual(['all']);
+      expect(store.rows.has(USDC)).toBe(true);
+    });
+
+    it('asks only about the range once it has caught up', async () => {
+      listings.listed = [USDC];
+      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      await settle();
+
+      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      await settle();
+
+      expect(listings.calls).toEqual(['all', 'addedIn']);
+    });
+
+    it('stops at the range query when no token was listed in it', async () => {
+      listings.listed = [USDC];
+      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      await settle();
+      const labelsAfterCatchUp = store.labelCalls;
+
+      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      processor.onBlockRange(300, 400, NEVER_ABORTED);
+      await settle();
+
+      // The point of the whole arrangement. `AddAsset` is the only event that
+      // can change the answer, so a range without one cannot have work — and
+      // every dispatch after genesis is such a range. No Postgres, no chain.
+      expect(store.labelCalls).toBe(labelsAfterCatchUp);
+      expect(reader.seen).toHaveLength(1);
+    });
+
+    it('enriches a token the moment its listing lands in a range', async () => {
+      listings.listed = [USDC];
+      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      await settle();
+
+      listings.addedByRange = [WETH];
+      processor.onBlockRange(25_500_000, 25_501_000, NEVER_ABORTED);
+      await settle();
+
+      expect(store.rows.has(WETH)).toBe(true);
+    });
+
+    it('overlaps the previous range, so a late write is not missed forever', async () => {
+      listings.listed = [];
+      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      await settle();
+
+      processor.onBlockRange(1_000, 1_999, NEVER_ABORTED);
+      await settle();
+
+      // Today the Hub processor has always written first — dispatch is ordered
+      // and fail-fast. `dispatch.ts` plans to drop that, and a missed range
+      // never comes back, so the trigger reaches one range further back than
+      // it strictly needs to.
+      expect(listings.ranges.at(-1)).toEqual({ from: 0, to: 1_999 });
+
+      processor.onBlockRange(10_000, 10_999, NEVER_ABORTED);
+      await settle();
+      expect(listings.ranges.at(-1)).toEqual({ from: 9_000, to: 10_999 });
+    });
+
+    it('goes back to the whole set after a failure, not to the range', async () => {
+      // Deliberately after a *successful* run, which is the only way to tell
+      // the two apart: on a cold start the flag is already set, so a mutation
+      // that never sets it would still look correct there.
+      listings.listed = [USDC];
+      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      await settle();
+      expect(listings.calls).toEqual(['all']);
+
+      // A listing lands, and the token cannot be reached.
+      listings.addedByRange = [WETH];
+      reader.answers.set(WETH, {
+        symbol: null,
+        name: null,
+        decimals: null,
+        failures: ['symbol: HttpRequestError'],
+      });
+      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      await settle();
+      expect(listings.calls).toEqual(['all', 'addedIn']);
+      expect(store.rows.has(WETH)).toBe(false);
+
+      // The retry must not ask about a range — WETH's listing is behind it now,
+      // so the range would return nothing and the gap would never close.
+      vi.setSystemTime(Date.now() + RETRY_MS);
+      listings.listed = [USDC, WETH];
+      listings.addedByRange = [];
+      reader.answers.delete(WETH);
+      processor.onBlockRange(300, 400, NEVER_ABORTED);
+      await settle();
+
+      expect(listings.calls).toEqual(['all', 'addedIn', 'all']);
+      expect(store.rows.has(WETH)).toBe(true);
     });
   });
 
@@ -214,13 +341,13 @@ describe('TokenEnrichmentProcessor', () => {
 
       processor.onBlockRange(100, 200, NEVER_ABORTED);
       await settle();
-      expect(listings.calls).toBe(1);
+      expect(listings.calls).toHaveLength(1);
 
       processor.onBlockRange(200, 300, NEVER_ABORTED);
       await settle();
 
       // A dead provider is retried on a timer rather than on every block.
-      expect(listings.calls).toBe(1);
+      expect(listings.calls).toHaveLength(1);
     });
 
     it('tries again once the delay has passed', async () => {
@@ -236,7 +363,6 @@ describe('TokenEnrichmentProcessor', () => {
       await settle();
 
       expect(store.rows.has(USDC)).toBe(true);
-      vi.useRealTimers();
     });
 
     it('does not back off when there was simply nothing to do', async () => {
@@ -244,7 +370,7 @@ describe('TokenEnrichmentProcessor', () => {
       processor.onBlockRange(100, 200, NEVER_ABORTED);
       await settle();
 
-      listings.listed = [USDC, WETH];
+      listings.addedByRange = [WETH];
       processor.onBlockRange(200, 300, NEVER_ABORTED);
       await settle();
 
@@ -267,6 +393,7 @@ describe('TokenEnrichmentProcessor', () => {
 
     it('skips a token it already has', async () => {
       listings.listed = [USDC];
+      listings.addedByRange = [USDC];
       processor.onBlockRange(100, 200, NEVER_ABORTED);
       await settle();
 

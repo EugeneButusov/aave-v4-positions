@@ -1512,21 +1512,39 @@ At most one run is in flight, and a run that leaves a gap open waits
 retried on a timer rather than on every block. A run that resolved everything
 imposes no delay, so a newly listed token is picked up on the next dispatch.
 
-**Discovery is one query, and it looks worse than it is.** The listing set comes
-from `SELECT DISTINCT underlying FROM hub_asset_state WHERE underlying IS NOT
-NULL`, and `EXPLAIN indexes = 1` reports `Parts: 2/2, Granules: 5/5` — every
-granule, because `underlying` is not a sorting key. That reads like
-O(`UpdateAsset` history), about 1.5 million rows a year.
+**It is woken by the event, not by a timer.** `AddAsset` is the only event that
+can change which tokens are listed — the Hub has no delisting event at all, and
+`Remove` is a liquidity withdrawal (§4.5) — so a range carrying none cannot have
+work to do. The usual dispatch asks `hub_events` about its own range, gets
+nothing, and stops: no Postgres, no chain. That query binds
+`(chain_id, block_number)`, which is the sorting key, so it is a granule-pruned
+seek.
 
-Measured, it is flat. `underlying` is NULL on every row but the handful of
-`AddAsset`s, so the column is stored sparsely and the NULL runs are skipped: at
-**3,029,631 rows the query reads 34 rows and 1.83 KiB in 3 ms**, the same as at
-29,631. Granules _examined_ is not data _read_. A purpose-built
-`(chain_id, underlying)` table fed by a materialized view was built and measured
-against it — 17 rows, 816 bytes, 1 ms — and reverted: two milliseconds does not
-buy a table, a view, a migration and a replay step. An earlier fast-path/sweep
-split existed to keep that query off the hot path, and went the same way once
-the query turned out not to need keeping off anything.
+Two cases still need the whole listing set, and both are _states_ rather than a
+schedule. **Nothing checked yet** — every `AddAsset` on mainnet fired at block
+24,722,784, far behind any live cursor, so a fresh indexer would see no trigger
+for tokens it has never read. And **the last run left a gap open** — the
+addresses it failed on are behind the ranges it will be handed next, so the
+retry has to re-derive them. One flag covers both, so a full check happens
+exactly when it is needed rather than on a timer nobody tuned. Mutation tests
+pin both directions: never doing a full check breaks the cold start, always
+doing one makes the trigger pointless.
+
+The trigger reaches one range further back than the current one. Today that is
+belt and braces — dispatch is ordered and fail-fast, so the Hub processor has
+always written first — but `dispatch.ts` plans to drop that guarantee, and a
+missed range never comes back.
+
+**The full check looks worse than it is**, which is worth recording because the
+plan reads like a scan. `SELECT DISTINCT underlying FROM hub_asset_state WHERE underlying IS NOT NULL`
+reports `Parts: 2/2, Granules: 5/5` under `EXPLAIN indexes = 1` — every granule,
+because `underlying` is not a sorting key. Measured, it is flat: `underlying` is
+NULL on every row but the handful of `AddAsset`s, so the column is stored
+sparsely and the NULL runs are skipped. At **3,029,631 rows it reads 34 rows and
+1.83 KiB in 3 ms**, the same as at 29,631. Granules _examined_ is not data
+_read_. A purpose-built `(chain_id, underlying)` table fed by a materialized view
+was built and measured against it — 17 rows, 816 bytes, 1 ms — and reverted: two
+milliseconds does not buy a table, a view, a migration and a replay step.
 
 Three rules exist because the obvious version of each is wrong:
 
