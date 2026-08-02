@@ -5,13 +5,11 @@ export {
   type PositionQuery,
   type PositionStore,
 } from './store/position-store';
-export { InvalidCursorError } from './store/position-cursor';
+export { InvalidCursorError, PositionCursorCodec } from './store/position-cursor';
 
 export {
   ClickHousePositionStore,
   POSITION_MIGRATIONS_DIR,
-  POSITIONS_VIEW,
-  RESERVES_VIEW,
 } from './store/clickhouse-position-store';
 
 export {

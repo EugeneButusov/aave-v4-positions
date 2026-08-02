@@ -5,7 +5,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { CLICKHOUSE_CLIENT } from '@packages/clickhouse';
 
 import type { Position } from './position';
-import { decodeCursor, encodeCursor } from './position-cursor';
+import { PositionCursorCodec, type CursorScope } from './position-cursor';
 import type { PositionPage, PositionQuery, PositionStore } from './position-store';
 
 export const POSITIONS_VIEW = 'user_positions_current';
@@ -71,24 +71,44 @@ function toPosition(row: Row): Position {
  * bounded by the number of reserves that will ever exist (fourteen today), not
  * by user activity.
  *
+ * **`chain_id`, `user` and `spoke` are all required and all bound**, which is
+ * the whole sorting-key prefix above `reserve_id`. That is what makes a page a
+ * seek into one wallet's contiguous rows rather than a filter over everyone's.
+ *
  * **Every wide integer is `toString`-ed in SQL.** Not left to the JSON encoder's
  * defaults: a share balance past 2^53 that arrives as a number has already lost
  * its tail by the time it reaches this process (§7.5).
  */
 @Injectable()
 export class ClickHousePositionStore implements PositionStore {
-  constructor(@Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient) {}
+  constructor(
+    @Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient,
+    private readonly cursors: PositionCursorCodec,
+  ) {}
 
   async list(query: PositionQuery): Promise<PositionPage> {
-    const params: Record<string, unknown> = {
+    // The listing this page belongs to. Signed alongside the resume point, so a
+    // cursor cannot be carried across to another wallet, Spoke or chain.
+    const scope: CursorScope = {
       chainId: query.chainId,
+      user: query.user.toLowerCase(),
+      spoke: query.spoke.toLowerCase(),
+    };
+    const params: Record<string, unknown> = {
+      chainId: scope.chainId,
+      user: scope.user,
+      spoke: scope.spoke,
       // Fetch one more than asked. Its presence is what says there is a next
       // page; counting the whole result set to find out would defeat the point
       // of keyset paging.
       limit: query.limit + 1,
     };
     const filters = [
+      // The full sorting-key prefix, so the scan starts at this wallet's rows
+      // rather than filtering its way to them.
       `chain_id = {chainId:UInt32}`,
+      `user = {user:String}`,
+      `spoke = {spoke:String}`,
       // Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go negative
       // on chain, so a negative fold is drift — and it should surface as a
       // visibly wrong number for §9 to catch, not vanish behind the filter that
@@ -96,24 +116,11 @@ export class ClickHousePositionStore implements PositionStore {
       `(supplied_shares != 0 OR drawn_shares != 0)`,
     ];
 
-    if (query.user !== undefined) {
-      filters.push(`user = {user:String}`);
-      params['user'] = query.user.toLowerCase();
-    }
-    if (query.spoke !== undefined) {
-      filters.push(`spoke = {spoke:String}`);
-      params['spoke'] = query.spoke.toLowerCase();
-    }
     if (query.cursor !== undefined) {
-      const cursor = decodeCursor(query.cursor);
-      // A lexicographic tuple comparison, and the tuple is the sorting key after
-      // chain_id — so resuming seeks rather than scans.
-      filters.push(
-        `(user, spoke, reserve_id) > ({afterUser:String}, {afterSpoke:String}, {afterReserve:UInt256})`,
-      );
-      params['afterUser'] = cursor.user;
-      params['afterSpoke'] = cursor.spoke;
-      params['afterReserve'] = cursor.reserveId;
+      // Everything above `reserve_id` in the sorting key is already pinned by the
+      // scope, so the resume point is one comparison on what is left.
+      filters.push(`reserve_id > {afterReserve:UInt256}`);
+      params['afterReserve'] = this.cursors.decode(query.cursor, scope);
     }
 
     const result = await this.client.query({
@@ -160,7 +167,7 @@ export class ClickHousePositionStore implements PositionStore {
       items,
       nextCursor:
         rows.length > query.limit && last !== undefined
-          ? encodeCursor({ user: last.user, spoke: last.spoke, reserveId: last.reserveId })
+          ? this.cursors.encode(scope, last.reserveId)
           : null,
     };
   }

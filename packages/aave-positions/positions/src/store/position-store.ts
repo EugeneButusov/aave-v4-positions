@@ -2,11 +2,24 @@ import type { Address } from '@packages/indexing';
 
 import type { Position } from './position';
 
+/**
+ * One wallet's positions on one Spoke.
+ *
+ * **`user` and `spoke` are required**, which makes this a lookup rather than a
+ * scan. Both are load-bearing: the sorting key leads with `user`, so pinning it
+ * turns every page into a seek; and a Spoke is an isolated margin account with
+ * its own collateral factors, oracle and health factor (§12.3), so positions
+ * from two of them are not one list. Blending them is wrong in the one direction
+ * that matters — it hides an imminent liquidation behind unrelated collateral.
+ *
+ * Cross-wallet questions ("largest open positions") are analytics over the same
+ * view, not a mode of this port.
+ */
 export interface PositionQuery {
   readonly chainId: number;
   /** Lower-cased by the store, so a checksummed address from a caller still matches. */
-  readonly user?: Address;
-  readonly spoke?: Address;
+  readonly user: Address;
+  readonly spoke: Address;
   readonly limit: number;
   /** Opaque; hand back {@link PositionPage.nextCursor} verbatim. */
   readonly cursor?: string;

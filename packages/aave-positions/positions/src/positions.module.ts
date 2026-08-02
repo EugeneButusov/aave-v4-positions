@@ -8,12 +8,20 @@ import {
 import { ClickHouseModule, type ClickHouseOptions } from '@packages/clickhouse';
 
 import { ClickHousePositionStore } from './store/clickhouse-position-store';
+import { PositionCursorCodec } from './store/position-cursor';
 import { POSITION_STORE } from './store/position-store';
 
 const POSITIONS_OPTIONS = Symbol('POSITIONS_OPTIONS');
 
 export interface PositionsOptions {
   readonly clickhouse: ClickHouseOptions;
+  /**
+   * Signs pagination cursors, so one cannot be altered or carried to a
+   * different listing. **Must be identical across replicas** — a per-process
+   * secret means a cursor issued by one pod is rejected by the next, which
+   * shows up as pagination that fails only under load.
+   */
+  readonly cursorSecret: string;
 }
 
 export interface PositionsAsyncOptions<TDeps extends unknown[] = unknown[]> extends Pick<
@@ -71,7 +79,15 @@ export class PositionsModule {
     return {
       module: PositionsModule,
       imports: [settings, clickhouse],
-      providers: [{ provide: POSITION_STORE, useClass: ClickHousePositionStore }],
+      providers: [
+        {
+          provide: PositionCursorCodec,
+          useFactory: (resolved: PositionsOptions) =>
+            new PositionCursorCodec(resolved.cursorSecret),
+          inject: [POSITIONS_OPTIONS],
+        },
+        { provide: POSITION_STORE, useClass: ClickHousePositionStore },
+      ],
       exports: [POSITION_STORE, clickhouse],
     };
   }

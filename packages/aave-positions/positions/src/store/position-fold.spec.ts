@@ -12,7 +12,7 @@ import type { Address } from '@packages/indexing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore, POSITION_MIGRATIONS_DIR } from './clickhouse-position-store';
-import { encodeCursor } from './position-cursor';
+import { PositionCursorCodec } from './position-cursor';
 import type { Position } from './position';
 
 const CHAIN_ID = 1;
@@ -129,8 +129,9 @@ async function index(from: number, to: number, batch: DecodedEvent[]): Promise<v
   await events.append(batch);
 }
 
-async function positions(user?: string): Promise<Position[]> {
-  const page = await store.list({ chainId: CHAIN_ID, limit: 100, ...(user && { user }) });
+/** One wallet's open positions on the configured Spoke — all the store serves. */
+async function positions(user: string = ALICE): Promise<Position[]> {
+  const page = await store.list({ chainId: CHAIN_ID, user, spoke: SPOKE, limit: 100 });
   return [...page.items];
 }
 
@@ -202,7 +203,10 @@ describe('the position fold', () => {
     // views after the table they read.
     await migrate(client, await loadMigrations([EVENT_MIGRATIONS_DIR, POSITION_MIGRATIONS_DIR]));
     events = new ClickHouseEventStore(client);
-    store = new ClickHousePositionStore(client);
+    store = new ClickHousePositionStore(
+      client,
+      new PositionCursorCodec('spec-cursor-secret'.padEnd(32, '.')),
+    );
   });
 
   afterAll(async () => {
@@ -532,7 +536,13 @@ describe('the position fold', () => {
       do {
         // Sequential by definition — each page's cursor comes from the last one.
         // oxlint-disable-next-line no-await-in-loop
-        const page = await store.list({ chainId: CHAIN_ID, limit: 2, ...(cursor && { cursor }) });
+        const page = await store.list({
+          chainId: CHAIN_ID,
+          user: ALICE,
+          spoke: SPOKE,
+          limit: 2,
+          ...(cursor && { cursor }),
+        });
         seen.push(...page.items.map((p) => p.reserveId));
         cursor = page.nextCursor ?? undefined;
       } while (cursor !== undefined);
@@ -546,23 +556,54 @@ describe('the position fold', () => {
     it('reports no next cursor on the last page', async () => {
       await index(100, 100, [supply({ block: 100 }, ALICE, '7', '500')]);
 
-      expect(await store.list({ chainId: CHAIN_ID, limit: 1 })).toMatchObject({ nextCursor: null });
+      expect(
+        await store.list({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE, limit: 1 }),
+      ).toMatchObject({ nextCursor: null });
     });
 
-    it('accepts a checksummed address and a cursor it issued', async () => {
+    it('takes a checksummed address and resumes from its own cursor', async () => {
       await index(100, 100, [
         supply({ block: 100, log: 0 }, ALICE, '7', '500'),
         supply({ block: 100, log: 1 }, ALICE, '13', '500'),
       ]);
 
-      const page = await store.list({
+      // Checksummed on the way in, because that is what a caller reads off a
+      // block explorer, and the fold stores it lower-cased.
+      const first = await store.list({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE, limit: 1 });
+      const second = await store.list({
         chainId: CHAIN_ID,
         user: ALICE,
-        limit: 10,
-        cursor: encodeCursor({ user: ALICE.toLowerCase(), spoke: SPOKE, reserveId: '7' }),
+        spoke: SPOKE,
+        limit: 1,
+        cursor: first.nextCursor ?? '',
       });
 
-      expect(page.items.map((p) => p.reserveId)).toEqual(['13']);
+      expect(first.items.map((p) => p.reserveId)).toEqual(['7']);
+      expect(second.items.map((p) => p.reserveId)).toEqual(['13']);
+    });
+
+    it("refuses one wallet's cursor when replayed against another's listing", async () => {
+      await index(100, 100, [
+        supply({ block: 100, log: 0 }, ALICE, '7', '500'),
+        supply({ block: 100, log: 1 }, ALICE, '13', '500'),
+        supply({ block: 100, log: 2 }, BOB, '7', '500'),
+        supply({ block: 100, log: 3 }, BOB, '13', '500'),
+      ]);
+
+      const alice = await store.list({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE, limit: 1 });
+
+      // The signature covers the listing, not just the resume point. Unsigned,
+      // this is a well-formed reserve id and Bob's page would silently start
+      // past it.
+      await expect(
+        store.list({
+          chainId: CHAIN_ID,
+          user: BOB,
+          spoke: SPOKE,
+          limit: 1,
+          cursor: alice.nextCursor ?? '',
+        }),
+      ).rejects.toThrow(/does not match this listing/);
     });
   });
 

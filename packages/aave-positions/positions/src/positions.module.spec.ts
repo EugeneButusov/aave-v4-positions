@@ -22,6 +22,7 @@ const positions = () =>
     inject: [Settings],
     useFactory: (settings: Settings) => ({
       clickhouse: { url: settings.url, database: 'aave', username: 'aave', password: '' },
+      cursorSecret: 'spec-cursor-secret'.padEnd(32, '.'),
     }),
   });
 

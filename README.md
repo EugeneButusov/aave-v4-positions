@@ -738,11 +738,29 @@ operational step the moment the cursor goes durable.
 
 ### Reading it
 
-`PositionStore.list` pages by **keyset, not `OFFSET`**. The cursor carries `(user, spoke, reserve_id)`
-and the predicate is a lexicographic tuple comparison — which is exactly the sorting key after
-`chain_id`, so resuming is a seek. `OFFSET n` would re-run the aggregation to discard `n` rows, and it
-shifts under concurrent writes: a position crossing a page boundary while the indexer advances would
-be returned twice or skipped.
+`PositionStore.list` answers one question: **one wallet's positions on one Spoke.** `user` and `spoke`
+are required, not optional filters. Both earn it — together with `chain_id` they are the entire
+sorting-key prefix above `reserve_id`, so a page is a seek into contiguous rows rather than a filter
+over everyone's; and a Spoke is an isolated margin account with its own collateral factors, oracle and
+health factor (§12.3), so two of them are not one list. Cross-wallet questions are analytics over the
+same view, not a mode of this port.
+
+Paging is by **keyset, not `OFFSET`**. With the wallet and Spoke pinned, the resume point is a single
+`reserve_id`. `OFFSET n` would re-run the aggregation to discard `n` rows, and it shifts under
+concurrent writes: a position crossing a page boundary while the indexer advances would be returned
+twice or skipped.
+
+**Cursors are HMAC-signed, with the listing mixed into the signature.** Position data is public, so
+this is neither confidentiality nor access control — a caller can already ask for any wallet. It buys
+two things: the cursor becomes a genuinely opaque contract, so its encoding can change without
+breaking anyone who hand-rolled one; and a resume point cannot be carried between listings. That
+second one is the real defect a bare signature would leave: unsigned, Alice's cursor is a well-formed
+reserve id in Bob's listing, and his first page would silently start past it. Signing
+`(chainId, user, spoke)` alongside the reserve id makes switching listings fail the same check as
+tampering, and keeps the cursor one field long. HMAC rather than a JWT, which would add a header,
+algorithm negotiation and the `alg: none` footgun to protect a single integer. The key is
+configuration and **must be identical across replicas** — a per-process secret gives pagination that
+fails only under load.
 
 Only open positions come back — §12.1: a position exists while its shares are non-zero. The filter is
 `!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
