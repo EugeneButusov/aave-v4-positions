@@ -24,6 +24,7 @@ const positions = () =>
     inject: [Settings],
     useFactory: (settings: Settings) => ({
       clickhouse: { url: settings.url, database: 'aave', username: 'aave', password: '' },
+      postgres: { url: 'postgres://aave@postgres.invalid:5432/aave' },
     }),
   });
 
@@ -67,6 +68,7 @@ describe('PositionsModule', () => {
               username: 'aave',
               password: '',
             },
+            postgres: { url: 'postgres://aave@postgres.invalid:5432/aave' },
           }),
         }),
       ],

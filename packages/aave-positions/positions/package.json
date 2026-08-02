@@ -23,10 +23,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@packages/clickhouse": "workspace:*",
-    "@packages/indexing": "workspace:*",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
+    "@packages/clickhouse": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@packages/postgres": "workspace:*",
+    "postgres": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:"
   },

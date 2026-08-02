@@ -266,6 +266,12 @@ importers:
       '@packages/indexing':
         specifier: workspace:*
         version: link:../../indexing
+      '@packages/postgres':
+        specifier: workspace:*
+        version: link:../../postgres
+      postgres:
+        specifier: 'catalog:'
+        version: 3.4.9
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2

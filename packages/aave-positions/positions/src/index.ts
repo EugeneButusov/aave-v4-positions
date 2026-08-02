@@ -7,6 +7,15 @@ export {
   type PositionStore,
 } from './store/position-store';
 
+export type { TokenLabel, TokenMetadataRow } from './store/token-metadata';
+export { TOKEN_METADATA_STORE, type TokenMetadataStore } from './store/token-metadata-store';
+export { PostgresTokenMetadataStore } from './store/postgres-token-metadata-store';
+export {
+  ClickHouseTokenListings,
+  TOKEN_LISTINGS,
+  type TokenListings,
+} from './store/token-listing-source';
+
 export type { HubAsset } from './store/hub-asset';
 export { HUB_ASSET_STORE, type HubAssetStore } from './store/hub-asset-store';
 export { ClickHouseHubAssetStore } from './store/clickhouse-hub-asset-store';
