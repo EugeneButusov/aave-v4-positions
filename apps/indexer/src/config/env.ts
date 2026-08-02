@@ -72,6 +72,40 @@ export const envSchema = z.object({
   SHUTDOWN_GRACE_SECONDS: z.coerce.number().int().min(0).max(300).default(10),
 
   /**
+   * Telemetry, and a boundary worth being explicit about.
+   *
+   * **The SDK reads these from `process.env` itself, before this schema runs.**
+   * It has to: `@packages/telemetry/start` is preloaded with `node --require`,
+   * so it executes before Nest exists, let alone `ConfigModule`. Declaring them
+   * here does not change where the SDK gets them from.
+   *
+   * They are declared anyway, for two things validation still buys: a malformed
+   * endpoint aborts the process rather than being silently dropped by an
+   * exporter, and the contract appears in one place with every other variable
+   * instead of only in a Dockerfile. Standard `OTEL_*` names, no repo-invented
+   * spelling — an operator who knows OpenTelemetry should not have to learn
+   * ours.
+   */
+  OTEL_SDK_DISABLED: z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform((value) => value === 'true' || value === '1'),
+
+  /**
+   * Required whenever telemetry is on, and `start.ts` refuses to boot without
+   * it. Every signal is grouped by `service.name`; an unnamed service produces
+   * telemetry that is present, plausible and impossible to attribute — and that
+   * is only ever noticed during an incident.
+   */
+  OTEL_SERVICE_NAME: z.string().min(1).optional(),
+
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.url().default('http://localhost:4318'),
+
+  /** Everything is sampled by default. A single indexer is not a traffic problem. */
+  OTEL_TRACES_SAMPLER: z.string().min(1).default('parentbased_always_on'),
+  OTEL_TRACES_SAMPLER_ARG: z.string().optional(),
+
+  /**
    * Required, with no default. A default here would be the exact failure this
    * file exists to prevent: an indexer silently pointed at the wrong chain
    * produces plausible, wrong data. Checked against what the providers actually

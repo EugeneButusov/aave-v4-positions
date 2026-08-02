@@ -1,0 +1,23 @@
+<!--
+  Turns on ClickHouse's own Prometheus endpoint, which is off by default.
+
+  No extra container for this: the server exposes its metrics natively, and the
+  collector scrapes :9363 directly. The port is deliberately not published to
+  the host — only the collector needs it, and the two datastore ports already
+  in `compose.yaml` are there because a developer uses them.
+
+  `events` and `errors` are the two that answer questions a span cannot:
+  `asynchronous_metrics` carries merge and part counts, which is where the
+  projection on `hub_asset_state` shows up, and `errors` is how a rejected
+  INSERT looks from the server's side rather than the client's.
+-->
+<clickhouse>
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+        <errors>true</errors>
+    </prometheus>
+</clickhouse>

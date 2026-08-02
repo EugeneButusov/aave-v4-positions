@@ -1,0 +1,19 @@
+# Grafana dashboard provisioning for the local stack.
+#
+# Mounted at the path `grafana/otel-lgtm` reads its custom providers from, so
+# the dashboard is a repo file rather than something clicked together and lost
+# on the next `docker compose down -v`.
+apiVersion: 1
+
+providers:
+  - name: 'aave-v4-positions'
+    orgId: 1
+    folder: ''
+    type: file
+    # The UI can still edit a provisioned dashboard, but the change lives only
+    # in that container. Left deletable so a `down -v` really is a clean slate.
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/custom
+      foldersFromFilesStructure: false

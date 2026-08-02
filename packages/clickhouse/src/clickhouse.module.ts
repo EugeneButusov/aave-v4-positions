@@ -1,4 +1,5 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
+import { trace } from '@opentelemetry/api';
 import {
   Module,
   type DynamicModule,
@@ -62,6 +63,24 @@ export class ClickHouseModule {
               database: config.database,
               username: config.username,
               password: config.password,
+              // The client declares `ClickHouseTracer` as a structural subset
+              // of the OpenTelemetry `Tracer`, so a real tracer is assignable
+              // with no adapter — which is why there is no wrapper here, unlike
+              // Postgres. It sets the semantic-convention attributes itself
+              // (`db.system.name`, `db.collection.name`, and the whole
+              // `X-ClickHouse-Summary`, including `written_rows`), and the
+              // `node:http` span from the HTTP instrumentation nests beneath.
+              //
+              // Two things the vendor is explicit about and that matter here.
+              // These calls are inlined into the hot path with **no defensive
+              // wrapper**, so a throwing tracer would surface as a failed
+              // query — one of the few places telemetry can break the
+              // application. And `query` emits two spans: `clickhouse.query`
+              // ends at the response headers, while `clickhouse.query.stream`
+              // is owned by the `ResultSet` and ends only when it is consumed.
+              // Every call site here drains its result, which is now an
+              // invariant rather than a habit.
+              tracer: trace.getTracer('@packages/clickhouse'),
             }),
           inject: [CLICKHOUSE_OPTIONS],
         },

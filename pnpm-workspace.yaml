@@ -33,6 +33,43 @@ catalog:
   '@nestjs/platform-express': ^11.1.28
   '@nestjs/swagger': ^11.4.6
   '@nestjs/testing': ^11.1.28
+  # OpenTelemetry versions on two tracks, and mixing them up is the usual way
+  # to get an unresolvable tree: the stable API, SDK and resource packages are
+  # 1.x/2.x, while everything still pre-1.0 — exporters, log SDK,
+  # instrumentations — sits on 0.x and is released as a set.
+  #
+  # `@opentelemetry/api` is the one that must be a SINGLE version in the tree,
+  # not merely a compatible range. It registers itself on
+  # `globalThis[Symbol.for('opentelemetry.js.api.1')]` and `registerGlobal`
+  # refuses on an exact version-string mismatch — so two patch releases of it
+  # under pnpm means one silently fails to register and every span it creates
+  # is a no-op. The catalog is what prevents that.
+  #
+  # **No `@opentelemetry/sdk-node`**, deliberately. It is the convenient
+  # all-in-one, and it declares 25 dependencies including the OTLP/gRPC
+  # exporters — which put `@grpc/grpc-js` at a measured 4.3 MB into the runtime
+  # image for a service that exports over HTTP. The providers below are
+  # composed by hand in `@packages/telemetry` instead; it is about sixty lines.
+  '@opentelemetry/api': ^1.9.1
+  '@opentelemetry/api-logs': ^0.221.0
+  '@opentelemetry/exporter-logs-otlp-proto': ^0.221.0
+  '@opentelemetry/exporter-metrics-otlp-proto': ^0.221.0
+  '@opentelemetry/exporter-trace-otlp-proto': ^0.221.0
+  '@opentelemetry/instrumentation': ^0.221.0
+  '@opentelemetry/instrumentation-http': ^0.221.0
+  # Instrumentations version independently of the 0.x exporter line.
+  '@opentelemetry/instrumentation-nestjs-core': ^0.67.0
+  # Supported pino range is `>=5.14.0 <11`; the catalog pins pino at ^10.3.1,
+  # so a pino 11 bump would silently drop both correlation and log shipping
+  # rather than fail. Check this range when bumping pino.
+  '@opentelemetry/instrumentation-pino': ^0.67.0
+  '@opentelemetry/instrumentation-undici': ^0.31.0
+  '@opentelemetry/resources': ^2.10.0
+  '@opentelemetry/sdk-logs': ^0.221.0
+  '@opentelemetry/sdk-metrics': ^2.10.0
+  '@opentelemetry/sdk-trace-base': ^2.10.0
+  '@opentelemetry/sdk-trace-node': ^2.10.0
+  '@opentelemetry/semantic-conventions': ^1.43.0
   '@types/supertest': ^7.2.1
   nestjs-pino: ^4.6.1
   pino-http: ^11.0.0

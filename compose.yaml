@@ -14,6 +14,10 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      # Turns on the server's native Prometheus endpoint on :9363, which is off
+      # by default. Deliberately not published to the host — only the collector
+      # scrapes it.
+      - ./observability/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
     ports:
       - '${CLICKHOUSE_PORT:-8123}:8123'
     healthcheck:
@@ -117,6 +121,12 @@ services:
       # any deployment — a shared key is not a signature — and set the SAME one
       # on every replica.
       POSITIONS_CURSOR_SECRET: ${POSITIONS_CURSOR_SECRET:-local-development-cursor-secret-0000}
+      # Read by the SDK preloaded in the CMD, before Nest exists. The service
+      # name matches the `service` tag given to LoggingModule, so a log line and
+      # a span agree about what produced them.
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      OTEL_SERVICE_NAME: api
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -176,6 +186,9 @@ services:
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
       POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      OTEL_SERVICE_NAME: indexer
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -198,6 +211,66 @@ services:
       retries: 3
       start_period: 15s
 
+  # Grafana, Prometheus, Tempo, Loki and an OTLP collector in one container.
+  #
+  # **Up by default, not behind a profile.** `docker compose up` is what a
+  # reviewer runs, and a telemetry stack you have to remember to enable is one
+  # nobody sees. The cost is stated in the README rather than hidden: ~807 MB on
+  # the first pull, and a measured few seconds on a cold start. Skip it with
+  # `docker compose up clickhouse postgres migrate api indexer`, or keep it and
+  # silence the services with `OTEL_SDK_DISABLED=true docker compose up`.
+  #
+  # One container rather than a collector plus Prometheus plus Tempo plus Loki,
+  # because four containers to look at two services is most of a monitoring
+  # stack in a repo whose subject is elsewhere. The trade is that its configs
+  # are baked in — hence the pinned tag and the checked-in collector config.
+  telemetry:
+    image: grafana/otel-lgtm:0.30.0
+    restart: unless-stopped
+    volumes:
+      - ./observability/otelcol-config.yaml:/otel-lgtm/otelcol-config.yaml:ro
+      - ./observability/grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/custom:ro
+      - ./observability/grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/custom.yaml:ro
+      - telemetry-data:/data
+    environment:
+      # Opens on the repo's own dashboard rather than on "add your first data
+      # source", which is the difference between a stack that is bootstrapped
+      # and one that is merely installed.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/custom/aave-v4.json
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    ports:
+      # 3000 inside is Grafana. NOT mapped to 3000 outside — that is the API's —
+      # and not 3100 or 3200 either, which are Loki's and Tempo's ports inside
+      # this same container.
+      - '${GRAFANA_PORT:-3333}:3000'
+      - '${OTLP_HTTP_PORT:-4318}:4318'
+    healthcheck:
+      # `curl`, not the `node -e "fetch(…)"` the app services use and not the
+      # busybox `wget` an Alpine image would have: this one is Ubuntu-based, so
+      # it ships curl and neither of the others. Probing the collector's
+      # health_check extension rather than Grafana, because the collector is
+      # what the services actually export to.
+      test: ['CMD', 'curl', '-sf', '-o', '/dev/null', 'http://127.0.0.1:13133/ready']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  # Postgres has no built-in Prometheus endpoint, unlike ClickHouse, so this is
+  # the one exporter the stack needs. 12 MB, and it is what makes connection
+  # saturation and lock waits visible — the two ways this deployment's Postgres
+  # actually degrades, and neither is something an app-side span can show.
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   clickhouse-data:
   postgres-data:
+  telemetry-data:

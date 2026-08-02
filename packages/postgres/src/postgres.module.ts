@@ -10,6 +10,7 @@ import postgres, { type Sql } from 'postgres';
 
 import { PostgresHealthIndicator } from './postgres.health-indicator';
 import { POSTGRES_CLIENT, POSTGRES_OPTIONS, type PostgresOptions } from './postgres.options';
+import { tracedSql } from './traced-sql';
 
 /**
  * Small on purpose. The indexing loop is strictly sequential — one iteration
@@ -64,23 +65,31 @@ export class PostgresModule {
           // postgres.js connects lazily, on the first query, so boot does not
           // depend on the database being up — the pod reports not-ready instead
           // of crash-looping, matching ClickHouse and the chain client.
+          //
+          // Wrapped for tracing here rather than in each store: five adapters
+          // inject this client and issue nine queries between them, and this is
+          // the one place all of them pass through. With no SDK registered the
+          // wrapper's spans are the API's no-ops.
           useFactory: (config: PostgresOptions): Sql =>
-            postgres(config.url, {
-              max: config.maxConnections ?? DEFAULT_MAX_CONNECTIONS,
-              // Left to itself, postgres.js writes server notices straight to
-              // stdout as an inspected object — several lines of it, none of
-              // them JSON. The deployed log contract is one JSON object per
-              // line, so a single notice would break every parser reading the
-              // stream. Debug level because a notice reaching a running indexer
-              // is informational by definition; anything that matters arrives
-              // as an error.
-              onnotice: (notice) => logger.debug(notice['message'] ?? JSON.stringify(notice)),
-              // `prepare` is left at its default of `true`, and named here only
-              // so the next person does not have to rediscover it: behind
-              // PgBouncer in transaction-pooling mode it has to be `false`, or
-              // every query after the first fails with "prepared statement
-              // already exists" — an error that does not name its own cause.
-            }),
+            tracedSql(
+              postgres(config.url, {
+                max: config.maxConnections ?? DEFAULT_MAX_CONNECTIONS,
+                // Left to itself, postgres.js writes server notices straight to
+                // stdout as an inspected object — several lines of it, none of
+                // them JSON. The deployed log contract is one JSON object per
+                // line, so a single notice would break every parser reading the
+                // stream. Debug level because a notice reaching a running indexer
+                // is informational by definition; anything that matters arrives
+                // as an error.
+                onnotice: (notice) => logger.debug(notice['message'] ?? JSON.stringify(notice)),
+                // `prepare` is left at its default of `true`, and named here
+                // only so the next person does not have to rediscover it:
+                // behind PgBouncer in transaction-pooling mode it has to be
+                // `false`, or every query after the first fails with "prepared
+                // statement already exists" — an error that does not name its
+                // own cause.
+              }),
+            ),
           inject: [POSTGRES_OPTIONS],
         },
         PostgresHealthIndicator,
