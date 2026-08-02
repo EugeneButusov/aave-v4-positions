@@ -1543,21 +1543,26 @@ becomes visible. It costs nothing, because the token is already being called.
 
 ### Verification
 
-**The wiring, end to end, against both real databases**, with only the node
-stubbed: a cold database from `AddAsset` at genesis to a labelled row via the
-sweep, a governance listing picked up by the fast path in its own range, a
-token whose decimals disagree, and a token implementing none of the three
-methods recorded once and never re-read.
+**Each piece against the thing it actually talks to.** The listing queries run
+against a real ClickHouse — including the one the fast path depends on, so the
+`AddAsset`-in-range seek is proven to find what it claims. The metadata store
+runs against a real Postgres, where the upsert-in-place and the
+absent-versus-null distinction are the two things a fake could not tell us. The
+reader runs against a stubbed node, because what it encodes is viem's behaviour
+rather than a server's.
 
 **Seventeen mutants across the reader and the processor, sixteen killed.** The
 survivor is `{ size: 32 }` on the `bytes32` decode, which the mutation shows is
 subsumed by the control-character strip — kept for intent and documented as
-such, exactly as `argMaxIf` is.
+such, exactly as `argMaxIf` is. Two of the kills carry the design: deleting the
+sweep must redden the bootstrap case, and returning `retry` instead of `ok()`
+must not be allowed to stall the loop.
 
-What none of that covers is mainnet. All seventeen real underlyings, with
-`decimals` cross-checked against `AaveV4Ethereum.ASSETS`, is `enrich:tokens`
-against a real RPC — the same shape as the other reconciliations, and the same
-reason: it needs a node this repository does not ship.
+What none of that covers is the two databases wired to each other over a real
+node, and that is `enrich:tokens` against a real RPC: all seventeen underlyings
+resolved, with `decimals` cross-checked against `AaveV4Ethereum.ASSETS`. Same
+shape as the other reconciliations, and the same reason — it needs a node this
+repository does not ship.
 
 ## Operational shape
 
