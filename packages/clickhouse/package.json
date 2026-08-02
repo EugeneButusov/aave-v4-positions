@@ -23,10 +23,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@packages/migrations": "workspace:*",
-    "@packages/ops": "workspace:*",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@packages/migrations": "workspace:*",
+    "@packages/ops": "workspace:*",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:"
   },
