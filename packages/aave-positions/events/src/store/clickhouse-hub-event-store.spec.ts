@@ -4,11 +4,9 @@ import { loadMigrations } from '@packages/migrations';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DecodedEvent } from '../decode/decoded-event';
-import {
-  ClickHouseHubEventStore,
-  ClickHouseSpokeEventStore,
-  EVENT_MIGRATIONS_DIR,
-} from './clickhouse-event-store';
+import { EVENT_MIGRATIONS_DIR } from './clickhouse-event-store';
+import { ClickHouseHubEventStore } from './clickhouse-hub-event-store';
+import { ClickHouseSpokeEventStore } from './clickhouse-spoke-event-store';
 
 /** Its own database, so a sibling suite cannot truncate these tables mid-run. */
 const DATABASE = 'spec_hub_events';

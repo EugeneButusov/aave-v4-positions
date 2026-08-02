@@ -3,12 +3,12 @@ import type { Address } from '@packages/indexing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DecodedEvent } from '../decode/decoded-event';
+import { EVENT_MIGRATIONS_DIR } from './clickhouse-event-store';
 import {
   ClickHouseSpokeEventStore,
-  EVENT_MIGRATIONS_DIR,
   SPOKE_EVENTS_TABLE as EVENTS_TABLE,
   SPOKE_EVENTS_VIEW as EVENTS_VIEW,
-} from './clickhouse-event-store';
+} from './clickhouse-spoke-event-store';
 import { migrate } from '@packages/clickhouse';
 import { loadMigrations } from '@packages/migrations';
 

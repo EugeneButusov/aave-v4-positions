@@ -13,8 +13,9 @@ import { Logger } from '@nestjs/common';
 
 import { HUB_STATE_TOPICS } from './aave/hub-events';
 import { SPOKE_POSITION_TOPICS } from './aave/spoke-events';
-import { HubEventDecoder, SpokeEventDecoder, UndecodableLogError } from './decode/decoder';
-import type { ContractLogDecoder } from './decode/decoder';
+import { UndecodableLogError, type ContractLogDecoder } from './decode/decoder';
+import { HubEventDecoder } from './decode/hub-event-decoder';
+import { SpokeEventDecoder } from './decode/spoke-event-decoder';
 import type { EventStore } from './store/event-store';
 
 /**

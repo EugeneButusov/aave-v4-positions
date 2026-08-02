@@ -16,7 +16,7 @@ import {
 } from '@packages/indexing';
 
 import { AaveEventProcessor, hubEventSource } from './aave-event-processor';
-import { ClickHouseHubEventStore } from './store/clickhouse-event-store';
+import { ClickHouseHubEventStore } from './store/clickhouse-hub-event-store';
 import { HUB_EVENT_STORE, type EventStore } from './store/event-store';
 
 /**

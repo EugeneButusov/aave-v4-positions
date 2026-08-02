@@ -4,7 +4,8 @@ import { encodeAbiParameters, encodeEventTopics, getAbiItem } from 'viem';
 import { describe, expect, it } from 'vitest';
 
 import { SPOKE_POSITION_EVENTS } from '../aave/spoke-events';
-import { SpokeEventDecoder, UndecodableLogError } from './decoder';
+import { UndecodableLogError } from './decoder';
+import { SpokeEventDecoder } from './spoke-event-decoder';
 import fixture from './spoke-logs.fixture.json';
 
 /**

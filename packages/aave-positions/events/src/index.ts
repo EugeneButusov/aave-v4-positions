@@ -19,23 +19,22 @@ export {
 } from './aave/hub-events';
 
 export type { DecodedEvent } from './decode/decoded-event';
-export {
-  ContractLogDecoder,
-  HubEventDecoder,
-  SpokeEventDecoder,
-  UndecodableLogError,
-} from './decode/decoder';
+export { ContractLogDecoder, UndecodableLogError } from './decode/decoder';
+export { SpokeEventDecoder } from './decode/spoke-event-decoder';
+export { HubEventDecoder } from './decode/hub-event-decoder';
 
 export { HUB_EVENT_STORE, SPOKE_EVENT_STORE, type EventStore } from './store/event-store';
+export { ClickHouseEventLedger, EVENT_MIGRATIONS_DIR } from './store/clickhouse-event-store';
 export {
-  ClickHouseHubEventStore,
   ClickHouseSpokeEventStore,
-  EVENT_MIGRATIONS_DIR,
-  HUB_EVENTS_TABLE,
-  HUB_EVENTS_VIEW,
   SPOKE_EVENTS_TABLE,
   SPOKE_EVENTS_VIEW,
-} from './store/clickhouse-event-store';
+} from './store/clickhouse-spoke-event-store';
+export {
+  ClickHouseHubEventStore,
+  HUB_EVENTS_TABLE,
+  HUB_EVENTS_VIEW,
+} from './store/clickhouse-hub-event-store';
 
 export {
   AaveEventProcessor,

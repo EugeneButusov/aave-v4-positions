@@ -16,7 +16,7 @@ import {
 } from '@packages/indexing';
 
 import { AaveEventProcessor, spokeEventSource } from './aave-event-processor';
-import { ClickHouseSpokeEventStore } from './store/clickhouse-event-store';
+import { ClickHouseSpokeEventStore } from './store/clickhouse-spoke-event-store';
 import { SPOKE_EVENT_STORE, type EventStore } from './store/event-store';
 
 /**

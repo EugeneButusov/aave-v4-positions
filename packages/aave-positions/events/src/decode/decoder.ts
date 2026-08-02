@@ -1,8 +1,6 @@
 import type { Address, RawLog } from '@packages/indexing';
 import { decodeEventLog, type Abi } from 'viem';
 
-import { HUB_ABI, isHubStateEvent } from '../aave/hub-events';
-import { SPOKE_ABI, isPositionEvent } from '../aave/spoke-events';
 import type { DecodedEvent } from './decoded-event';
 
 /** A log the decoder refuses, named so the failure says which log and why. */
@@ -51,6 +49,12 @@ function jsonSafe(value: unknown): unknown {
  * so a log that arrives and will not decode is a contradiction — a changed ABI,
  * or a filter that did not do what it claimed — and it throws rather than
  * quietly shrinking the result.
+ *
+ * One subclass per contract, each beside the ABI it decodes against — see
+ * `spoke-event-decoder.ts` and `hub-event-decoder.ts`. All either supplies is an
+ * ABI, an event filter and a name for the rejection message; everything that
+ * decides what a row looks like is here, so the two ledgers cannot drift apart
+ * in shape.
  */
 export abstract class ContractLogDecoder {
   private readonly contract: Address;
@@ -135,36 +139,5 @@ export abstract class ContractLogDecoder {
       body: toRecord(jsonSafe(toRecord(rawArgs))),
       data: log.data,
     };
-  }
-}
-
-/**
- * The eight position events of one Spoke.
- *
- * `topic1` is the reserve id on every one of them; `topic2` and `topic3` mean
- * different things per event.
- */
-export class SpokeEventDecoder extends ContractLogDecoder {
-  protected readonly abi: Abi = SPOKE_ABI;
-  protected readonly role = 'spoke';
-
-  protected wanted(eventName: string): boolean {
-    return isPositionEvent(eventName);
-  }
-}
-
-/**
- * The thirteen asset-state events of one Hub.
- *
- * `topic1` is the **asset id** here, not a reserve id — the same column in a
- * different ledger means a different thing, which is half of why the Hub gets
- * its own table.
- */
-export class HubEventDecoder extends ContractLogDecoder {
-  protected readonly abi: Abi = HUB_ABI;
-  protected readonly role = 'hub';
-
-  protected wanted(eventName: string): boolean {
-    return isHubStateEvent(eventName);
   }
 }

@@ -4,7 +4,8 @@ import { encodeAbiParameters, encodeEventTopics, getAbiItem } from 'viem';
 import { describe, expect, it } from 'vitest';
 
 import { HUB_STATE_EVENTS } from '../aave/hub-events';
-import { HubEventDecoder, UndecodableLogError } from './decoder';
+import { UndecodableLogError } from './decoder';
+import { HubEventDecoder } from './hub-event-decoder';
 import fixture from './hub-logs.fixture.json';
 
 /**

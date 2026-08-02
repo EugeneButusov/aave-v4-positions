@@ -7,11 +7,6 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { DecodedEvent } from '../decode/decoded-event';
 import type { EventStore } from './event-store';
 
-export const SPOKE_EVENTS_TABLE = 'spoke_events';
-export const SPOKE_EVENTS_VIEW = 'spoke_events_current';
-export const HUB_EVENTS_TABLE = 'hub_events';
-export const HUB_EVENTS_VIEW = 'hub_events_current';
-
 /**
  * This package's schema, owned here rather than in a central list.
  *
@@ -78,10 +73,13 @@ const COLUMNS = [
  * does not have — and a view that throws fails the insert while the ledger row
  * still commits, so ingestion jams and the fold is left short. `topic1` also
  * means `assetId` on one and `reserveId` on the other. What the two share is
- * the write path, which is this class.
+ * the write path, which is this class — the subclasses supply a table name and
+ * a view name and nothing else, so the retract-then-append discipline, the
+ * full-column retraction and the version handling exist once. See
+ * `clickhouse-spoke-event-store.ts` and `clickhouse-hub-event-store.ts`.
  */
 @Injectable()
-abstract class ClickHouseEventLedger implements EventStore {
+export abstract class ClickHouseEventLedger implements EventStore {
   protected abstract readonly table: string;
   protected abstract readonly view: string;
 
@@ -145,18 +143,4 @@ abstract class ClickHouseEventLedger implements EventStore {
       })),
     });
   }
-}
-
-/** The Spoke's position events. `topic1` is a reserve id. */
-@Injectable()
-export class ClickHouseSpokeEventStore extends ClickHouseEventLedger {
-  protected readonly table = SPOKE_EVENTS_TABLE;
-  protected readonly view = SPOKE_EVENTS_VIEW;
-}
-
-/** The Hub's asset-state events. `topic1` is an asset id. */
-@Injectable()
-export class ClickHouseHubEventStore extends ClickHouseEventLedger {
-  protected readonly table = HUB_EVENTS_TABLE;
-  protected readonly view = HUB_EVENTS_VIEW;
 }
