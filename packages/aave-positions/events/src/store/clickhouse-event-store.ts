@@ -6,8 +6,6 @@ import { Inject, Injectable } from '@nestjs/common';
 
 import type { DecodedEvent } from '../decode/decoded-event';
 import type { EventStore } from './event-store';
-export const EVENTS_TABLE = 'spoke_events';
-export const EVENTS_VIEW = 'spoke_events_current';
 
 /**
  * This package's schema, owned here rather than in a central list.
@@ -30,9 +28,10 @@ export const EVENTS_VIEW = 'spoke_events_current';
 export const EVENT_MIGRATIONS_DIR = join(__dirname, 'clickhouse-migrations');
 
 /**
- * Every column the retraction has to reproduce, in `001_spoke_events.sql` order.
+ * Every column the retraction has to reproduce, in ledger-table order. Both
+ * ledgers have the same shape, so both retract through the same list.
  *
- * Only {@link RETRACT} reads this — the insert below names its columns as object
+ * Only the retraction reads this — the insert below names its columns as object
  * keys instead.
  *
  * Completeness is not what makes the pair collapse: the engine matches on the
@@ -61,36 +60,49 @@ const COLUMNS = [
 ].join(', ');
 
 /**
- * Copies the live rows of a range back in with the sign flipped.
- *
- * Server-side `INSERT ... SELECT` rather than reading rows into Node and
- * writing them back: the retraction has to reproduce **every column and the
- * original version** for the engine to pair it, and selecting from the view is
- * the only way to be sure it does. Round-tripping the rows would be the same
- * query plus a chance to drop a field.
- */
-const RETRACT = `
-INSERT INTO ${EVENTS_TABLE} (${COLUMNS}, version, sign)
-SELECT ${COLUMNS}, version, -1
-FROM ${EVENTS_VIEW}
-WHERE chain_id = {chainId:UInt32}
-  AND block_number BETWEEN {fromBlock:UInt64} AND {toBlock:UInt64}
-`;
-
-/**
- * The append-only event log.
+ * An append-only event log over one contract's stream.
  *
  * Nothing here issues a `DELETE` or an `ALTER`. A reorg retracts rows by
  * writing their negation, which is the same mechanism a retry uses, so there is
  * exactly one write path to reason about.
+ *
+ * **One subclass per ledger, and the tables really are separate.** The Spoke
+ * and the Hub both emit a `ReportDeficit`, with different signatures (§4.4),
+ * and the position projections filter on `event_name` alone. A Hub row in
+ * `spoke_events` would fire a view that extracts a `user` field the Hub form
+ * does not have — and a view that throws fails the insert while the ledger row
+ * still commits, so ingestion jams and the fold is left short. `topic1` also
+ * means `assetId` on one and `reserveId` on the other. What the two share is
+ * the write path, which is this class — the subclasses supply a table name and
+ * a view name and nothing else, so the retract-then-append discipline, the
+ * full-column retraction and the version handling exist once. See
+ * `clickhouse-spoke-event-store.ts` and `clickhouse-hub-event-store.ts`.
  */
 @Injectable()
-export class ClickHouseEventStore implements EventStore {
+export abstract class ClickHouseEventLedger implements EventStore {
+  protected abstract readonly table: string;
+  protected abstract readonly view: string;
+
   constructor(@Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient) {}
 
+  /**
+   * Copies the live rows of a range back in with the sign flipped.
+   *
+   * Server-side `INSERT ... SELECT` rather than reading rows into Node and
+   * writing them back: the retraction has to reproduce **every column and the
+   * original version** for the engine to pair it, and selecting from the view is
+   * the only way to be sure it does. Round-tripping the rows would be the same
+   * query plus a chance to drop a field.
+   */
   async revert(chainId: number, fromBlock: number, toBlock: number): Promise<void> {
     await this.client.command({
-      query: RETRACT,
+      query: `
+        INSERT INTO ${this.table} (${COLUMNS}, version, sign)
+        SELECT ${COLUMNS}, version, -1
+        FROM ${this.view}
+        WHERE chain_id = {chainId:UInt32}
+          AND block_number BETWEEN {fromBlock:UInt64} AND {toBlock:UInt64}
+      `,
       query_params: { chainId, fromBlock, toBlock },
     });
   }
@@ -105,7 +117,7 @@ export class ClickHouseEventStore implements EventStore {
     const version = Date.now();
 
     await this.client.insert({
-      table: EVENTS_TABLE,
+      table: this.table,
       format: 'JSONEachRow',
       values: events.map((event) => ({
         chain_id: event.chainId,
@@ -118,7 +130,7 @@ export class ClickHouseEventStore implements EventStore {
         log_index: event.logIndex,
         event_name: event.eventName,
         // The indexed parameters as they arrived. Null where the event indexes
-        // fewer than three — only ReportDeficit, today.
+        // fewer than three.
         topic1: event.topic1,
         topic2: event.topic2,
         topic3: event.topic3,

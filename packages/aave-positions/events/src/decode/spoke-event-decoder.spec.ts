@@ -4,7 +4,8 @@ import { encodeAbiParameters, encodeEventTopics, getAbiItem } from 'viem';
 import { describe, expect, it } from 'vitest';
 
 import { SPOKE_POSITION_EVENTS } from '../aave/spoke-events';
-import { SpokeEventDecoder, UndecodableLogError } from './decoder';
+import { UndecodableLogError } from './decoder';
+import { SpokeEventDecoder } from './spoke-event-decoder';
 import fixture from './spoke-logs.fixture.json';
 
 /**
@@ -202,6 +203,6 @@ describe('SpokeEventDecoder', () => {
     // the filter never asked for it, so its arrival means the filter did not do
     // what it claimed. Silently keeping it would put unrequested rows in the
     // ledger; silently dropping it would hide the broken filter.
-    expect(() => decoder.decode([refresh])).toThrow(/not one of the position events/);
+    expect(() => decoder.decode([refresh])).toThrow(/not one of the spoke events/);
   });
 });

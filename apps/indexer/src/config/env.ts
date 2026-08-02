@@ -1,4 +1,8 @@
-import { MAIN_SPOKE_ADDRESS } from '@aave-positions/events';
+import {
+  CORE_HUB_ADDRESS,
+  CORE_HUB_GENESIS_BLOCK,
+  MAIN_SPOKE_ADDRESS,
+} from '@aave-positions/events';
 import { LOG_LEVELS } from '@packages/ops';
 import { z } from 'zod';
 
@@ -97,8 +101,18 @@ export const envSchema = z.object({
    */
   FINALITY_DEPTH: z.coerce.number().int().min(0).max(10_000).default(128),
 
-  /** Main Spoke genesis. Used only when the cursor store has nothing. */
-  INDEXER_START_BLOCK: z.coerce.number().int().min(0).default(24_720_899),
+  /**
+   * The floor for every processor, used only when the cursor store has nothing.
+   *
+   * **Core Hub genesis, not the Main Spoke's** — the Hub's first log is eight
+   * blocks earlier, and the floor has to be the earliest of the contracts being
+   * followed or the later one starts mid-history. Those eight blocks happen to
+   * hold only the Hub proxy's own lifecycle events, so the Spoke's genesis
+   * would lose nothing today; depending on that is the problem, because the
+   * first `AddAsset` is the sole source of `underlying` and `decimals` and
+   * missing it looks like a quiet chain rather than an error.
+   */
+  INDEXER_START_BLOCK: z.coerce.number().int().min(0).default(CORE_HUB_GENESIS_BLOCK),
 
   /** Upper bound on one dispatched range; halved at runtime if a provider balks. */
   INDEXER_MAX_RANGE_SIZE: z.coerce.number().int().min(1).max(100_000).default(1_000),
@@ -124,6 +138,18 @@ export const envSchema = z.object({
     .string()
     .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
     .default(MAIN_SPOKE_ADDRESS)
+    .transform((value) => value.toLowerCase()),
+
+  /**
+   * Which Hub to follow, for the asset state that turns shares into balances
+   * (§5). All 14 Main Spoke reserves point at the Core Hub, so this pair needs
+   * no cross-hub read — but it is configuration for the same reason the Spoke
+   * is: a second Hub is a second registration, not an edit.
+   */
+  CORE_HUB_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
+    .default(CORE_HUB_ADDRESS)
     .transform((value) => value.toLowerCase()),
 
   ...clickHouseEnv,

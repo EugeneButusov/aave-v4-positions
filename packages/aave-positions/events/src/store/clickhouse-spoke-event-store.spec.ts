@@ -3,14 +3,22 @@ import type { Address } from '@packages/indexing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DecodedEvent } from '../decode/decoded-event';
+import { EVENT_MIGRATIONS_DIR } from './clickhouse-event-store';
 import {
-  ClickHouseEventStore,
-  EVENTS_TABLE,
-  EVENTS_VIEW,
-  EVENT_MIGRATIONS_DIR,
-} from './clickhouse-event-store';
+  ClickHouseSpokeEventStore,
+  SPOKE_EVENTS_TABLE as EVENTS_TABLE,
+  SPOKE_EVENTS_VIEW as EVENTS_VIEW,
+} from './clickhouse-spoke-event-store';
 import { migrate } from '@packages/clickhouse';
 import { loadMigrations } from '@packages/migrations';
+
+/** Its own database, for the reason spelled out in `beforeAll`. */
+const DATABASE = 'spec_spoke_events';
+const CONNECTION = {
+  url: process.env['CLICKHOUSE_URL'] ?? 'http://localhost:8123',
+  username: process.env['CLICKHOUSE_USER'] ?? 'default',
+  password: process.env['CLICKHOUSE_PASSWORD'] ?? '',
+};
 
 const CHAIN_ID = 1;
 const SPOKE: Address = '0x94e7a5dcbe816e498b89ab752661904e2f56c485';
@@ -19,7 +27,7 @@ const HUGE_SHARES =
   '115792089237316195423570985008687907853269984665640564039457584007913129639935';
 
 let client: ClickHouseClient;
-let store: ClickHouseEventStore;
+let store: ClickHouseSpokeEventStore;
 
 function event(overrides: Partial<DecodedEvent> = {}): DecodedEvent {
   return {
@@ -61,16 +69,21 @@ async function scalar(query: string): Promise<number> {
   return Number(rows[0]?.n);
 }
 
-describe('ClickHouseEventStore', () => {
+describe('ClickHouseSpokeEventStore', () => {
   beforeAll(async () => {
-    client = createClient({
-      url: process.env['CLICKHOUSE_URL'] ?? 'http://localhost:8123',
-      username: process.env['CLICKHOUSE_USER'] ?? 'default',
-      password: process.env['CLICKHOUSE_PASSWORD'] ?? '',
-      database: 'default',
-    });
+    const bootstrap = createClient(CONNECTION);
+    await bootstrap.command({ query: `CREATE DATABASE IF NOT EXISTS ${DATABASE}` });
+    await bootstrap.close();
+
+    client = createClient({ ...CONNECTION, database: DATABASE });
+    // This package's migrations only. The bodies below are minimal by design —
+    // most carry no `reserveId` — so the positions projections would throw on
+    // them and fail eleven specs for a reason unrelated to what they test.
+    // Running the application's `migrate` against a local ClickHouse is enough
+    // to put those projections in `default`, which is why this suite does not
+    // use it.
     await migrate(client, await loadMigrations([EVENT_MIGRATIONS_DIR]));
-    store = new ClickHouseEventStore(client);
+    store = new ClickHouseSpokeEventStore(client);
   });
 
   afterAll(async () => {

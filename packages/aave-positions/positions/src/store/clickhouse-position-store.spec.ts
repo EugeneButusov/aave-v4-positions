@@ -1,5 +1,5 @@
 import type { ClickHouseClient } from '@clickhouse/client';
-import { ClickHouseEventStore, type DecodedEvent } from '@aave-positions/events';
+import { ClickHouseSpokeEventStore, type DecodedEvent } from '@aave-positions/events';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore } from './clickhouse-position-store';
@@ -22,7 +22,7 @@ import {
 const DATABASE = 'spec_position_store';
 
 let client: ClickHouseClient;
-let events: ClickHouseEventStore;
+let events: ClickHouseSpokeEventStore;
 let store: ClickHousePositionStore;
 
 /** What the processor does with a dispatched range: cancel, then write. */
@@ -37,7 +37,7 @@ const page = (over: Partial<Parameters<ClickHousePositionStore['list']>[0]> = {}
 describe('ClickHousePositionStore', () => {
   beforeAll(async () => {
     client = await migratedDatabase(DATABASE);
-    events = new ClickHouseEventStore(client);
+    events = new ClickHouseSpokeEventStore(client);
     store = new ClickHousePositionStore(
       client,
       new PositionCursorCodec('spec-cursor-secret'.padEnd(32, '.')),

@@ -16,11 +16,14 @@ describe('backfill wiring (e2e)', () => {
 
     expect(moduleRef.get(BackfillRunner)).toBeInstanceOf(BackfillRunner);
 
-    // Matched loosely: the processor names itself after the Spoke it follows,
-    // so pinning the whole string would tie this to one address.
+    // Both streams, and that is the point: a processor added to the daemon and
+    // forgotten here would not fail — a backfill would quietly run fewer
+    // processors over the range and report success.
+    //
+    // Matched loosely: each processor names itself after the contract it
+    // follows, so pinning the whole string would tie this to one address.
     const processors = moduleRef.get<BlockProcessor[]>(BLOCK_PROCESSORS, { strict: false });
-    expect(processors).toHaveLength(1);
-    expect(processors[0]?.name).toMatch(/^aave-events\(/);
+    expect(processors.map((p) => p.name.replace(/\(.*/, ''))).toEqual(['aave-spoke', 'aave-hub']);
 
     await moduleRef.close();
   });

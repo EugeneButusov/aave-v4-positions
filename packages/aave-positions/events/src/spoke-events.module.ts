@@ -15,9 +15,9 @@ import {
   type LogReader,
 } from '@packages/indexing';
 
-import { AaveEventProcessor } from './aave-event-processor';
-import { ClickHouseEventStore } from './store/clickhouse-event-store';
-import { EVENT_STORE, type EventStore } from './store/event-store';
+import { AaveEventProcessor, spokeEventSource } from './aave-event-processor';
+import { ClickHouseSpokeEventStore } from './store/clickhouse-spoke-event-store';
+import { SPOKE_EVENT_STORE, type EventStore } from './store/event-store';
 
 /**
  * The {@link BlockProcessor} this module exports. Hand it to `IndexingModule`'s
@@ -115,19 +115,15 @@ export class SpokeEventsModule {
           inject: [SPOKE_EVENTS_OPTIONS],
         },
         { provide: LOG_READER, useClass: ViemLogReader },
-        { provide: EVENT_STORE, useClass: ClickHouseEventStore },
+        { provide: SPOKE_EVENT_STORE, useClass: ClickHouseSpokeEventStore },
         {
           provide: token,
           useFactory: (resolved: SpokeEventsOptions, logs: LogReader, store: EventStore) =>
-            new AaveEventProcessor(
-              { chainId: resolved.chainId, spoke: resolved.spoke },
-              logs,
-              store,
-            ),
-          inject: [SPOKE_EVENTS_OPTIONS, LOG_READER, EVENT_STORE],
+            new AaveEventProcessor(spokeEventSource(resolved.chainId, resolved.spoke), logs, store),
+          inject: [SPOKE_EVENTS_OPTIONS, LOG_READER, SPOKE_EVENT_STORE],
         },
       ],
-      exports: [token, EVENT_STORE, clickhouse],
+      exports: [token, SPOKE_EVENT_STORE, clickhouse],
     };
   }
 }
