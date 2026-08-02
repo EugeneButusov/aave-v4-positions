@@ -1,5 +1,17 @@
 # Git hooks. Installed by `pnpm install` (the `prepare` script runs `lefthook install`).
 # Bypass a single commit with LEFTHOOK=0, or a single job with LEFTHOOK_EXCLUDE=<name>.
+#
+# Formatting and lint only, and deliberately nothing else. Both are per-file,
+# fast, and answerable from the working tree alone, which is what makes them
+# worth spending a commit's patience on.
+#
+# Typecheck, tests and the build are CI's (`.github/workflows/ci.yml` runs all
+# five). They are whole-project operations, and the test suite additionally
+# needs Postgres and ClickHouse — CI provides them as services with credentials
+# the workflow sets, so a developer's shell without those exported watched every
+# container-backed spec fail for a reason that had nothing to do with the push.
+# A gate that fails on a correct change teaches people to pass LEFTHOOK=0, which
+# also disarms the two checks that were pulling their weight.
 
 pre-commit:
   parallel: true
@@ -16,14 +28,3 @@ pre-commit:
       glob: '*.{ts,mts,cts,js,mjs,cjs,json,md,yml,yaml}'
       run: pnpm exec prettier --write --ignore-unknown {staged_files}
       stage_fixed: true
-
-# Type checking and tests are whole-project operations, so they run once before
-# the push rather than on every commit.
-pre-push:
-  parallel: false
-  jobs:
-    - name: typecheck
-      run: pnpm run typecheck
-
-    - name: test
-      run: pnpm run test
