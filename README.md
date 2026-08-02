@@ -308,11 +308,21 @@ first real endpoint rather than now.
 
 **Migrations are `.sql` files**, including the one that creates the ledger they are recorded in — so
 the schema reads as schema: reviewable as a diff, runnable by hand when something needs checking,
-and not something a refactor of the surrounding TypeScript can quietly alter. **One statement per
-file**, because ClickHouse's HTTP interface takes one per request and splitting on `;` means writing
-a SQL parser that has to know about semicolons inside string literals and comments — a parser nobody
-would think to test until it silently truncated a migration. A table and the view over it are
-therefore two files, which also means each is recorded and retried independently.
+and not something a refactor of the surrounding TypeScript can quietly alter.
+
+**A file is one migration, recorded once, however many statements it holds.** ClickHouse's HTTP
+interface refuses multi-statement requests outright — `Multi-statements are not allowed`, measured —
+so the runner splits, and it splits on a `--@statement` marker the author writes rather than on `;`.
+These files carry semicolons inside comments and inside string literals, so splitting on the
+character means writing a SQL lexer that knows about quoting, escapes and both comment forms — one
+nobody would think to test until it silently truncated a migration. A marker needs no lexer, cannot
+collide with SQL content, and is itself a comment, so the file stays valid SQL.
+
+Statements still go in separate files unless they are meaningless apart from each other. A table and
+the view over it are two migrations; [the fold](#the-position-fold)'s nine projections of one table
+are one, because they are one change to make and one change to review. Recording happens once the
+whole file lands, so a file that fails part-way is retried from its first statement — which is why
+every statement in a multi-statement file is written `IF NOT EXISTS`.
 
 Each package owns the migrations for the tables it defines — `spoke_events` and its view belong to
 the events package, the projections over it to the positions package — and the application names the

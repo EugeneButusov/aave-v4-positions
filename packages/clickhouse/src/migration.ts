@@ -2,12 +2,13 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
- * One `.sql` file, and the one statement in it.
+ * One `.sql` file, and the statements in it.
  *
  * Migrations are SQL on disk rather than strings in TypeScript so that the
  * schema reads as schema: reviewable as a diff, runnable by hand against a
  * server when something needs checking, and not something a refactor of the
- * surrounding code can quietly alter.
+ * surrounding code can quietly alter. A file may hold several statements, which
+ * is why this is a list.
  *
  * They deliberately do not all live in one package. A package that defines a
  * table keeps that table's migration beside it, and the runner is handed the
@@ -17,8 +18,47 @@ import { join } from 'node:path';
 export interface Migration {
   /** The file's basename without `.sql`: `NNN_snake_case`. */
   readonly id: string;
-  /** Exactly one statement. See {@link loadMigrations}. */
-  readonly sql: string;
+  /** In file order. Usually one; see {@link STATEMENT_SEPARATOR}. */
+  readonly statements: readonly string[];
+}
+
+/**
+ * Separates statements within one migration file.
+ *
+ * ClickHouse's HTTP interface refuses multi-statement requests outright —
+ * `Multi-statements are not allowed` — so a file holding more than one has to be
+ * split before it is sent. **Not on `;`.** These files carry semicolons inside
+ * comments and inside string literals (`CAST(NULL, 'Nullable(UInt8)')` sits next
+ * to prose that uses them), so splitting on the character means writing a SQL
+ * lexer that knows about quoting, escapes and both comment forms — one nobody
+ * would think to test until it silently truncated a migration.
+ *
+ * A marker the author writes instead needs no lexer, cannot collide with SQL
+ * content, and is itself a comment, so the file stays valid SQL. A statement
+ * still belongs in its own file unless it is meaningless apart from its
+ * neighbours: the nine projections of one table are one change to read and one
+ * change to review, where a table and the view over it are two.
+ */
+export const STATEMENT_SEPARATOR = /^[ \t]*--@statement[ \t]*$/m;
+
+/**
+ * Splits on {@link STATEMENT_SEPARATOR}, dropping sections that hold no SQL.
+ *
+ * A file's header sits before its first marker and would otherwise be sent on
+ * its own, which ClickHouse rejects as an empty query. "Holds SQL" is one line
+ * that is neither blank nor a comment — enough here without a lexer, because a
+ * section where *every* non-blank line opens with `--` cannot also contain a
+ * statement.
+ */
+export function splitStatements(sql: string): string[] {
+  return sql
+    .split(STATEMENT_SEPARATOR)
+    .map((statement) => statement.trim())
+    .filter((statement) =>
+      statement
+        .split('\n')
+        .some((line) => line.trim() !== '' && !line.trimStart().startsWith('--')),
+    );
 }
 
 const ID_PATTERN = /^(\d{3})_[a-z0-9_]+$/;
@@ -62,12 +102,9 @@ export function ordered(migrations: readonly Migration[]): Migration[] {
 /**
  * Reads every `.sql` file in the given directories.
  *
- * **One statement per file.** ClickHouse's HTTP interface accepts a single
- * statement per request, and splitting a file on `;` means writing a SQL parser
- * that has to know about semicolons inside string literals and comments — a
- * parser nobody would think to test until it silently truncated a migration. A
- * table and the view over it are therefore two files, which also means each is
- * recorded and retried independently.
+ * A file is one migration and is recorded once, however many statements it
+ * holds — so a file that fails halfway is retried from the top, and every
+ * statement in one is written `IF NOT EXISTS` for that reason.
  *
  * Ordering is by filename across all directories at once, so a package's
  * migrations interleave with another's by ordinal rather than being grouped by
@@ -85,7 +122,7 @@ async function readDirectory(directory: string): Promise<Migration[]> {
   return Promise.all(
     files.map(async (file) => ({
       id: file.slice(0, -'.sql'.length),
-      sql: await readFile(join(directory, file), 'utf8'),
+      statements: splitStatements(await readFile(join(directory, file), 'utf8')),
     })),
   );
 }

@@ -7,7 +7,7 @@ import {
   EVENT_MIGRATIONS_DIR,
   type DecodedEvent,
 } from '@aave-positions/events';
-import { loadMigrations, migrate } from '@packages/clickhouse';
+import { loadMigrations, migrate, splitStatements } from '@packages/clickhouse';
 import type { Address } from '@packages/indexing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -133,6 +133,17 @@ async function index(from: number, to: number, batch: DecodedEvent[]): Promise<v
 async function positions(user: string = ALICE): Promise<Position[]> {
   const page = await store.list({ chainId: CHAIN_ID, user, spoke: SPOKE, limit: 100 });
   return [...page.items];
+}
+
+/** One view's DDL, out of the file that holds all nine. */
+async function projection(name: string): Promise<string> {
+  const file = await readFile(
+    join(POSITION_MIGRATIONS_DIR, '012_position_projections.sql'),
+    'utf8',
+  );
+  const statement = splitStatements(file).find((s) => s.includes(name));
+  if (statement === undefined) throw new Error(`no projection named ${name}`);
+  return statement;
 }
 
 async function scalar(query: string): Promise<string> {
@@ -476,9 +487,7 @@ describe('the position fold', () => {
       // projection to a populated ledger.
       await client.command({ query: `DROP VIEW position_supply` });
       await index(500, 500, [supply({ block: 500 }, ALICE, '7', '100')]);
-      await client.command({
-        query: await readFile(join(POSITION_MIGRATIONS_DIR, '012_position_supply.sql'), 'utf8'),
-      });
+      await client.command({ query: await projection('position_supply') });
 
       await index(500, 500, [supply({ block: 500 }, ALICE, '7', '100')]);
 
