@@ -72,6 +72,25 @@ export interface PositionPage {
 }
 
 /**
+ * Everything a wallet holds, unpaged.
+ *
+ * The same query {@link PositionQuery} describes, without the two fields that
+ * make it a page — because a total over a page is arithmetic on a subset, and
+ * wrong in a way that looks right.
+ */
+export interface PositionHoldingsQuery {
+  readonly chainId: number;
+  readonly user: Address;
+  readonly spoke?: Address;
+  readonly asOf?: bigint;
+}
+
+export interface PositionHoldings {
+  readonly items: readonly Position[];
+  readonly valuedAt: number;
+}
+
+/**
  * Reads the folded positions.
  *
  * Read-only by construction: nothing in this package writes. The fold is
@@ -86,6 +105,27 @@ export interface PositionPage {
  */
 export interface PositionStore {
   list(query: PositionQuery): Promise<PositionPage>;
+
+  /**
+   * The same rows without paging, for a caller that has to see all of them at
+   * once.
+   *
+   * **A second method rather than a `limit: Infinity`**, because the two have
+   * different contracts and only one of them is safe to call casually. Paging
+   * exists so a response cannot be unbounded; this deliberately gives that up,
+   * and says so in its name.
+   *
+   * **Still not aggregated here.** It returns positions, each naming its own
+   * Spoke, and leaves the summing to whoever knows the prices — which is not
+   * this package. That keeps §12.3's rule enforceable at the place that can
+   * enforce it, rather than baking one interpretation of "total" into SQL.
+   *
+   * Bounded in practice rather than by a `LIMIT`: `maxUserReservesLimit` from
+   * `SetSpokeImmutables` caps a user's reserves on one Spoke, and a wallet can
+   * only be on so many Spokes. The store refuses rather than truncates if that
+   * stops holding — a short read here is a net worth that is quietly too small.
+   */
+  holdings(query: PositionHoldingsQuery): Promise<PositionHoldings>;
 }
 
 export const POSITION_STORE = Symbol('POSITION_STORE');

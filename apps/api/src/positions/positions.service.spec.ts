@@ -3,6 +3,8 @@ import { reserveKey, type ReservePrice, type ReservePriceStore } from '@packages
 import { type TokenLabel, type TokenMetadataStore } from '@packages/token-metadata';
 import {
   type Position,
+  type PositionHoldings,
+  type PositionHoldingsQuery,
   type PositionPage,
   type PositionQuery,
   type PositionStore,
@@ -61,11 +63,28 @@ function position(over: Partial<Position> = {}): Position {
 /** Records the query it was handed, which is most of what this service decides. */
 class RecordingStore implements PositionStore {
   readonly queries: PositionQuery[] = [];
+  readonly holdingQueries: PositionHoldingsQuery[] = [];
   page: PositionPage = { items: [], valuedAt: VALUED_AT, next: null };
+  /**
+   * What the unpaged read returns, when it differs from the page.
+   *
+   * Null means "the same rows", which is the case for a wallet that fits in one
+   * page — and setting it is how a test says the totals cover more than the
+   * caller can see.
+   */
+  beyondThePage: readonly Position[] | null = null;
 
   list(query: PositionQuery): Promise<PositionPage> {
     this.queries.push(query);
     return Promise.resolve(this.page);
+  }
+
+  holdings(query: PositionHoldingsQuery): Promise<PositionHoldings> {
+    this.holdingQueries.push(query);
+    return Promise.resolve({
+      items: this.beyondThePage ?? this.page.items,
+      valuedAt: VALUED_AT,
+    });
   }
 }
 
@@ -323,6 +342,7 @@ describe('PositionsService', () => {
           await slowPage;
           return store.page;
         },
+        holdings: () => Promise.resolve({ items: store.page.items, valuedAt: VALUED_AT }),
       };
 
       const pending = serviceWith(blocking, new FixedSync(syncAt(7)), tokens).list(
@@ -501,6 +521,7 @@ describe('PositionsService', () => {
           await slowPage;
           return store.page;
         },
+        holdings: () => Promise.resolve({ items: store.page.items, valuedAt: VALUED_AT }),
       };
 
       const pending = serviceWith(
@@ -517,6 +538,172 @@ describe('PositionsService', () => {
 
       releasePage();
       await pending;
+    });
+  });
+  describe('portfolio', () => {
+    const SECOND_SPOKE = '0x973a023a77420ba610f06b3858ad991df6d85a08';
+
+    /** Rebuilds the subject with the given prices, as the pricing suite does. */
+    function withPrices(entries: [string, ReservePrice][]): RecordingPrices {
+      const prices = new RecordingPrices();
+      for (const [reserveId, price] of entries) {
+        prices.pricesByReserve.set(reserveKey(SPOKE, reserveId), price);
+      }
+      service = serviceWith(store, new FixedSync(syncAt(7)), new RecordingTokens(), prices);
+      return prices;
+    }
+
+    /** A position with a supply and a debt, both priceable. */
+    function held(over: Partial<Position> = {}): Position {
+      return position({
+        value: {
+          suppliedAmount: '1000000000',
+          drawnDebt: '400000000',
+          premiumDebt: '0',
+          totalDebt: '400000000',
+          drawnIndex: RAY,
+        },
+        ...over,
+      });
+    }
+
+    it('totals supply, debt and the difference between them', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [held()], next: null };
+      withPrices([['7', priced()]]);
+
+      const { portfolio } = await list();
+
+      const supplied = 1_000_000_000n * 99_971_505n * 10n ** 12n;
+      const debt = 400_000_000n * 99_971_505n * 10n ** 12n;
+      expect(portfolio).toEqual([
+        {
+          spoke: SPOKE,
+          suppliedValue: supplied.toString(),
+          debtValue: debt.toString(),
+          netWorth: (supplied - debt).toString(),
+        },
+      ]);
+    });
+
+    it('keeps two Spokes apart rather than summing them', async () => {
+      // §12.3 is structural: two Spokes are two independent margin accounts, and
+      // one blended figure hides an imminent liquidation behind unrelated
+      // collateral. There is no portfolio-wide total, by construction.
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [held(), held({ spoke: SECOND_SPOKE })],
+        next: null,
+      };
+      const prices = withPrices([['7', priced()]]);
+      prices.pricesByReserve.set(reserveKey(SECOND_SPOKE, '7'), priced('200000000'));
+
+      const { portfolio } = await list();
+
+      expect(portfolio).toHaveLength(2);
+      expect(portfolio?.map((entry) => entry.spoke)).toEqual([SPOKE, SECOND_SPOKE]);
+      expect(portfolio?.[0]?.suppliedValue).not.toBe(portfolio?.[1]?.suppliedValue);
+    });
+
+    it('reports a negative net worth rather than clamping it', async () => {
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [
+          held({
+            value: {
+              suppliedAmount: '1',
+              drawnDebt: '1000000000',
+              premiumDebt: '0',
+              totalDebt: '1000000000',
+              drawnIndex: RAY,
+            },
+          }),
+        ],
+        next: null,
+      };
+      withPrices([['7', priced()]]);
+
+      const { portfolio } = await list();
+
+      // A wallet whose debt has outgrown its collateral is exactly the case
+      // worth seeing, and a zero would read as "nothing here".
+      expect(portfolio?.[0]?.netWorth?.startsWith('-')).toBe(true);
+    });
+
+    it('nulls a Spoke where anything could not be priced', async () => {
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [held(), held({ reserveId: '9' })],
+        next: null,
+      };
+      withPrices([['7', priced()]]);
+
+      const { portfolio } = await list();
+
+      // Leaving reserve 9 out would understate the total silently. Null is the
+      // same refusal `asset` and `value` make when the join has nothing.
+      expect(portfolio).toEqual([
+        { spoke: SPOKE, suppliedValue: null, debtValue: null, netWorth: null },
+      ]);
+    });
+
+    it('totals the whole listing, not the page in front of the caller', async () => {
+      // The property the second read exists for. A total over a page is
+      // arithmetic on a subset and looks like a whole number.
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [held()],
+        next: { spoke: SPOKE, reserveId: '7' },
+      };
+      store.beyondThePage = [held(), held({ reserveId: '9' })];
+      const prices = withPrices([['7', priced()]]);
+      prices.pricesByReserve.set(reserveKey(SPOKE, '9'), priced());
+
+      const { portfolio, items } = await list({ limit: 1 });
+
+      expect(items).toHaveLength(1);
+      const one = 1_000_000_000n * 99_971_505n * 10n ** 12n;
+      expect(portfolio?.[0]?.suppliedValue).toBe((one * 2n).toString());
+    });
+
+    it('narrows with the Spoke filter', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [held()], next: null };
+      withPrices([['7', priced()]]);
+
+      await list({ limit: 50, spoke: SPOKE });
+
+      expect(store.holdingQueries[0]).toEqual({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE });
+    });
+
+    it('carries no page size or cursor into the unpaged read', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [held()], next: null };
+      withPrices([['7', priced()]]);
+
+      await list({ limit: 1 });
+
+      // Paging the totals query would be the bug it exists to avoid.
+      expect(store.holdingQueries[0]).not.toHaveProperty('limit');
+      expect(store.holdingQueries[0]).not.toHaveProperty('after');
+    });
+
+    it('is null when asOf is set, and is not even asked for', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [held()], next: null };
+      withPrices([['7', priced()]]);
+
+      const { portfolio } = await list({ limit: 50, asOf: VALUED_AT - 3_600 });
+
+      // Totals are sums of prices, and there are none on a historical query.
+      expect(portfolio).toBeNull();
+      expect(store.holdingQueries).toEqual([]);
+    });
+
+    it('is an empty list rather than null for a wallet holding nothing', async () => {
+      withPrices([]);
+
+      const { portfolio } = await list();
+
+      // Null means "not priced at all"; empty means "priced, and there is
+      // nothing". A caller branching on one must not get the other.
+      expect(portfolio).toEqual([]);
     });
   });
 });
