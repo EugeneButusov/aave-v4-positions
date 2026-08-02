@@ -112,7 +112,7 @@ export function liquidate(
 }
 
 /** Tables a suite truncates between tests. Nothing in the packages removes a row. */
-export const TABLES = ['spoke_events', 'user_positions', 'user_position_flags'];
+export const TABLES = ['spoke_events', 'user_positions', 'user_position_flags', 'spoke_reserves'];
 
 const CONNECTION = {
   url: process.env['CLICKHOUSE_URL'] ?? 'http://localhost:8123',

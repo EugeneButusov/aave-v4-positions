@@ -23,10 +23,30 @@ export interface PositionQuery {
   readonly limit: number;
   /** Opaque; hand back {@link PositionPage.nextCursor} verbatim. */
   readonly cursor?: string;
+  /**
+   * Unix seconds to value the page at. Defaults to now.
+   *
+   * Amounts are a per-second quantity — the Hub's index accrues continuously
+   * and emits nothing (§5) — so "now" is a real choice rather than an absence
+   * of one, and it is the same choice the chain makes: `getUserDebt` at
+   * `latest` is stored shares times an index extrapolated to the head block.
+   * Naming it explicitly is what makes a response reproducible, and what lets
+   * reconciliation pin both sides to one block.
+   *
+   * The shares are as of whatever the indexer has folded, which is not the same
+   * clock. {@link PositionPage.valuedAt} reports this one so the two are not
+   * silently conflated.
+   */
+  readonly asOf?: bigint;
 }
 
 export interface PositionPage {
   readonly items: readonly Position[];
+  /**
+   * Unix seconds every amount on this page was computed at — one instant for
+   * the whole page, so two positions in it cannot disagree about the time.
+   */
+  readonly valuedAt: number;
   /** `null` on the last page. Absence is the end, not an empty string. */
   readonly nextCursor: string | null;
 }

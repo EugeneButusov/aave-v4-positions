@@ -1,4 +1,4 @@
-export type { Position } from './store/position';
+export type { Position, PositionAsset, PositionValue } from './store/position';
 export {
   POSITION_STORE,
   type PositionPage,
@@ -15,6 +15,17 @@ export {
   ClickHousePositionStore,
   POSITION_MIGRATIONS_DIR,
 } from './store/clickhouse-position-store';
+
+export {
+  RAY,
+  drawnIndexAt,
+  suppliedAssets,
+  totalAddedAssets,
+  valuePosition,
+  type AssetState,
+  type PositionShares,
+  type Valuation,
+} from './valuation/valuation';
 
 export {
   PositionsModule,
