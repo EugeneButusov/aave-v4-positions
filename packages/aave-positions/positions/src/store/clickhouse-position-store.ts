@@ -1,0 +1,156 @@
+import { join } from 'node:path';
+
+import type { ClickHouseClient } from '@clickhouse/client';
+import { Inject, Injectable } from '@nestjs/common';
+import { CLICKHOUSE_CLIENT } from '@packages/clickhouse';
+
+import type { Position } from './position';
+import { PositionCursorCodec, type CursorScope } from './position-cursor';
+import type { PositionPage, PositionQuery, PositionStore } from './position-store';
+
+const POSITIONS_VIEW = 'user_positions_current';
+
+/**
+ * This package's schema, owned here rather than in a central list.
+ *
+ * A directory rather than the loaded migrations: reading it is filesystem work,
+ * and importing this package to use the store should not do any. The
+ * application passes it to the runner at migration time, alongside the events
+ * package's own — the ordinals are unique across both, and `010 > 002` is what
+ * guarantees these views are created after the table they read.
+ */
+export const POSITION_MIGRATIONS_DIR = join(__dirname, 'migrations');
+
+/** One row as ClickHouse renders it: every wide integer already a string. */
+interface Row {
+  readonly chain_id: number;
+  readonly user: string;
+  readonly spoke: string;
+  readonly reserve_id: string;
+  readonly supplied_shares: string;
+  readonly drawn_shares: string;
+  readonly premium_shares: string;
+  readonly premium_offset_ray: string;
+  readonly net_supplied_amount: string;
+  readonly net_borrowed_amount: string;
+  readonly using_as_collateral: 0 | 1;
+  readonly events: number;
+}
+
+function toPosition(row: Row): Position {
+  return {
+    chainId: row.chain_id,
+    user: row.user,
+    spoke: row.spoke,
+    reserveId: row.reserve_id,
+    suppliedShares: row.supplied_shares,
+    drawnShares: row.drawn_shares,
+    premiumShares: row.premium_shares,
+    premiumOffsetRay: row.premium_offset_ray,
+    netSuppliedAmount: row.net_supplied_amount,
+    netBorrowedAmount: row.net_borrowed_amount,
+    usingAsCollateral: row.using_as_collateral === 1,
+    events: row.events,
+  };
+}
+
+/**
+ * Reads the folded positions out of ClickHouse.
+ *
+ * Two shapes worth explaining, because both are deliberate:
+ *
+ * **`chain_id`, `user` and `spoke` are all required and all bound**, which is
+ * the whole sorting-key prefix above `reserve_id`. That is what makes a page a
+ * seek into one wallet's contiguous rows rather than a filter over everyone's.
+ *
+ * **Every wide integer is `toString`-ed in SQL.** Not left to the JSON encoder's
+ * defaults: a share balance past 2^53 that arrives as a number has already lost
+ * its tail by the time it reaches this process (§7.5).
+ */
+@Injectable()
+export class ClickHousePositionStore implements PositionStore {
+  constructor(
+    @Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient,
+    private readonly cursors: PositionCursorCodec,
+  ) {}
+
+  async list(query: PositionQuery): Promise<PositionPage> {
+    // The listing this page belongs to. Signed alongside the resume point, so a
+    // cursor cannot be carried across to another wallet, Spoke or chain.
+    const scope: CursorScope = {
+      chainId: query.chainId,
+      user: query.user.toLowerCase(),
+      spoke: query.spoke.toLowerCase(),
+    };
+    const params: Record<string, unknown> = {
+      chainId: scope.chainId,
+      user: scope.user,
+      spoke: scope.spoke,
+      // Fetch one more than asked. Its presence is what says there is a next
+      // page; counting the whole result set to find out would defeat the point
+      // of keyset paging.
+      limit: query.limit + 1,
+    };
+    const filters = [
+      // The full sorting-key prefix, so the scan starts at this wallet's rows
+      // rather than filtering its way to them.
+      `chain_id = {chainId:UInt32}`,
+      `user = {user:String}`,
+      `spoke = {spoke:String}`,
+      // Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go negative
+      // on chain, so a negative fold is drift — and it should surface as a
+      // visibly wrong number for §9 to catch, not vanish behind the filter that
+      // hides closed positions.
+      `(supplied_shares != 0 OR drawn_shares != 0)`,
+    ];
+
+    if (query.cursor !== undefined) {
+      // Everything above `reserve_id` in the sorting key is already pinned by the
+      // scope, so the resume point is one comparison on what is left.
+      filters.push(`reserve_id > {afterReserve:UInt256}`);
+      params['afterReserve'] = this.cursors.decode(query.cursor, scope);
+    }
+
+    const result = await this.client.query({
+      query: `
+        SELECT
+            p.chain_id                      AS chain_id,
+            p.user                          AS user,
+            p.spoke                         AS spoke,
+            toString(p.reserve_id)          AS reserve_id,
+            toString(p.supplied_shares)     AS supplied_shares,
+            toString(p.drawn_shares)        AS drawn_shares,
+            toString(p.premium_shares)      AS premium_shares,
+            toString(p.premium_offset_ray)  AS premium_offset_ray,
+            toString(p.net_supplied_amount) AS net_supplied_amount,
+            toString(p.net_borrowed_amount) AS net_borrowed_amount,
+            p.using_as_collateral           AS using_as_collateral,
+            toInt32(p.events)               AS events
+        FROM (
+            SELECT *
+            FROM ${POSITIONS_VIEW}
+            WHERE ${filters.join(' AND ')}
+            ORDER BY user, spoke, reserve_id
+            LIMIT {limit:UInt32}
+        ) AS p
+        -- Qualified, and it has to be. Unqualified, \`reserve_id\` binds to the
+        -- toString alias above and sorts the decimal digits as text, putting 13
+        -- before 3 — which then hands the next page a cursor from the wrong row.
+        ORDER BY p.reserve_id`,
+      query_params: params,
+      format: 'JSONEachRow',
+    });
+
+    const rows = await result.json<Row>();
+    const items = rows.slice(0, query.limit).map(toPosition);
+    const last = items.at(-1);
+
+    return {
+      items,
+      nextCursor:
+        rows.length > query.limit && last !== undefined
+          ? this.cursors.encode(scope, last.reserveId)
+          : null,
+    };
+  }
+}

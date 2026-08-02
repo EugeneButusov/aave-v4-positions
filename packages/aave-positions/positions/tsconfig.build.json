@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "vitest.config.mts",
+    "**/*.spec.ts",
+    // Fixtures for this package's own specs. Unlike @packages/indexing, no
+    // consumer tests against these, so they are not part of what ships.
+    "src/test-support/**"
+  ]
+}

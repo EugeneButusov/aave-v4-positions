@@ -15,6 +15,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
 COPY apps/api/package.json ./apps/api/
 COPY apps/indexer/package.json ./apps/indexer/
 COPY packages/aave-positions/events/package.json ./packages/aave-positions/events/
+COPY packages/aave-positions/positions/package.json ./packages/aave-positions/positions/
 COPY packages/clickhouse/package.json ./packages/clickhouse/
 COPY packages/indexing/package.json ./packages/indexing/
 COPY packages/ops/package.json ./packages/ops/

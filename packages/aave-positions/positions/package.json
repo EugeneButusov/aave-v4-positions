@@ -1,0 +1,37 @@
+{
+  "name": "@aave-positions/positions",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "The Aave v4 position fold: materialized views over the Spoke event ledger, and the read store over them",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/migrations','dist/store/migrations',{recursive:true})\"",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@packages/clickhouse": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@clickhouse/client": "catalog:",
+    "@nestjs/common": "catalog:",
+    "reflect-metadata": "catalog:",
+    "rxjs": "catalog:"
+  },
+  "devDependencies": {
+    "@aave-positions/events": "workspace:*",
+    "@nestjs/testing": "catalog:"
+  }
+}

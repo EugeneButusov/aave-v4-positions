@@ -1,4 +1,5 @@
 import { EVENT_MIGRATIONS_DIR } from '@aave-positions/events';
+import { POSITION_MIGRATIONS_DIR } from '@aave-positions/positions';
 import { loadMigrations, migrate } from '@packages/clickhouse';
 import { createClient } from '@clickhouse/client';
 
@@ -8,12 +9,13 @@ import { clickHouseEnvSchema } from './config/env';
  * The packages contributing schema to this deployment.
  *
  * The list lives here rather than in the ClickHouse package because the
- * application is what decides which packages ship together — the read-side
- * views the API will need are another directory, owned by whichever package
- * defines them. Ordinals are unique across all of them, and the runner refuses
- * a set where they are not.
+ * application is what decides which packages ship together. Ordinals are unique
+ * across all of them and the runner refuses a set where they are not, which is
+ * also what orders these two: the positions package's views read the events
+ * package's table, and `010 > 002` is the whole guarantee that they are created
+ * after it.
  */
-const MIGRATION_DIRS = [EVENT_MIGRATIONS_DIR];
+const MIGRATION_DIRS = [EVENT_MIGRATIONS_DIR, POSITION_MIGRATIONS_DIR];
 
 /**
  * Applies pending migrations, then exits.
