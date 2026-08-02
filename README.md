@@ -1876,6 +1876,78 @@ OTLP/gRPC exporters, which put `@grpc/grpc-js` — **4.3 MB, measured** — into
 service that exports over HTTP. The three providers are composed by hand instead, in about sixty
 lines; `pnpm why @grpc/grpc-js` now returns nothing.
 
+### What the indexer reports
+
+Four questions, and the instruments exist to answer those and nothing else.
+
+**How far behind are we?** `indexer.lag.blocks` — head minus cursor, the number
+[README's own "Not here yet"](#not-here-yet) used to say could not be graphed, because the head never
+left the process. Beside it: `indexer.cursor.block` and `indexer.head.block` (which of the two
+stopped), `indexer.progress.age` (graphable _before_ it becomes a readiness failure) and
+`indexer.state`, one 1/0 series per state so `failed` is alertable without parsing an error string.
+
+**The gauges are observable and read `IndexerStatus` at collection time**, and that is the
+load-bearing decision rather than an implementation detail. Pushing them from the loop's state
+transition looks equivalent and is not: a stalled loop makes no transitions, so a pushed gauge would
+freeze at its last value — reporting healthy numbers precisely when someone is looking at it because
+it stopped. One batch callback feeds all seven from a single `snapshot` read, so cursor, head and lag
+cannot disagree inside one scrape.
+
+**What is the loop doing?** `indexer.iterations` by outcome (the retry rate, long before the stall
+alarm), `indexer.iteration.duration`, `indexer.processor.duration` by processor — dispatch is
+sequential, so the slowest processor is the whole loop's latency — `indexer.blocks.indexed`, and
+`indexer.reorg.depth`, whose count is how often and whose values are how close a fork came to
+`FINALITY_DEPTH`. Plus `indexer.range.size`, which only ever halves: a falling line is a provider
+refusing our range width.
+
+**Are the providers alive?** This one had no signal at all.
+[`transport.ts`](packages/indexing/src/chain/transport.ts) builds `fallback(urls, { rank: false })`
+because the list is a _preference order_, and that makes the failure mode silent and specific: when
+the preferred provider dies, everything is served by the next one and nothing says so. Now
+`rpc.client.requests`, `rpc.client.errors` and `rpc.client.duration` all carry the provider host, and
+`rpc.client.failovers` counts the handover. A failover is logged **once, on the transition** — a dead
+provider is retried on every call, so a line each would bury its own evidence within a minute.
+
+The seam is viem's `fetchFn`, not its `onFetchRequest`/`onFetchResponse` hooks. Those look like the
+obvious choice: they fire at two unconnected moments with no handle tying them together, so no
+duration and no request-to-response attribute survives — and neither ever sees a _throw_, which is
+what a timeout or a refused connection actually is. It is also the only place the JSON-RPC method is
+visible, since every call is `POST /` with the method in the body; without it every RPC span and
+duration bucket is one series. Measured on a live run, the split is real: `eth_getLogs` 174,
+`eth_blockNumber` 93, `eth_getBlockByNumber` 89, `eth_call` 5, `eth_chainId` 2. Only the URL _host_
+becomes a label, so an API key in a provider URL cannot reach a metric.
+
+Verified by killing one. With a local pass-through proxy as the preferred provider and the public
+endpoint behind it, stopping the proxy produced exactly one log line —
+`{"provider":"eth.drpc.org","previousProvider":"host.docker.internal:8899","msg":"rpc provider
+failover"}` — and `rpc_client_failovers_total = 1`, while several hundred requests went through
+afterwards.
+
+**Two silences, closed.** A healthy indexer walking empty ranges emitted _nothing_: the loop logged
+nothing per range and the event processors log only when they store something. There is now a `debug`
+line per range — `debug` and not `info`, or at one iteration every few seconds it would be the entire
+stream. And a stalled indexer produced **no log line at all**, because `IndexerHealthIndicator` threw,
+which reaches the probe and stops there; it now logs once entering the stall and once on recovery.
+
+### What it costs
+
+Measured, same image and same data, the only variable being whether the preloaded SDK is active —
+which is the reason `--require` was chosen over a compiled-in import.
+
+|                        | p50            | p95            | p99             |
+| ---------------------- | -------------- | -------------- | --------------- |
+| SDK on, run 1 / run 2  | 57.5 / 52.7 ms | 80.2 / 65.5 ms | 100.0 / 78.0 ms |
+| SDK off, run 1 / run 2 | 55.7 / 52.5 ms | 74.4 / 67.3 ms | 155.8 / 95.5 ms |
+
+**Read that as "no measurable latency cost", not as "1.8 ms".** The spread between two runs of the
+_same_ configuration is as large as any difference between configurations — p99 came out lower with
+the SDK on in one pair and higher in the other. Against a ~55 ms request that hits two databases, the
+instrumentation is below this measurement's noise floor, and quoting a single number from it would be
+false precision.
+
+Memory is the real cost and it is unambiguous: **+23 MiB RSS** on the API (164.0 against 140.6 MiB),
+for the SDK, four instrumentations and three batch processors.
+
 What is deliberately still missing: alert rules (they need somewhere to route, and there are no
 Kubernetes manifests yet), exemplars linking a metric bucket to a trace, and a production backend —
 what a deployment points `OTEL_EXPORTER_OTLP_ENDPOINT` at is its own decision, which is the whole
@@ -2007,37 +2079,15 @@ Deliberate, in rough order of what comes next.
 - **A single position, by reserve.** `PositionStore` has exactly one method, and the endpoint over it
   is a listing. `GET …/positions/{reserveId}` is a different query against the same view, and worth
   adding when something needs it rather than because the shape suggests it.
-- **What the indexer itself reports.** The pipe is [in](#tracing-and-metrics) — traces, metrics and
-  logs all reach Grafana, and the API, ClickHouse and Postgres are on the dashboard. The indexer is
-  not, and it is the one that most needs to be. `IndexerStatus` still knows the cursor, the head, the
-  lag between them and the consecutive-failure count, and the only way out is still `/health/ready`,
-  which answers up or down and puts the detail in an error string: a fine alert and a poor time
-  series. **You still cannot graph indexing lag, or alert on it before it crosses the stall
-  threshold.** The gauges read `IndexerStatus.snapshot` at collection time rather than being pushed
-  from the state transition — a stalled loop makes no transitions, and a pushed gauge would freeze at
-  its last value exactly when someone is looking at it.
-
-  Beside that, and with no signal at all today: **which RPC provider is actually serving.**
-  `transport.ts` builds `fallback(urls, { rank: false })` because the list is a preference order, and
-  that makes the failure mode silent and specific — when the preferred provider dies, everything is
-  served by the next one and nothing says so. No request is attributed to a URL, no 429 is counted,
-  no failover is logged. viem's own `onFetchRequest` hook is per-transport, so the URL is in hand at
-  the callback; it is also the only place the JSON-RPC method is visible, since every call is
-  `POST /` and the method is in the body.
-
-  And enrichment, which already distinguishes three outcomes and throws all of them into log strings:
-  a token reached and answered, a token reached that simply has no `symbol()`, and a token
-  unreachable. The gap between listed underlyings and stored rows is the number that says whether it
-  is done or stuck.
-
-  An earlier draft of this section proposed a write-only `IndexerObserver` port to keep a metrics
-  vendor out of `packages/indexing`. That is no longer the shape: `@opentelemetry/api` **is** a
-  vendor-neutral facade, no-op until an SDK registers, and a port over a facade is the same
-  indirection twice. The decisive part is tracing rather than metrics — a span has to _wrap_ the
-  work, so it cannot be delivered by an observer told what already happened, which means the API is
-  entering that package regardless. `IndexerStatus` stays exactly as it is, still deliberately not a
-  port: the loop reads back from it, so swapping the implementation would change correctness rather
-  than policy.
+- **What enrichment reports.** The indexer and the providers are
+  [instrumented](#what-the-indexer-reports); enrichment is not, and it is the last of the four
+  questions without an answer. The processor already distinguishes three outcomes and throws all of
+  them into log strings: a token reached and answered, a token reached that simply has no `symbol()`
+  — the `ANSWERED` set — and a token unreachable. That distinction is the design's load-bearing idea
+  and it is currently unmeasurable. The number that matters is the gap between listed underlyings and
+  stored rows: it should reach zero and stay there, and a floor above zero is a token nothing can
+  read. Cheap to compute, too — the listings side is already indexed by the `listed_tokens`
+  projection, and the metadata side is one single-chain Postgres read.
 
 - **Kubernetes manifests.** The probes, drain sequence and JSON logs are already shaped for them.
   CI covers format, lint, typecheck, test and build on Node 24, but does not yet build the Docker

@@ -25,12 +25,298 @@
   "panels": [
     {
       "type": "row",
-      "title": "API",
+      "title": "Sync & lag",
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Indexing lag",
+      "description": "Head minus cursor. The number that had no way out of the process before — you could not graph it, only wait for the stall alarm.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "indexer_lag_blocks",
+          "legendFormat": "blocks behind"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cursor and head",
+      "description": "Which of the two stopped moving. A flat cursor under a climbing head is a stall; both flat is a quiet chain.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "indexer_cursor_block",
+          "legendFormat": "cursor"
+        },
+        {
+          "refId": "B",
+          "expr": "indexer_head_block",
+          "legendFormat": "head"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Iteration outcomes",
+      "description": "The retry rate, visible long before anything crosses INDEXER_STALL_THRESHOLD_MS.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome) (rate(indexer_iterations_total[1m]))",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Time since progress",
+      "description": "Graphable before it becomes a readiness failure, which is the whole point of having it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "indexer_progress_age_seconds",
+          "legendFormat": "seconds"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Dispatch range size",
+      "description": "Only ever halves. A falling line is a provider refusing our range width and degrading throughput.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "indexer_range_size",
+          "legendFormat": "blocks per range"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Providers",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by provider",
+      "description": "Which endpoint is actually answering. With `rank: false` the list is a preference order, so anything below the top line means the preferred one is not serving.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider) (rate(rpc_client_requests_total[1m]))",
+          "legendFormat": "{{provider}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failovers and errors",
+      "description": "A step on failovers is the preferred provider dying. Errors are split by type, so a 429 is distinguishable from a timeout.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (provider) (rate(rpc_client_failovers_total[5m]))",
+          "legendFormat": "failover to {{provider}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (provider, error_type) (rate(rpc_client_errors_total[1m]))",
+          "legendFormat": "{{provider}} {{error_type}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC latency p95, by method",
+      "description": "Per JSON-RPC method, which the URL alone cannot tell you — every call is POST / with the method in the body.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, rpc_method) (rate(rpc_client_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{rpc_method}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Processor duration p95",
+      "description": "Dispatch is sequential, so the slowest processor is the whole loop’s latency.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, processor) (rate(indexer_processor_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{processor}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "API",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
       },
       "collapsed": false,
       "panels": []
@@ -47,7 +333,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 1
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -77,7 +363,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 1
+        "y": 35
       },
       "fieldConfig": {
         "defaults": {
@@ -110,7 +396,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 43
       },
       "collapsed": false,
       "panels": []
@@ -127,7 +413,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 10
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {
@@ -160,7 +446,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 10
+        "y": 44
       },
       "fieldConfig": {
         "defaults": {},
@@ -186,7 +472,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 18
+        "y": 52
       },
       "collapsed": false,
       "panels": []
@@ -203,7 +489,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 19
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {},
@@ -228,7 +514,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 19
+        "y": 53
       },
       "fieldConfig": {
         "defaults": {
