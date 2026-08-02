@@ -29,7 +29,7 @@ import { TokenEnrichmentProcessor } from './token-enrichment.processor';
  */
 const DATABASE = 'spec_enrichment_e2e';
 const SCHEMA = 'enrichment_e2e_spec';
-const PG_URL = process.env['POSTGRES_URL'] ?? 'postgres://aave:aave@localhost:5432/aave';
+const PG_URL = process.env['POSTGRES_URL'] ?? '';
 
 const HEAD = 25_652_782;
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';

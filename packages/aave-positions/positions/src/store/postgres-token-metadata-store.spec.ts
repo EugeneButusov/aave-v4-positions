@@ -7,7 +7,7 @@ import { POSITION_POSTGRES_MIGRATIONS_DIR } from '../postgres-migrations';
 import { PostgresTokenMetadataStore } from './postgres-token-metadata-store';
 import type { TokenMetadataRow } from './token-metadata';
 
-const URL = process.env['POSTGRES_URL'] ?? 'postgres://aave:aave@localhost:5432/aave';
+const URL = process.env['POSTGRES_URL'] ?? '';
 const CHAIN_ID = 1;
 const OTHER_CHAIN = 8453;
 
