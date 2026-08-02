@@ -190,6 +190,19 @@ describe('openapi', () => {
       expect(schema.properties?.['pricing']).toMatchObject({ nullable: true });
     });
 
+    it('types all three timestamps the same', () => {
+      const page = document.components?.schemas?.['PositionPageDto'] as SchemaNode;
+      const sync = document.components?.schemas?.['SyncDto'] as SchemaNode;
+      const pricing = document.components?.schemas?.['PricingDto'] as SchemaNode;
+
+      // One response carrying Unix seconds in one field and ISO in two others
+      // is a contract a generated client gets wrong silently — the schema says
+      // `number` and `string`, so both parse, and only one is a date.
+      expect(page.properties?.['valuedAt']).toMatchObject({ type: 'string' });
+      expect(sync.properties?.['updatedAt']).toMatchObject({ type: 'string' });
+      expect(pricing.properties?.['updatedAt']).toMatchObject({ type: 'string' });
+    });
+
     it('describes the refusals, not just the page', () => {
       const responses =
         document.paths['/api/v1/chains/{chainId}/users/{user}/positions']?.get?.responses ?? {};
