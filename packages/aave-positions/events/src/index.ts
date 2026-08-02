@@ -3,9 +3,13 @@ export {
   MAIN_SPOKE_GENESIS_BLOCK,
   MAIN_SPOKE_ORACLE_ADDRESS,
   SPOKE_ABI,
+  SPOKE_CONFIG_EVENTS,
+  SPOKE_INGESTED_EVENTS,
+  SPOKE_INGESTED_TOPICS,
   SPOKE_POSITION_EVENTS,
-  SPOKE_POSITION_TOPICS,
-  isPositionEvent,
+  isIngestedSpokeEvent,
+  type SpokeConfigEvent,
+  type SpokeIngestedEvent,
   type SpokePositionEvent,
 } from './aave/spoke-events';
 

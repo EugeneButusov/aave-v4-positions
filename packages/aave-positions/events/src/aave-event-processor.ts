@@ -12,7 +12,7 @@ import {
 import { Logger } from '@nestjs/common';
 
 import { HUB_STATE_TOPICS, listedTokens } from './aave/hub-events';
-import { SPOKE_POSITION_TOPICS } from './aave/spoke-events';
+import { SPOKE_INGESTED_TOPICS } from './aave/spoke-events';
 import type { DecodedEvent } from './decode/decoded-event';
 import { UndecodableLogError, type ContractLogDecoder } from './decode/decoder';
 import { HubEventDecoder } from './decode/hub-event-decoder';
@@ -51,7 +51,7 @@ export function spokeEventSource(chainId: number, spoke: Address): EventSource {
     chainId,
     role: 'spoke',
     contract: spoke,
-    topics: SPOKE_POSITION_TOPICS,
+    topics: SPOKE_INGESTED_TOPICS,
     decoder: new SpokeEventDecoder(chainId, spoke),
   };
 }

@@ -16,13 +16,18 @@ import {
   ROUTER,
   SPOKE,
   TABLES,
+  addDynamicConfig,
   addReserve,
   borrow,
   event,
   liquidate,
   migratedDatabase,
+  refreshAllUserConfig,
+  refreshUserConfig,
   reportDeficit,
   repay,
+  updateDynamicConfig,
+  updateReserveConfig,
   setCollateral,
   supply,
   withdraw,
@@ -419,5 +424,88 @@ describe('the position fold', () => {
          WHERE table IN ('user_positions', 'user_position_flags')`,
       ),
     ).toBe('0');
+  });
+});
+
+/** Every config event, at one block, for one reserve and one wallet. */
+const everyConfigEvent = (at: number): DecodedEvent[] => [
+  addDynamicConfig({ block: at, log: 0 }, '7', 1, 8_300),
+  updateDynamicConfig({ block: at, log: 1 }, '7', 2, 7_500),
+  refreshAllUserConfig({ block: at, log: 2 }, ALICE),
+  refreshUserConfig({ block: at, log: 3 }, ALICE, '7'),
+  updateReserveConfig({ block: at, log: 4 }, '7', { frozen: true }),
+];
+
+describe('the config events the fold does not read', () => {
+  // Its own hooks: the suite above closes the client in its `afterAll`, and a
+  // describe that borrowed them would run against a closed one and truncate
+  // nothing between tests.
+  beforeAll(async () => {
+    client = await migratedDatabase(DATABASE);
+    events = new ClickHouseSpokeEventStore(client);
+    store = new ClickHousePositionStore(client);
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  beforeEach(async () => {
+    for (const table of TABLES)
+      // oxlint-disable-next-line no-await-in-loop
+      await client.command({ query: `TRUNCATE TABLE ${table}` });
+  });
+
+  it('reaches the ledger and moves no balance', async () => {
+    // **The property that makes widening the filter safe.** Every projection
+    // filters on `event_name`, so a new name lands in the ledger and is read by
+    // nothing — which is what lets ingestion run ahead of the fold that will
+    // eventually use it. If one of them ever fired unconditionally, a risk
+    // parameter would be summed into a share balance and this would catch it.
+    await index(100, 100, [supply({ block: 100, log: 0 }, ALICE, '7', '500')]);
+    const before = await positions();
+
+    await index(101, 101, everyConfigEvent(101));
+
+    expect(await positions()).toEqual(before);
+  });
+
+  it('is stored, so the fold that needs it has something to read', async () => {
+    await index(100, 100, everyConfigEvent(100));
+
+    const result = await client.query({
+      query: `
+        SELECT event_name, count() AS rows
+        FROM spoke_events_current
+        WHERE chain_id = {chainId:UInt32}
+        GROUP BY event_name
+        ORDER BY event_name
+      `,
+      query_params: { chainId: CHAIN_ID },
+      format: 'JSONEachRow',
+    });
+
+    expect((await result.json<{ event_name: string }>()).map((r) => r.event_name)).toEqual([
+      'AddDynamicReserveConfig',
+      'RefreshAllUserDynamicConfig',
+      'RefreshSingleUserDynamicConfig',
+      'UpdateDynamicReserveConfig',
+      'UpdateReserveConfig',
+    ]);
+  });
+
+  it('retracts like everything else when a range is re-dispatched', async () => {
+    // They are ordinary ledger rows, so the reorg mechanism covers them without
+    // anything new — which is the point of putting them in the same table.
+    await index(100, 100, everyConfigEvent(100));
+    await index(100, 100, [addDynamicConfig({ block: 100, log: 0 }, '7', 1, 8_300)]);
+
+    const result = await client.query({
+      query: `SELECT count() AS rows FROM spoke_events_current WHERE chain_id = {chainId:UInt32}`,
+      query_params: { chainId: CHAIN_ID },
+      format: 'JSONEachRow',
+    });
+
+    expect((await result.json<{ rows: number }>())[0]?.rows).toBe(1);
   });
 });

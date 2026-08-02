@@ -24,7 +24,8 @@ cursor and processor seams, and hash-chain reorg detection over a retained heade
 detected fork re-reported on the next start until it has actually been applied; a durable cursor and
 header window in Postgres, so a restart resumes instead of re-indexing; the shared ClickHouse
 layer of client, readiness probe and [migration runner](#schema-and-migrations); and
-[event ingestion](#event-ingestion) — the eight Main Spoke events that move a position and the
+[event ingestion](#event-ingestion) — the thirteen Main Spoke events that move a position or
+decide what it counts as, and the
 thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that will value them,
 decoded against the official ABIs into two append-only ledgers;
 [the position fold](#the-position-fold) over the Spoke ledger, with a keyset-paginated store to read
@@ -724,7 +725,7 @@ names itself after the address it follows, so that is what to pass — quoted, s
 parentheses:
 
 ```bash
-pnpm backfill --from 24720899 --to 24730899 --processors 'aave-events(0x94e7a5dc)'
+pnpm backfill --from 24720899 --to 24730899 --processors 'aave-spoke(0x94e7a5dc)'
 ```
 
 `--help` lists the rest.
@@ -741,12 +742,40 @@ which is the property the split exists for. It binds its own `LOG_READER` rather
 loop's: a module in `IndexingModule`'s `imports` cannot reach what that module provides, since
 dynamic-module exports flow outward to importers and not inward.
 
-**Eight events**, exactly what §12.2 lists as the position fold's inputs plus the registry that gives
-`reserveId` a meaning: `Supply`, `Withdraw`, `Borrow`, `Repay`, `LiquidationCall`, `ReportDeficit`,
+**Thirteen events, in two groups that are named separately because they are read separately.**
+
+The eight §12.2 lists as the position fold's inputs, plus the registry that gives `reserveId` a
+meaning: `Supply`, `Withdraw`, `Borrow`, `Repay`, `LiquidationCall`, `ReportDeficit`,
 `SetUsingAsCollateral`, `AddReserve`. Three protocol traps each carry a test rather than a comment —
 positions key on `user` and never `caller`, decoding is scoped by emitting address because
 `ReportDeficit` exists on both Spoke and Hub with different signatures, and the position managers'
 fold events are excluded because folding them would double-count every routed action.
+
+And five that decide what a position **counts as** rather than what is in it:
+`AddDynamicReserveConfig`, `UpdateDynamicReserveConfig`, `RefreshAllUserDynamicConfig`,
+`RefreshSingleUserDynamicConfig`, `UpdateReserveConfig`. None moves a share balance, which is what
+makes them easy to leave out and wrong to: §7.1 weights collateral by `collateralFactor` at the
+user's pinned `dynamicConfigKey` — the user's version, not the reserve's current one (§3) — so a
+health factor without them is not an approximation, it is unavailable. `RefreshAllUserDynamicConfig`
+is the **most frequent event on the Spoke**, 8,696 against `Supply`'s fewer, and moves nothing at
+all.
+
+They are stored and not yet folded, and nothing had to change for that to be safe: every projection
+filters on `event_name`, so a new name lands in the ledger and is read by nothing. A spec pins it,
+because a view that ever fired unconditionally would sum a risk parameter into a share balance.
+
+> **Widening this filter requires a backfill.** The ledger holds what the filter asked for when each
+> range was written, so history has no rows for an event added later — and nothing detects that,
+> because a fold over the missing rows produces a smaller number rather than an error. Replay the
+> Spoke processor over the whole range before anything reads the new events — names are matched
+> exactly, and carry the contract they follow:
+>
+> ```bash
+> pnpm backfill --from 24720899 --to <safe head> --processors 'aave-spoke(0x94e7a5dc)'
+> ```
+>
+> Re-running is defined behaviour rather than a repair: dispatch is at-least-once and processors are
+> required to be idempotent, so the ledger's retraction handles the overlap.
 
 **ABIs come from [`@aave-dao/aave-address-book`](https://github.com/bgd-labs/aave-address-book)**
 rather than being transcribed, and topics are derived from them at load rather than pasted — a stale

@@ -91,6 +91,63 @@ export const reportDeficit = (at: At, user: string, reserveId: string, shares: s
 export const addReserve = (at: At, reserveId: string, assetId: string, hub: string) =>
   event('AddReserve', at, { reserveId, assetId, hub });
 
+/**
+ * The config events, shaped as the decoder hands them over.
+ *
+ * **The addresses are checksummed on purpose.** viem decodes an indexed address
+ * that way, so a projection that forgets to `lower()` writes a second,
+ * unjoinable row for the same wallet — and it reads as a user who simply has no
+ * config rather than as a bug. A fixture that pre-lowered them would never
+ * catch it.
+ */
+export const addDynamicConfig = (
+  at: At,
+  reserveId: string,
+  dynamicConfigKey: number,
+  collateralFactor: number,
+) =>
+  event('AddDynamicReserveConfig', at, {
+    reserveId,
+    dynamicConfigKey,
+    config: { collateralFactor, maxLiquidationBonus: 1_055_500, liquidationFee: 1_000 },
+  });
+
+export const updateDynamicConfig = (
+  at: At,
+  reserveId: string,
+  dynamicConfigKey: number,
+  collateralFactor: number,
+) =>
+  event('UpdateDynamicReserveConfig', at, {
+    reserveId,
+    dynamicConfigKey,
+    config: { collateralFactor, maxLiquidationBonus: 1_055_500, liquidationFee: 1_000 },
+  });
+
+/** Carries no version: the user moves to whatever the reserve's key is here. */
+export const refreshAllUserConfig = (at: At, user: string) =>
+  event('RefreshAllUserDynamicConfig', at, { user });
+
+export const refreshUserConfig = (at: At, user: string, reserveId: string) =>
+  event('RefreshSingleUserDynamicConfig', at, { user, reserveId });
+
+export const updateReserveConfig = (
+  at: At,
+  reserveId: string,
+  flags: Partial<{ paused: boolean; frozen: boolean; borrowable: boolean }> = {},
+) =>
+  event('UpdateReserveConfig', at, {
+    reserveId,
+    config: {
+      collateralRisk: 0,
+      paused: false,
+      frozen: false,
+      borrowable: true,
+      receiveSharesEnabled: false,
+      ...flags,
+    },
+  });
+
 export function liquidate(
   at: At,
   parts: {

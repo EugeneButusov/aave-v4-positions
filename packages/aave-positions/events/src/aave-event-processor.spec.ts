@@ -8,7 +8,7 @@ import { encodeAbiParameters, encodeEventTopics } from 'viem';
 import { describe, expect, it } from 'vitest';
 
 import { HUB_ABI } from './aave/hub-events';
-import { SPOKE_POSITION_TOPICS } from './aave/spoke-events';
+import { SPOKE_INGESTED_TOPICS } from './aave/spoke-events';
 import { AaveEventProcessor, hubEventSource, spokeEventSource } from './aave-event-processor';
 import type { DecodedEvent } from './decode/decoded-event';
 import type { EventStore } from './store/event-store';
@@ -65,7 +65,7 @@ describe('AaveEventProcessor', () => {
     expect(reader.filters).toEqual([
       {
         addresses: [SPOKE],
-        topic0: SPOKE_POSITION_TOPICS,
+        topic0: SPOKE_INGESTED_TOPICS,
         fromBlock: 100,
         toBlock: 200,
       },

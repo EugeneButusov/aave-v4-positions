@@ -12,7 +12,7 @@ import {
   isHubStateEvent,
   listedTokens,
 } from './hub-events';
-import { MAIN_SPOKE_GENESIS_BLOCK, SPOKE_POSITION_TOPICS } from './spoke-events';
+import { MAIN_SPOKE_GENESIS_BLOCK, SPOKE_INGESTED_TOPICS } from './spoke-events';
 
 /**
  * Transcribed from docs/aave-v4-protocol-analysis.md §4.4, which derived them
@@ -66,7 +66,7 @@ describe('Hub event catalogue', () => {
     // The topics differ, but the *names* do not — Hub `ReportDeficit` and Spoke
     // `ReportDeficit` are different events (§4.4). That is why the two ledgers
     // are separate tables rather than one filtered by name.
-    const shared = HUB_STATE_TOPICS.filter((t) => SPOKE_POSITION_TOPICS.includes(t));
+    const shared = HUB_STATE_TOPICS.filter((t) => SPOKE_INGESTED_TOPICS.includes(t));
 
     expect(shared).toEqual([]);
     expect(isHubStateEvent('ReportDeficit')).toBe(true);

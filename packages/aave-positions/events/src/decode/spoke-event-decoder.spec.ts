@@ -3,7 +3,7 @@ import type { Hash, RawLog } from '@packages/indexing';
 import { encodeAbiParameters, encodeEventTopics, getAbiItem } from 'viem';
 import { describe, expect, it } from 'vitest';
 
-import { SPOKE_POSITION_EVENTS } from '../aave/spoke-events';
+import { SPOKE_ABI, SPOKE_POSITION_EVENTS } from '../aave/spoke-events';
 import { UndecodableLogError } from './decoder';
 import { SpokeEventDecoder } from './spoke-event-decoder';
 import fixture from './spoke-logs.fixture.json';
@@ -180,7 +180,12 @@ describe('SpokeEventDecoder', () => {
     expect(() => decoder.decode([hubLog()])).toThrow(UndecodableLogError);
   });
 
-  it('rejects a Spoke event that is not one of the eight requested', () => {
+  it('rejects a Spoke event that is not one of the thirteen requested', () => {
+    // This used to be `RefreshAllUserDynamicConfig`, which is now ingested.
+    // `UpdateReservePriceSource` replaces it and is a deliberate exclusion
+    // rather than an arbitrary one: it names a reserve's price adapter, and
+    // this deployment reads the oracle directly instead of reconstructing
+    // prices from the feeds behind it (§7.4).
     const refresh: RawLog = {
       ...logs[0]!,
       topics: topicsOf(
@@ -188,12 +193,15 @@ describe('SpokeEventDecoder', () => {
           abi: [
             {
               type: 'event',
-              name: 'RefreshAllUserDynamicConfig',
-              inputs: [{ name: 'user', type: 'address', indexed: true }],
+              name: 'UpdateReservePriceSource',
+              inputs: [
+                { name: 'reserveId', type: 'uint256', indexed: true },
+                { name: 'priceSource', type: 'address', indexed: true },
+              ],
             },
           ] as const,
-          eventName: 'RefreshAllUserDynamicConfig',
-          args: { user: '0x1111111111111111111111111111111111111111' },
+          eventName: 'UpdateReservePriceSource',
+          args: { reserveId: 7n, priceSource: '0x1111111111111111111111111111111111111111' },
         }),
       ),
       data: '0x',
@@ -204,5 +212,119 @@ describe('SpokeEventDecoder', () => {
     // what it claimed. Silently keeping it would put unrequested rows in the
     // ledger; silently dropping it would hide the broken filter.
     expect(() => decoder.decode([refresh])).toThrow(/not one of the spoke events/);
+  });
+});
+
+describe('SpokeEventDecoder, on the config events', () => {
+  /** ABI-encoded rather than found: none of these is in the fixture's range. */
+  function configLog(
+    eventName: string,
+    args: Record<string, unknown>,
+    data: `0x${string}` = '0x',
+  ): RawLog {
+    return {
+      address: SPOKE,
+      topics: topicsOf(
+        encodeEventTopics({
+          abi: SPOKE_ABI,
+          eventName: eventName as 'AddReserve',
+          args,
+        }),
+      ),
+      data,
+      blockNumber: 24_720_899,
+      blockHash: `0x${'ab'.repeat(32)}`,
+      blockTimestamp: 1_785_000_000,
+      transactionHash: `0x${'cd'.repeat(32)}`,
+      transactionIndex: 0,
+      logIndex: 0,
+    };
+  }
+
+  const CONFIG_TUPLE = getAbiItem({ abi: SPOKE_ABI, name: 'AddDynamicReserveConfig' }).inputs[2];
+
+  it('decodes a versioned config, tuple and all', () => {
+    // The shape the fold reads. `collateralFactor` is BPS and arrives as a
+    // number; the two beside it are what a liquidation pays out, and are here
+    // because dropping a tuple component in SQL later is easier than noticing
+    // it was never stored.
+    const log = configLog(
+      'AddDynamicReserveConfig',
+      { reserveId: 7n, dynamicConfigKey: 1 },
+      encodeAbiParameters(
+        [CONFIG_TUPLE],
+        [{ collateralFactor: 8_300, maxLiquidationBonus: 1_055_500, liquidationFee: 1_000 }],
+      ),
+    );
+
+    const [event] = new SpokeEventDecoder(CHAIN_ID, SPOKE).decode([log]);
+
+    expect(event?.eventName).toBe('AddDynamicReserveConfig');
+    expect(event?.body).toEqual({
+      reserveId: '7',
+      dynamicConfigKey: 1,
+      // A nested object, not a positional array — which is what lets the fold
+      // read it by name rather than by index.
+      config: { collateralFactor: 8_300, maxLiquidationBonus: 1_055_500, liquidationFee: 1_000 },
+    });
+  });
+
+  it('puts the user in topic1 on a refresh, where a reserve id sits everywhere else', () => {
+    const alice = '0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8';
+    const log = configLog('RefreshAllUserDynamicConfig', { user: alice });
+
+    const [event] = new SpokeEventDecoder(CHAIN_ID, SPOKE).decode([log]);
+
+    // §4.5's warning in its narrowest form: the same topic slot means different
+    // things per event, so nothing may read it positionally. The projections go
+    // through `body` for exactly this reason.
+    expect(event?.topic1).toBe(padded(alice));
+
+    // The same slot on a real `AddReserve` from the fixture holds that event's
+    // reserve id. Asserted against the decoded body rather than a literal, so
+    // it states the correspondence rather than the fixture's happenstance.
+    const added = only('AddReserve');
+    expect(added.topic1).toBe(padded((added.body as { reserveId: string }).reserveId));
+
+    // **And `body` carries the address checksummed**, because that is what viem
+    // decodes an indexed address to. Every projection `lower()`s it on the way
+    // into a keyed column; one that forgets writes a second, unjoinable row for
+    // the same wallet — which reads as a user who simply has no config.
+    expect(event?.body).toEqual({ user: '0x82D16fF1C724ab72F218A3f7f6DD3E5385ee87E8' });
+  });
+
+  it('records a refresh that names no version, because the event does not carry one', () => {
+    const alice = '0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8';
+    // `reserveId` is *not* indexed on this one, so it rides in `data` rather
+    // than in a topic — which is why the decoder needs the payload even though
+    // the sibling event has none.
+    const log = configLog(
+      'RefreshSingleUserDynamicConfig',
+      { user: alice },
+      encodeAbiParameters([{ type: 'uint256', name: 'reserveId' }], [7n]),
+    );
+
+    const [event] = new SpokeEventDecoder(CHAIN_ID, SPOKE).decode([log]);
+
+    // The whole difficulty, pinned at the ingestion boundary: what the user was
+    // refreshed *to* is not in the log, and has to come from the reserve's
+    // config history at this block.
+    expect(event?.body).toEqual({
+      user: '0x82D16fF1C724ab72F218A3f7f6DD3E5385ee87E8',
+      reserveId: '7',
+    });
+    expect(event?.body).not.toHaveProperty('dynamicConfigKey');
+  });
+
+  it('still refuses an event nobody asked for', () => {
+    // Widening the allow-list must not widen it to everything: a log that
+    // arrives and is not wanted is a filter that did not do what it claimed.
+    const log = configLog(
+      'SetSpokeImmutables',
+      { oracle: SPOKE },
+      encodeAbiParameters([{ type: 'uint16', name: 'maxUserReservesLimit' }], [12]),
+    );
+
+    expect(() => new SpokeEventDecoder(CHAIN_ID, SPOKE).decode([log])).toThrow(UndecodableLogError);
   });
 });
