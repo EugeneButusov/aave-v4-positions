@@ -10,12 +10,12 @@ import { clickHouseEnvSchema, envSchema } from './config/env';
 
 export const USAGE = `Usage: reconcile:hub [--to <block>] [--assets <n>] [--absolute]
 
-Compares the folded Hub asset mirror against the chain's own \`getAsset\`, at
+Compares the folded Hub asset state against the chain's own \`getAsset\`, at
 zero tolerance (§9.2). Any nonzero drift is a bug, not noise.
 
 Two modes, because what a node will serve decides which is possible.
 
-  delta (default)  The mirror is expected to hold exactly the events in
+  delta (default)  The fold is expected to hold exactly the events in
                    [from, to], and each additive field is checked against the
                    *difference* between getAsset at from-1 and at to. This is
                    §5.5's own experiment run against our fold, and it needs no
@@ -24,11 +24,11 @@ Two modes, because what a node will serve decides which is possible.
                    Truncate the Hub tables and backfill that range first.
 
   --absolute       Every field compared against getAsset outright. Requires the
-                   mirror to hold the asset's whole history, and therefore an
+                   fold to hold the asset's whole history, and therefore an
                    archive-capable RPC to have backfilled it.
 
 Options:
-  --from <block>   First block the mirror was backfilled from. The baseline is
+  --from <block>   First block the fold was backfilled from. The baseline is
                    read at from-1, so this must match the backfill exactly or
                    the delta is measured against the wrong starting state.
   --to <block>     Last block of the comparison. Defaults to head - 20.
@@ -40,7 +40,7 @@ Chain, providers and ClickHouse come from the environment, exactly as the
 indexer reads them.
 `;
 
-/** The fields the mirror folds additively — checked as a difference in delta mode. */
+/** The fields folded additively — checked as a difference in delta mode. */
 const ADDITIVE = [
   'liquidity',
   'addedShares',
@@ -55,8 +55,8 @@ const ADDITIVE = [
  * Latest-wins fields, which are absolute in both modes.
  *
  * A checkpoint is a value, not a delta — so as long as one `UpdateAsset` landed
- * inside the window, the mirror should carry exactly what the chain has. If
- * none did, the mirror holds null and the field is reported skipped rather than
+ * inside the window, the fold should carry exactly what the chain has. If
+ * none did, the fold holds null and the field is reported skipped rather than
  * counted as agreement.
  */
 const LATEST_WINS = [
@@ -67,17 +67,17 @@ const LATEST_WINS = [
   // The checkpoint's own time, and the field the whole extrapolation hangs off:
   // `drawnIndex(t)` applies linear interest from *here*, so an hour's error
   // shifts every debt in the asset by an hour of interest. It is the one
-  // latest-wins value the mirror derives rather than reads — the event carries
+  // latest-wins value the fold derives rather than reads — the event carries
   // no timestamp and `accrue()` sets `lastUpdateTimestamp = block.timestamp`,
   // so this checks that derivation against what the chain actually stored.
   'checkpointAt',
 ] as const;
 
 /**
- * The chain's `getAsset` struct, reduced to the fields the mirror folds.
+ * The chain's `getAsset` struct, reduced to the fields the fold keeps.
  *
  * Written out rather than indexed dynamically: this *is* the mapping between
- * the mirror's column names and the contract's, and a typo here would compare
+ * the fold's column names and the contract's, and a typo here would compare
  * the wrong pair of numbers and report agreement.
  */
 function chainFields(a: {
@@ -111,21 +111,21 @@ function chainFields(a: {
 }
 
 /**
- * The mirror's value for a latest-wins field, as an integer.
+ * The fold's value for a latest-wins field, as an integer.
  *
  * All of them are decimal strings or numbers except `index_timestamp`, which the
  * store formats as an ISO instant so a caller gets an unambiguous UTC time
  * rather than a locale-dependent one. Comparing it means going back to seconds.
  */
 /**
- * How each latest-wins comparison reads its value off the mirror row.
+ * How each latest-wins comparison reads its value off the fold row.
  *
  * Named one at a time rather than indexed dynamically: this is the mapping
  * between the comparison's field names and the row's, and a wrong pair would
  * compare two unrelated numbers and report agreement. Keyed by the field list,
  * so adding a comparison without an accessor does not compile.
  */
-const MIRROR_FIELD: Readonly<
+const FOLD_FIELD: Readonly<
   Record<(typeof LATEST_WINS)[number], (row: HubAsset) => string | number | null>
 > = {
   drawnIndex: (row) => row.drawnIndex,
@@ -139,8 +139,8 @@ const MIRROR_FIELD: Readonly<
     row.indexTimestamp === null ? null : Date.parse(row.indexTimestamp) / 1000,
 };
 
-function mirrorValue(row: HubAsset, field: (typeof LATEST_WINS)[number]): bigint | null {
-  const value = MIRROR_FIELD[field](row);
+function foldValue(row: HubAsset, field: (typeof LATEST_WINS)[number]): bigint | null {
+  const value = FOLD_FIELD[field](row);
   return value === null ? null : BigInt(value);
 }
 
@@ -199,17 +199,17 @@ async function main(): Promise<void> {
   const head = Number(await chain.getBlockNumber());
   const to = args.to ?? head - 20;
   // The baseline is the block *before* the backfilled range, not before `to`:
-  // an event at the start of the window is already in the mirror, so measuring
+  // an event at the start of the window is already in the fold, so measuring
   // from `to - 1` would compare it against a chain state that already contains
-  // it and report the mirror's own row as drift.
+  // it and report the fold's own row as drift.
   const baseline = BigInt((args.from ?? to) - 1);
 
   const count =
     args.assets ??
     Number(await chain.readContract({ address: hub, abi: HUB_ABI, functionName: 'getAssetCount' }));
 
-  const mirrored = await store.list(env.CHAIN_ID, hub);
-  const byId = new Map(mirrored.map((a) => [a.assetId, a]));
+  const folded = await store.list(env.CHAIN_ID, hub);
+  const byId = new Map(folded.map((a) => [a.assetId, a]));
 
   const getAsset = (assetId: number, blockNumber: bigint) =>
     chain.readContract({
@@ -229,7 +229,7 @@ async function main(): Promise<void> {
     const id = String(assetId);
     const row: HubAsset | undefined = byId.get(id);
     if (!row) {
-      // In delta mode an asset with no event in the window has no mirror row,
+      // In delta mode an asset with no event in the window has no fold row,
       // which is the correct answer rather than a missing one. In absolute mode
       // every listed asset must be present.
       if (args.absolute) {
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
     }
 
     for (const field of LATEST_WINS) {
-      const value = mirrorValue(row, field);
+      const value = foldValue(row, field);
       if (value === null) {
         // No event of that kind inside the window. Not agreement, and not
         // drift — say so rather than counting it either way.
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
     process.stdout.write(`\n${mismatches.length} MISMATCH(ES):\n`);
     for (const m of mismatches) {
       process.stdout.write(
-        `  asset ${m.assetId} ${m.field}: chain ${m.expected}, mirror ${m.actual}\n`,
+        `  asset ${m.assetId} ${m.field}: chain ${m.expected}, fold ${m.actual}\n`,
       );
     }
     process.exitCode = 1;

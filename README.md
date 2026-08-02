@@ -28,7 +28,7 @@ layer of client, readiness probe and [migration runner](#schema-and-migrations);
 thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that will value them,
 decoded against the official ABIs into two append-only ledgers;
 [the position fold](#the-position-fold) over the Spoke ledger, with a keyset-paginated store to read
-it; and [the Hub asset mirror](#the-hub-asset-mirror) over the Hub's, reconciled against the chain's
+it; and [the Hub asset fold](#the-hub-asset-fold) over the Hub's, reconciled against the chain's
 own `getAsset`.
 
 **Not yet:** the share→asset arithmetic, and therefore any valuation on the read path — position
@@ -264,8 +264,8 @@ Applying the ClickHouse schema is its own command, never something a service doe
 pnpm --filter @aave-v4-positions/indexer migrate
 ```
 
-Checking the Hub mirror against the chain is its own command too, and it runs against whatever RPC
-you point it at rather than on a schedule — see [the mirror's verification](#verification-1):
+Checking the Hub fold against the chain is its own command too, and it runs against whatever RPC
+you point it at rather than on a schedule — see [the fold's verification](#verification-1):
 
 ```bash
 pnpm --filter @aave-v4-positions/indexer reconcile:hub -- --from X --to Y
@@ -680,7 +680,7 @@ dynamic-module exports flow outward to importers and not inward.
 `SetUsingAsCollateral`, `AddReserve`. Three protocol traps each carry a test rather than a comment —
 positions key on `user` and never `caller`, decoding is scoped by emitting address because
 `ReportDeficit` exists on both Spoke and Hub with different signatures, and the position managers'
-mirror events are excluded because folding them would double-count every routed action.
+fold events are excluded because folding them would double-count every routed action.
 
 **ABIs come from [`@aave-dao/aave-address-book`](https://github.com/bgd-labs/aave-address-book)**
 rather than being transcribed, and topics are derived from them at load rather than pasted — a stale
@@ -850,7 +850,7 @@ window, either side of the analysis's 868.
 `Sweep`, `Reclaim`, `MintFeeShares`, `RefreshPremium`, `ReportDeficit` and `EliminateDeficit` are all
 at zero across 945,000 blocks, which is the event-side confirmation of §5.4's reading that
 `premiumShares`, `premiumOffsetRay`, `deficitRay` and `swept` are zero on all 34 assets. It also sets
-the ceiling on what the next increment can prove: the asset mirror will have seven transitions
+the ceiling on what the next increment can prove: the asset fold will have seven transitions
 reconcilable against mainnet and six that only synthetic fixtures can reach. They are decoded and
 pinned by specs here so that the day one fires, it is folded rather than discovered.
 
@@ -1066,7 +1066,7 @@ Three paths that reconciliation cannot cover, because mainnet has never exercise
 triple has never been non-zero, no liquidation has ever set `receiveShares`, and `ReportDeficit` has
 never fired. Those are pinned by synthetic specs and nothing else.
 
-## The Hub asset mirror
+## The Hub asset fold
 
 The other half of a balance. A position carries shares; turning them into token amounts needs the
 Hub's own asset state, because debt accrues with time through `drawnIndex` and that accrual emits no
@@ -1130,13 +1130,13 @@ the `sign` multiply, five transition directions including `Restore`'s premium te
 and sorts 13 before 3 — the same bug the position store's pagination hit).
 
 **Reconciled against `getAsset` at zero tolerance**, in the delta form §5.5 itself used: seed from
-the chain before the window, replay the window through the mirror, compare against the chain after
+the chain before the window, replay the window through the fold, compare against the chain after
 it. One 59-block window at block 25,667,068, **10 field comparisons across the asset that moved,
 zero drift** — exercising `Restore` and the `UpdateAsset` checkpoint.
 
 That window is narrow, and the reason is worth stating rather than hiding: a public endpoint serves
 state for about 127 blocks, which bounds the delta form exactly as it bounded §5.5's own 95-block
-run. The absolute check — all 17 assets, every field, against a mirror holding full history — needs
+run. The absolute check — all 17 assets, every field, against a fold holding full history — needs
 an archive RPC and is what `reconcile:hub --absolute` does. Everything the narrow window does not
 reach rests on the source transcription above, 22 integration specs and the ten mutation tests.
 
@@ -1278,7 +1278,7 @@ Deliberate, in rough order of what comes next.
   `AssetLogic` at the pinned commit rather than reconstructed.
 - **The absolute Hub reconciliation.** `reconcile:hub` runs today in its delta form, which a public
   endpoint's ~127-block state window bounds to one asset or two. `--absolute` compares all 17 across
-  every field but needs an archive RPC to have backfilled the mirror first. It is the check that
+  every field but needs an archive RPC to have backfilled the fold first. It is the check that
   would catch a mis-folded transition in the six events mainnet has never produced — and it cannot,
   because it can only compare what the chain has actually done.
 - **A single-writer guarantee.** The cursor is durable now, so two indexers on one `chain_id` write

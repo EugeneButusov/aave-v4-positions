@@ -85,7 +85,7 @@ const COLUMNS = `
 `;
 
 /**
- * Reads the Hub asset mirror out of ClickHouse.
+ * Reads the Hub asset fold out of ClickHouse.
  *
  * **Every asset the Hub has ever listed, including any whose balances net to
  * zero.** Unlike a position, an asset with no liquidity is still a real listing

@@ -26,7 +26,7 @@ import {
 import { CHAIN_ID, migratedDatabase } from '../test-support/spoke-ledger';
 
 /** Its own database: sibling suites share table names and would truncate this one. */
-const DATABASE = 'spec_hub_mirror';
+const DATABASE = 'spec_hub_fold';
 
 let client: ClickHouseClient;
 let events: ClickHouseHubEventStore;
@@ -40,11 +40,11 @@ async function index(from: number, to: number, batch: DecodedEvent[]): Promise<v
 
 async function asset(assetId = '7'): Promise<HubAsset> {
   const found = await store.get(CHAIN_ID, HUB, assetId);
-  if (!found) throw new Error(`no mirror row for asset ${assetId}`);
+  if (!found) throw new Error(`no fold row for asset ${assetId}`);
   return found;
 }
 
-describe('the Hub asset mirror', () => {
+describe('the Hub asset fold', () => {
   beforeAll(async () => {
     client = await migratedDatabase(DATABASE);
     events = new ClickHouseHubEventStore(client);
@@ -235,7 +235,7 @@ describe('the Hub asset mirror', () => {
         updateAsset({ block: 300 }, '1000000000000000000000000009', '60', '5'),
       ]);
 
-    it('leaves the mirror unchanged when a range is dispatched twice', async () => {
+    it('leaves the fold unchanged when a range is dispatched twice', async () => {
       await seed();
       await seed();
 

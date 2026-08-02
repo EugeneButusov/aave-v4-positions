@@ -2,7 +2,7 @@
 --
 -- Thirteen views: ten fold additive asset state into `hub_assets`, three record
 -- a latest-wins value into `hub_asset_state`. One file because they are one
--- thing — the mirror — and §5.5 calls it the highest-risk fold in the design:
+-- thing — the fold — and §5.5 calls it the highest-risk fold in the design:
 -- one mishandled transition silently corrupts every supply valuation for that
 -- asset, with no error and nothing to flag it.
 --
@@ -269,7 +269,7 @@ WHERE event_name = 'RefreshPremium'
 -- without it the index cannot be extrapolated forward.
 --
 -- The ABI names the fourth parameter `accruedFees`; `AssetLogic:137` emits
--- `asset.realizedFees` into it. Same value, and the mirror uses the storage name.
+-- `asset.realizedFees` into it. Same value, and the fold uses the storage name.
 CREATE MATERIALIZED VIEW IF NOT EXISTS hub_update_asset TO hub_asset_state AS
 SELECT
     chain_id,

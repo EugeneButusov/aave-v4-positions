@@ -1,4 +1,4 @@
--- The latest-wins half of the Hub asset mirror.
+-- The latest-wins half of the Hub asset fold.
 --
 -- **No engine holds a latest-wins fact pre-aggregated under retraction** — the
 -- three candidates were measured and ruled out for `user_position_flags`, and

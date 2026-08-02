@@ -99,7 +99,7 @@ describe('ClickHouseHubAssetStore', () => {
       await events.append([add({ block: 100 }, '1000', '1000', '7')]);
 
       // A caller reads a checksummed address off a block explorer or the address
-      // book — `AaveV4Ethereum.HUBS.CORE_HUB` is checksummed — while the mirror
+      // book — `AaveV4Ethereum.HUBS.CORE_HUB` is checksummed — while the fold
       // stores what the log carried, which is lower-case.
       const checksummed = '0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9';
       expect(await store.list(CHAIN_ID, checksummed)).toHaveLength(1);
@@ -143,7 +143,7 @@ describe('ClickHouseHubAssetStore', () => {
 
       // Every value distinct, so crossing two fields in the mapper fails here
       // rather than surfacing as a wrong balance much later. This is the whole
-      // reason the test exists: the mirror's own specs read these back through
+      // reason the test exists: the fold's own specs read these back through
       // the same mapper, so they cannot see a mapping that is internally
       // consistent and wrong.
       expect(await store.get(CHAIN_ID, HUB, '7')).toEqual({

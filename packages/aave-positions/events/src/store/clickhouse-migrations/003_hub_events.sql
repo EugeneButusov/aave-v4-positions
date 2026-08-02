@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS hub_events
     block_hash      String,
     -- Not decoration: `UpdateAsset` carries no timestamp of its own, and the
     -- block's is what makes `(drawnIndex, drawnRate, t)` a self-consistent
-    -- interest checkpoint (§5.3). The mirror reads it from here.
+    -- interest checkpoint (§5.3). The fold reads it from here.
     block_timestamp DateTime('UTC'),
     tx_hash         String,
     tx_index        UInt32,

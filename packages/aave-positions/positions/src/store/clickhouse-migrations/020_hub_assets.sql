@@ -1,4 +1,4 @@
--- The additive half of the Hub asset mirror (§5.5).
+-- The additive half of the Hub asset fold (§5.5).
 --
 -- Every field here is a **group under addition**, so retraction propagates for
 -- free: the projection of a `sign = -1` ledger row is the exact negation of its

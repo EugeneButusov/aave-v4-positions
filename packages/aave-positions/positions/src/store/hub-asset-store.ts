@@ -3,7 +3,7 @@ import type { Address } from '@packages/indexing';
 import type { HubAsset } from './hub-asset';
 
 /**
- * Reads the Hub asset mirror.
+ * Reads the Hub asset fold.
  *
  * **No pagination, deliberately.** A Hub lists 17 assets on mainnet and 34
  * across all four; the whole dimension fits in one response and the valuation
