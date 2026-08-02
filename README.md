@@ -1804,9 +1804,14 @@ implicit `any` on a balance is a silent wrong number.
 **A pnpm catalog** holds every shared dependency version in `pnpm-workspace.yaml`, so the two services
 cannot drift onto different Nest minors.
 
-**Hooks are split by cost.** `pre-commit` runs oxlint and Prettier over staged files only; `pre-push`
-runs the whole typecheck and test suite, since those are project-wide and too slow to attach to every
-commit. Bypass with `LEFTHOOK=0`, or one job with `LEFTHOOK_EXCLUDE=<name>`.
+**Hooks do formatting and lint, and nothing else.** `pre-commit` runs oxlint and Prettier over staged
+files; there is no `pre-push`. Both checks are per-file, fast, and answerable from the working tree
+alone, which is what makes them worth a commit's patience. Typecheck, tests and the build are
+project-wide, and the suite additionally needs Postgres and ClickHouse — CI has them as services and
+runs all five. Gating a push on them meant a shell without those credentials exported failed every
+container-backed spec for a reason unrelated to the change, and a gate that fails on correct work
+teaches people to reach for `LEFTHOOK=0`, which disarms the two checks that were earning their place.
+Bypass with `LEFTHOOK=0`, or one job with `LEFTHOOK_EXCLUDE=<name>`.
 
 ## Not here yet
 
