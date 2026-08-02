@@ -300,6 +300,30 @@ describe('TokenEnrichmentProcessor', () => {
       expect(listings.calls).toBe(1);
     });
 
+    it('still enriches a token whose push was lost to a restart', async () => {
+      // The buffer is in memory, so a crash between the push and the run drops
+      // it. That is safe because the buffer is never the only record: the Hub
+      // processor committed the `AddAsset` to the ledger *before* pushing, so
+      // the listing survives, and a fresh instance owes a full check that
+      // finds the gap between the ledger and the store.
+      pending.add([WETH]);
+
+      const afterRestart = new TokenEnrichmentProcessor(
+        { chainId: CHAIN_ID, retryDelayMs: RETRY_MS, concurrency: 4 },
+        listings,
+        new PendingTokens(),
+        store,
+        reader,
+        chain,
+      );
+      listings.listed = [WETH];
+
+      afterRestart.onBlockRange(100, 200, NEVER_ABORTED);
+      await settle();
+
+      expect(store.rows.has(WETH)).toBe(true);
+    });
+
     it('goes back to the whole set after a failure, not to the buffer', async () => {
       // Deliberately after a *successful* run, which is the only way to tell
       // the two apart: on a cold start the flag is already set, so a mutation
