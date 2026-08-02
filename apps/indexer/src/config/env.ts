@@ -153,16 +153,14 @@ export const envSchema = z.object({
     .transform((value) => value.toLowerCase()),
 
   /**
-   * How often enrichment sweeps the full listed-versus-stored token sets.
+   * How long enrichment waits before retrying after a run left a gap open.
    *
-   * The *backstop*, not the mechanism: a new listing is picked up in the
-   * dispatch that ingests it, and this is what covers bootstrap — every
-   * `AddAsset` on mainnet fired at block 24,722,784, far behind any live
-   * cursor — plus anything the fast path missed. Five minutes because being
-   * five minutes late with a token symbol costs nothing, and the sweep reads
-   * both databases.
+   * Only after a *failure*. A run that resolved everything imposes no delay, so
+   * a newly listed token is picked up on the next dispatch rather than waiting
+   * out a timer it did not earn. This is the backstop against a dead provider
+   * being re-asked on every block.
    */
-  TOKEN_ENRICHMENT_SWEEP_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(300_000),
+  TOKEN_ENRICHMENT_RETRY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(60_000),
 
   /**
    * How many tokens are read from the chain at once.

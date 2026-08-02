@@ -67,7 +67,7 @@ class EnrichmentOptionsModule {}
  * const enrichment = TokenEnrichmentModule.forRootAsync({
  *   imports: [ConfigModule],
  *   inject: [ConfigService],
- *   useFactory: (config) => ({ chainId, sweepIntervalMs, concurrency, rpc, … }),
+ *   useFactory: (config) => ({ chainId, retryDelayMs, concurrency, rpc, … }),
  * });
  *
  * const indexing = IndexingModule.forRootAsync({
@@ -77,10 +77,10 @@ class EnrichmentOptionsModule {}
  * });
  * ```
  *
- * **Registered after the event processors, and the order is a real dependency
- * for one of its two mechanisms.** The fast path reads what the Hub processor
- * wrote earlier in the same dispatch. The sweep does not, which is what keeps
- * the dependency from being load-bearing — see the processor.
+ * **Registration order does not matter here**, unlike the event processors'.
+ * The processor starts its work in the background and returns before any of it,
+ * and what to do next comes from diffing two tables rather than from the range
+ * it was handed — so it neither waits on nor reads from whatever ran before it.
  */
 @Module({})
 export class TokenEnrichmentModule {
@@ -127,7 +127,7 @@ export class TokenEnrichmentModule {
           provide: TOKEN_ENRICHMENT_OPTIONS,
           useFactory: (resolved: EnrichmentOptions): TokenEnrichmentOptions => ({
             chainId: resolved.chainId,
-            sweepIntervalMs: resolved.sweepIntervalMs,
+            retryDelayMs: resolved.retryDelayMs,
             concurrency: resolved.concurrency,
           }),
           inject: [ENRICHMENT_OPTIONS],

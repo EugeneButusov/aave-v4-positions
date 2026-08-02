@@ -14,7 +14,8 @@ import { TokenEnricher } from './token-enricher';
  * disable; this job needs a chain client and two databases, which is what
  * `TokenEnrichmentModule` already assembles for the processor.
  *
- * The sweep interval is zero here: a command run by hand is always due.
+ * The retry delay is zero here: a command run by hand is always due, and the
+ * operator watching it is the backoff.
  */
 @Module({
   imports: [
@@ -38,7 +39,7 @@ import { TokenEnricher } from './token-enricher';
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
         chainId: config.get('CHAIN_ID', { infer: true }),
-        sweepIntervalMs: 0,
+        retryDelayMs: 0,
         concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
         rpc: {
           rpcUrls: config.get('RPC_URLS', { infer: true }),

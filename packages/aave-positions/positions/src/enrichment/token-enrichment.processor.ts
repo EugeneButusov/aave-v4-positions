@@ -17,8 +17,8 @@ import { TOKEN_METADATA_STORE, type TokenMetadataStore } from '../store/token-me
 
 export interface TokenEnrichmentOptions {
   readonly chainId: number;
-  /** How often the full sweep runs. The fast path runs every dispatch. */
-  readonly sweepIntervalMs: number;
+  /** How long to wait before trying again after a run left a gap open. */
+  readonly retryDelayMs: number;
   readonly concurrency: number;
 }
 
@@ -84,34 +84,28 @@ async function mapLimit<T, R>(
 /**
  * Fills in what tokens call themselves, automatically.
  *
- * A `BlockProcessor` rather than a new scheduling concept: it inherits the
- * loop's lifecycle, its `AbortSignal` and its graceful drain, and the indexer is
- * already the thing that runs continuously.
+ * **`onBlockRange` awaits nothing and never blocks the loop.** That is the
+ * whole shape of this class, and it is not a detail. Enrichment reads
+ * third-party token contracts — seventeen of them, three calls each, against a
+ * provider that may be slow, rate-limiting or down — and `dispatchToProcessors`
+ * runs processors one after another. Awaiting that work here would hold up the
+ * Spoke and Hub ledgers behind an ERC-20, which inverts what matters: the
+ * indexer staying in step with the chain is the job, and a token symbol is a
+ * nice-to-have that can be minutes late without anyone noticing.
  *
- * **Two mechanisms, and only one of them is load-bearing.**
+ * So a dispatch **triggers** a run and returns immediately. At most one runs at
+ * a time, and a run that leaves a gap open backs off before the next attempt,
+ * so a dead provider is retried on a timer rather than on every block.
  *
- * The *fast path* asks the Hub ledger which tokens an `AddAsset` named inside
- * this range. It is a granule-pruned seek — measured at 1 granule of 4 over
- * 60,000 hub events — and costs no RPC, because the Hub processor wrote the row
- * earlier in the same dispatch. A new listing is enriched in the dispatch that
- * ingested it.
- *
- * The *sweep* diffs the full listed-versus-stored sets on a timer. It is what
- * makes bootstrap work at all: every `AddAsset` on mainnet fired at block
- * 24,722,784, far behind any live cursor, so the fast path alone would discover
- * nothing on a fresh start. The latch begins expired so the first dispatch
- * sweeps.
- *
- * The sweep is also what lets the fast path stay cheap. It depends on running
- * after the Hub processor, and `dispatch.ts` plans to drop that guarantee — so
- * a missed arrival, a reordering, or a fetch against a flaky node degrades to
- * "up to one sweep late" rather than "silently never". The fast path is an
- * optimisation over the sweep, not a mechanism anything depends on.
- *
- * **It always returns `ok()`, and that is correct rather than a compromise.** A
- * third-party token contract must never stall Aave ingestion, and a `retry`
- * would do exactly that. Swallowing is safe *because* discovery is gap-driven
- * and idempotent: a failure leaves the gap open and the next sweep retries it.
+ * That works because discovery is gap-driven and idempotent: what to do next is
+ * derived from the difference between two tables, never from what this dispatch
+ * happened to see. A run that is skipped, interrupted mid-flight by a shutdown,
+ * or lost to a crash costs nothing — the gap is still there, and the next run
+ * finds it. It is also why there is no fast-path/sweep split any more. That
+ * split existed to keep an expensive listing query off the hot path — and the
+ * query turned out not to be expensive: it reads 34 rows in 3 ms whether the
+ * fold holds 29,631 rows or three million, because `underlying` is sparse. With
+ * nothing to avoid, the cheap-but-narrow second path had nothing left to buy.
  */
 @Injectable()
 export class TokenEnrichmentProcessor implements BlockProcessor {
@@ -119,8 +113,11 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
 
   private readonly logger = new Logger(TokenEnrichmentProcessor.name);
 
-  /** Epoch ms of the last sweep. Zero so the first dispatch always sweeps. */
-  private lastSweepAt = 0;
+  /** The run in flight, if any. Its only job is to stop a second one starting. */
+  private running: Promise<void> | null = null;
+
+  /** Epoch ms before which not to try again, after a run left a gap open. */
+  private retryAfter = 0;
 
   constructor(
     @Inject(TOKEN_ENRICHMENT_OPTIONS) private readonly options: TokenEnrichmentOptions,
@@ -130,17 +127,20 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
     @Inject(CHAIN_CLIENT) private readonly chain: ChainClient,
   ) {}
 
-  async onBlockRange(from: number, to: number, signal: AbortSignal): Promise<ProcessorOutcome> {
-    try {
-      const wanted = await this.discover(from, to);
-      if (wanted.length > 0 && !signal.aborted) await this.enrich(wanted);
-    } catch (error) {
-      // Logged and dropped. The gap is still open, so the next sweep tries
-      // again — and Aave ingestion does not stop because a token contract or a
-      // provider misbehaved.
-      this.logger.warn(
-        `enrichment skipped: ${error instanceof Error ? error.message : String(error)}`,
-      );
+  /**
+   * Synchronous, and returns before any of the work it starts.
+   *
+   * Not `async`: the signature allows either, and a plain return makes it
+   * impossible to add an `await` here without noticing what that would mean.
+   */
+  onBlockRange(_from: number, _to: number, signal: AbortSignal): ProcessorOutcome {
+    if (this.running === null && !signal.aborted && Date.now() >= this.retryAfter) {
+      // Errors are handled inside `run`; the `void` is the point rather than an
+      // oversight, and `finally` is what guarantees the guard is released even
+      // if something escapes.
+      this.running = this.run(signal).finally(() => {
+        this.running = null;
+      });
     }
 
     return ok();
@@ -154,16 +154,29 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
     return ok();
   }
 
-  /** The union of the fast path and, when due, the sweep — minus what is stored. */
-  private async discover(from: number, to: number): Promise<readonly Address[]> {
-    const due = Date.now() - this.lastSweepAt >= this.options.sweepIntervalMs;
-    const listed = due
-      ? await this.listings.all(this.options.chainId)
-      : await this.listings.addedIn(this.options.chainId, from, to);
+  /** Never rejects. A failure is logged and left for the next run to retry. */
+  private async run(signal: AbortSignal): Promise<void> {
+    try {
+      const missing = await this.missing();
+      if (missing.length === 0 || signal.aborted) return;
 
-    // Stamped before the work, not after. A sweep that takes longer than the
-    // interval would otherwise start again the moment it finished.
-    if (due) this.lastSweepAt = Date.now();
+      const remaining = await this.enrich(missing, signal);
+      if (remaining > 0) this.backOff(`${remaining} token(s) still unresolved`);
+    } catch (error) {
+      this.backOff(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private backOff(reason: string): void {
+    this.retryAfter = Date.now() + this.options.retryDelayMs;
+    this.logger.warn(
+      `enrichment incomplete (${reason}); retrying in ${this.options.retryDelayMs}ms`,
+    );
+  }
+
+  /** Listed on the Hub, absent from the store. */
+  private async missing(): Promise<readonly Address[]> {
+    const listed = await this.listings.all(this.options.chainId);
     if (listed.length === 0) return [];
 
     const known = await this.store.labels(this.options.chainId);
@@ -172,7 +185,8 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
     );
   }
 
-  private async enrich(tokens: readonly Address[]): Promise<void> {
+  /** Reads and stores what it can, and reports how many gaps are still open. */
+  private async enrich(tokens: readonly Address[], signal: AbortSignal): Promise<number> {
     // One block for the whole batch, and the *head* rather than the range's
     // `to`. During a backfill `to` is historical, and a full node cannot serve
     // state there — every call would fail and, worse, fail in a way that looks
@@ -192,13 +206,11 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
 
       // A row is written even when every field is null — that is what records
       // that the question was put, and what stops a token with no `symbol()`
-      // being re-read on every sweep forever. But only when the token actually
+      // being re-read on every run forever. But only when the token actually
       // answered: a timeout must leave the gap open rather than close it on a
       // null nobody will revisit.
       if (!answered(metadata)) {
-        this.logger.warn(
-          `${token}: unreachable, leaving the gap open (${metadata.failures.join(', ')})`,
-        );
+        this.logger.warn(`${token}: unreachable (${metadata.failures.join(', ')})`);
         continue;
       }
 
@@ -212,7 +224,12 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
       });
     }
 
+    // Written even on the way out. The reads are already paid for, and throwing
+    // them away would mean doing them again on the next start.
     await this.store.put(rows);
     if (rows.length > 0) this.logger.log(`enriched ${rows.length} token(s) at block ${head}`);
+    if (signal.aborted) this.logger.log('shutting down; enrichment will resume from the gap');
+
+    return tokens.length - rows.length;
   }
 }

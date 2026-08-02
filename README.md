@@ -283,7 +283,7 @@ pnpm --filter @aave-v4-positions/indexer reconcile:positions -- --users 0xabc,0x
 ```
 
 Token metadata fills itself in — the indexer enriches a new listing in the dispatch that ingests it,
-and sweeps for anything missed. This command is the repair tool for the two things that path
+and retries anything it could not reach. This command is the repair tool for the two things that path
 deliberately will not do: re-read a token it already has, and read one you name.
 
 ```bash
@@ -322,7 +322,7 @@ every deployment shares, and a per-process one gives pagination that fails only 
 | `INDEXER_AUTOSTART`            | `true`     | `false` boots the probes without indexing.                                                                           |
 | `MAIN_SPOKE_ADDRESS`           | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
 | `CORE_HUB_ADDRESS`             | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
-| `TOKEN_ENRICHMENT_SWEEP_MS`    | `300000`   | How often enrichment diffs the full token sets. The backstop, not the mechanism.                                     |
+| `TOKEN_ENRICHMENT_RETRY_MS`    | `60000`    | How long enrichment waits after a run left a gap open. A successful run waits not at all.                            |
 | `TOKEN_ENRICHMENT_CONCURRENCY` | `4`        | Tokens read at once. A public endpoint rate-limits a burst before seventeen calls become slow.                       |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
@@ -1496,29 +1496,43 @@ Anti-spoofing is deliberately not attempted. A token can call itself USDC with a
 Cyrillic С; `underlying` is the identity and the symbol is a label, and the API
 contract says so rather than implying a guarantee the chain does not offer.
 
-### Automatic, in two parts
+### Automatic, and off the critical path
 
-**A fast path per range.** Each dispatch asks the Hub ledger which tokens an
-`AddAsset` named inside its own range — `hub_events` is
-`ORDER BY (chain_id, block_number, log_index)`, so that is a granule-pruned
-seek and no RPC at all. Measured over 60,000 rows: **1 granule of 4**,
-`Search Algorithm: binary search`, `Ranges: 1`. A new listing is enriched in the
-dispatch that ingests it.
+**`onBlockRange` awaits nothing.** It triggers a run and returns the outcome
+synchronously — not a promise, so an `await` cannot be added here without
+noticing what it would mean. Enrichment reads third-party token contracts,
+seventeen of them at three calls each, against a provider that may be slow,
+rate-limiting or down; `dispatchToProcessors` runs processors one after another,
+so awaiting that work would hold the Spoke and Hub ledgers behind an ERC-20.
+That inverts what matters. Staying in step with the chain is the job; a token
+symbol can be minutes late without anyone noticing.
 
-**A sweep behind it**, every `TOKEN_ENRICHMENT_SWEEP_MS`, diffing the full
-listed-versus-stored sets. This is what makes a cold start work at all: every
-`AddAsset` on mainnet fired at block 24,722,784, far behind any live cursor, so
-the fast path alone would discover nothing. It is also what lets the fast path
-stay cheap — it depends on running after the Hub processor, and `dispatch.ts`
-plans to drop that guarantee, so a miss degrades to "one sweep late" rather than
-"silently never". A mutation test deletes the sweep and the bootstrap case turns
-red.
+At most one run is in flight, and a run that leaves a gap open waits
+`TOKEN_ENRICHMENT_RETRY_MS` before the next attempt — so a dead provider is
+retried on a timer rather than on every block. A run that resolved everything
+imposes no delay, so a newly listed token is picked up on the next dispatch.
+
+**Discovery is one query, and it looks worse than it is.** The listing set comes
+from `SELECT DISTINCT underlying FROM hub_asset_state WHERE underlying IS NOT
+NULL`, and `EXPLAIN indexes = 1` reports `Parts: 2/2, Granules: 5/5` — every
+granule, because `underlying` is not a sorting key. That reads like
+O(`UpdateAsset` history), about 1.5 million rows a year.
+
+Measured, it is flat. `underlying` is NULL on every row but the handful of
+`AddAsset`s, so the column is stored sparsely and the NULL runs are skipped: at
+**3,029,631 rows the query reads 34 rows and 1.83 KiB in 3 ms**, the same as at
+29,631. Granules _examined_ is not data _read_. A purpose-built
+`(chain_id, underlying)` table fed by a materialized view was built and measured
+against it — 17 rows, 816 bytes, 1 ms — and reverted: two milliseconds does not
+buy a table, a view, a migration and a replay step. An earlier fast-path/sweep
+split existed to keep that query off the hot path, and went the same way once
+the query turned out not to need keeping off anything.
 
 Three rules exist because the obvious version of each is wrong:
 
 - **A row is written even when every field is null.** That is what records that
   the question was put; without it a conformant token with no optional metadata
-  is re-read on every sweep, forever.
+  is re-read on every run, forever.
 - **Unless the token never answered.** A timeout stored as a null closes the gap
   on a label nobody will revisit, so the classified cause has to say the
   contract responded. An unrecognised error counts as unreachable — a new viem
@@ -1527,10 +1541,12 @@ Three rules exist because the obvious version of each is wrong:
   range is historical and a full node cannot serve state there; every call would
   fail, and fail in a way indistinguishable from a token with no symbol.
 
-The processor always returns `ok()`. A third-party token contract must never
-stall Aave ingestion, and swallowing is safe precisely because discovery is
-gap-driven and idempotent: a failure leaves the gap open and the next sweep
-retries it.
+The processor always returns `ok()`, and never `retry`. A third-party token
+contract must never stall Aave ingestion. That is safe precisely because
+discovery is gap-driven and idempotent: what to do next comes from the
+difference between two tables, never from what a dispatch happened to see — so a
+run that is skipped, interrupted by a shutdown, or lost to a crash costs
+nothing.
 
 ### The decimals cross-check, described accurately
 
@@ -1551,12 +1567,12 @@ absent-versus-null distinction are the two things a fake could not tell us. The
 reader runs against a stubbed node, because what it encodes is viem's behaviour
 rather than a server's.
 
-**Seventeen mutants across the reader and the processor, sixteen killed.** The
+**Mutants across the reader and the processor, all but one killed.** The
 survivor is `{ size: 32 }` on the `bytes32` decode, which the mutation shows is
 subsumed by the control-character strip — kept for intent and documented as
-such, exactly as `argMaxIf` is. Two of the kills carry the design: deleting the
-sweep must redden the bootstrap case, and returning `retry` instead of `ok()`
-must not be allowed to stall the loop.
+such, exactly as `argMaxIf` is. The kills that carry the design: awaiting the
+run inside `onBlockRange`, returning `retry` instead of `ok()`, dropping the
+in-flight guard, and dropping the back-off.
 
 What none of that covers is the two databases wired to each other over a real
 node, and that is `enrich:tokens` against a real RPC: all seventeen underlyings
@@ -1731,7 +1747,7 @@ Deliberate, in rough order of what comes next.
   signal worth publishing rather than a second USD number — the protocol's own oracle is what drives
   liquidation, and how far it has drifted from the market is what makes a health factor of 1.05 mean
   two different things.
-- **Re-reading metadata that has changed.** The sweep closes absent rows and never revisits wrong
+- **Re-reading metadata that has changed.** Enrichment closes absent rows and never revisits wrong
   ones, so a proxy upgrade that renames a token needs `enrich:tokens --force`. Automating it wants a
   reason to re-read rather than a timer, and nothing on chain announces one.
 - **A single position, by reserve.** `PositionStore` has exactly one method, and the endpoint over it

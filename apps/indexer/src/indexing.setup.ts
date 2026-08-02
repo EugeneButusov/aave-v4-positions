@@ -101,16 +101,18 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
   });
 
   /**
-   * Token metadata, filled in automatically. Registered last: its fast path
-   * reads what the Hub processor wrote earlier in the same dispatch, and its
-   * sweep is what keeps that dependency from being load-bearing.
+   * Token metadata, filled in automatically.
+   *
+   * Registered last, but nothing depends on that: it starts its work in the
+   * background and returns before doing any of it, so no ledger ever waits on
+   * an ERC-20 read.
    */
   const enrichment = TokenEnrichmentModule.forRootAsync({
     imports: [ConfigModule],
     inject: [ConfigService],
     useFactory: (config: ConfigService<Env, true>) => ({
       chainId: config.get('CHAIN_ID', { infer: true }),
-      sweepIntervalMs: config.get('TOKEN_ENRICHMENT_SWEEP_MS', { infer: true }),
+      retryDelayMs: config.get('TOKEN_ENRICHMENT_RETRY_MS', { infer: true }),
       concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
       rpc: {
         rpcUrls: config.get('RPC_URLS', { infer: true }),
