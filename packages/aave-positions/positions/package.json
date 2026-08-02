@@ -30,7 +30,8 @@
     "@packages/postgres": "workspace:*",
     "postgres": "catalog:",
     "reflect-metadata": "catalog:",
-    "rxjs": "catalog:"
+    "rxjs": "catalog:",
+    "viem": "catalog:"
   },
   "devDependencies": {
     "@aave-positions/events": "workspace:*",

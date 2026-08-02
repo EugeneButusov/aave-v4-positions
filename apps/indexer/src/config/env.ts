@@ -152,6 +152,28 @@ export const envSchema = z.object({
     .default(CORE_HUB_ADDRESS)
     .transform((value) => value.toLowerCase()),
 
+  /**
+   * How often enrichment sweeps the full listed-versus-stored token sets.
+   *
+   * The *backstop*, not the mechanism: a new listing is picked up in the
+   * dispatch that ingests it, and this is what covers bootstrap — every
+   * `AddAsset` on mainnet fired at block 24,722,784, far behind any live
+   * cursor — plus anything the fast path missed. Five minutes because being
+   * five minutes late with a token symbol costs nothing, and the sweep reads
+   * both databases.
+   */
+  TOKEN_ENRICHMENT_SWEEP_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(300_000),
+
+  /**
+   * How many tokens are read from the chain at once.
+   *
+   * Four, not unbounded. A public endpoint rate-limits a burst long before
+   * seventeen calls become slow, and the transport is configured with
+   * `retryCount: 0`, so one 429 under an unbounded fan-out fails the whole
+   * sweep.
+   */
+  TOKEN_ENRICHMENT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+
   ...clickHouseEnv,
   ...postgresEnv,
 });

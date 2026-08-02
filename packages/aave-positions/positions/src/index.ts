@@ -38,6 +38,19 @@ export {
 } from './valuation/valuation';
 
 export {
+  TOKEN_ENRICHMENT_OPTIONS,
+  TokenEnrichmentProcessor,
+  type TokenEnrichmentOptions,
+} from './enrichment/token-enrichment.processor';
+
+export {
+  TOKEN_ENRICHMENT_PROCESSOR,
+  TokenEnrichmentModule,
+  type EnrichmentAsyncOptions,
+  type EnrichmentOptions,
+} from './enrichment/token-enrichment.module';
+
+export {
   PositionsModule,
   type PositionsAsyncOptions,
   type PositionsOptions,

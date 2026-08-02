@@ -6,6 +6,7 @@ import {
   SPOKE_EVENT_PROCESSOR,
   SpokeEventsModule,
 } from '@aave-positions/events';
+import { TOKEN_ENRICHMENT_PROCESSOR, TokenEnrichmentModule } from '@aave-positions/positions';
 import {
   BLOCK_HEADER_STORE,
   HashChainReorgDetector,
@@ -99,8 +100,34 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     }),
   });
 
+  /**
+   * Token metadata, filled in automatically. Registered last: its fast path
+   * reads what the Hub processor wrote earlier in the same dispatch, and its
+   * sweep is what keeps that dependency from being load-bearing.
+   */
+  const enrichment = TokenEnrichmentModule.forRootAsync({
+    imports: [ConfigModule],
+    inject: [ConfigService],
+    useFactory: (config: ConfigService<Env, true>) => ({
+      chainId: config.get('CHAIN_ID', { infer: true }),
+      sweepIntervalMs: config.get('TOKEN_ENRICHMENT_SWEEP_MS', { infer: true }),
+      concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
+      rpc: {
+        rpcUrls: config.get('RPC_URLS', { infer: true }),
+        rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),
+      },
+      clickhouse: {
+        url: config.get('CLICKHOUSE_URL', { infer: true }),
+        database: config.get('CLICKHOUSE_DATABASE', { infer: true }),
+        username: config.get('CLICKHOUSE_USER', { infer: true }),
+        password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
+      },
+      postgres: { url: config.get('POSTGRES_URL', { infer: true }) },
+    }),
+  });
+
   return IndexingModule.forRootAsync({
-    imports: [ConfigModule, spokeEvents, hubEvents, postgres],
+    imports: [ConfigModule, spokeEvents, hubEvents, enrichment, postgres],
     // Re-exported so the readiness probes both resolve through this module,
     // against the clients it already built. Only one of the two event modules
     // can be re-exported: both export ClickHouseHealthIndicator, and two
@@ -121,7 +148,7 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
       // where it is how a pod boots its probes without indexing.
       autoStart: overrides.autoStart ?? config.get('INDEXER_AUTOSTART', { infer: true }),
     }),
-    processors: [SPOKE_EVENT_PROCESSOR, HUB_EVENT_PROCESSOR],
+    processors: [SPOKE_EVENT_PROCESSOR, HUB_EVENT_PROCESSOR, TOKEN_ENRICHMENT_PROCESSOR],
     reorgDetector: HashChainReorgDetector,
     cursorStore: PostgresCursorStore,
     providers: [

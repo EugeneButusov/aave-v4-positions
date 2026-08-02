@@ -278,6 +278,9 @@ importers:
       rxjs:
         specifier: 'catalog:'
         version: 7.8.2
+      viem:
+        specifier: 'catalog:'
+        version: 2.55.10(typescript@7.0.2)(zod@4.4.3)
     devDependencies:
       '@aave-positions/events':
         specifier: workspace:*
