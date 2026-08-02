@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { FakeChainClient, hashOf } from '../test-support/fake-chain-client';
 import { RecordingCursorStore } from '../test-support/recording-cursor-store';
@@ -7,6 +7,15 @@ import { ScriptedReorgDetector } from '../test-support/scripted-reorg-detector';
 import { failed, retry } from './processors/block-processor';
 import type { Cursor } from './cursor/cursor-store';
 import { IndexerService } from './indexer.service';
+import * as otel from '@opentelemetry/api';
+import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
+import {
+  BasicTracerProvider,
+  InMemorySpanExporter,
+  SimpleSpanProcessor,
+} from '@opentelemetry/sdk-trace-base';
+
+import { IndexerMetrics } from './observability/indexer-metrics';
 import { IndexerStatus } from './observability/indexer-status';
 import type { IndexingOptions } from './indexing.options';
 
@@ -61,6 +70,7 @@ function harness(
     detector,
     store,
     status,
+    new IndexerMetrics(status, { ...BASE_OPTIONS, ...setup.options }),
     processors,
   );
 
@@ -665,5 +675,99 @@ describe('IndexerService — loop guards', () => {
     const finished = processors[0]?.calls.length ?? 0;
     // Either it drained before the signal fired, or the calls in flight saw it.
     expect(aborted || finished > 0).toBe(true);
+  });
+});
+
+describe('what the loop reports', () => {
+  const exporter = new InMemorySpanExporter();
+
+  beforeAll(() => {
+    // Without this the spans below are three unparented roots. `startActiveSpan`
+    // only survives an `await` when a context manager is installed, which
+    // `NodeTracerProvider.register()` does in the running services and a bare
+    // `BasicTracerProvider` does not — so a spec that omitted it would assert
+    // the nesting away rather than prove it.
+    otel.context.setGlobalContextManager(new AsyncLocalStorageContextManager().enable());
+    otel.trace.setGlobalTracerProvider(
+      new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] }),
+    );
+  });
+
+  afterEach(() => exporter.reset());
+  afterAll(() => {
+    otel.trace.disable();
+    otel.context.disable();
+  });
+
+  /** `[name, parentName | null]` for every finished span, root first. */
+  function tree(): [string, string | null][] {
+    const spans = exporter.getFinishedSpans();
+    const byId = new Map(spans.map((s) => [s.spanContext().spanId, s.name]));
+    return spans.map((s) => [
+      s.name,
+      s.parentSpanContext === undefined ? null : (byId.get(s.parentSpanContext.spanId) ?? null),
+    ]);
+  }
+
+  it('nests each processor under the iteration that dispatched it', async () => {
+    const { service } = harness({ processorCount: 2, options: { startBlock: 100 } });
+
+    await service.runOnce();
+
+    // The nesting is the point: without an active context the processor spans
+    // would be three unrelated roots, and nothing would say which iteration
+    // a slow processor belonged to.
+    expect(tree()).toEqual([
+      ['processor.p1', 'indexer.iterate'],
+      ['processor.p2', 'indexer.iterate'],
+      ['indexer.iterate', null],
+    ]);
+  });
+
+  it('marks a retrying iteration an error, with the reason', async () => {
+    const stopper = new RecordingProcessor('stopper', []);
+    stopper.onBlockRange = () => retry('provider said no');
+    const { service } = harness({ processors: [stopper], options: { startBlock: 100 } });
+
+    await service.runOnce();
+
+    const iteration = exporter.getFinishedSpans().find((s) => s.name === 'indexer.iterate');
+    // A retry is routine to the loop and an error to a trace backend. That
+    // second framing is what makes failing iterations filterable out of
+    // thousands of healthy ones.
+    expect(iteration?.status.code).toBe(otel.SpanStatusCode.ERROR);
+    expect(iteration?.status.message).toContain('provider said no');
+    expect(iteration?.attributes['indexer.outcome']).toBe('retry');
+  });
+
+  it('emits no span at all once the loop is terminally failed', async () => {
+    const { service, status } = harness();
+    status.failed('chain id mismatch');
+
+    await service.runOnce();
+
+    // A stopped loop answers "still stopped" every poll interval. Tracing that
+    // fills a backend with nothing.
+    expect(exporter.getFinishedSpans()).toHaveLength(0);
+  });
+
+  it('records a reorg as an event on the iteration, with its depth', async () => {
+    const { service } = harness({
+      detector: new ScriptedReorgDetector().queue({
+        type: 'reorg',
+        firstInvalidBlock: 98,
+        lastInvalidBlock: 100,
+        lastValidHash: hashOf('a', 97),
+      }),
+      options: { startBlock: 100 },
+    });
+
+    await service.runOnce();
+
+    const iteration = exporter.getFinishedSpans().find((s) => s.name === 'indexer.iterate');
+    const reorg = iteration?.events.find((e) => e.name === 'reorg');
+    // An event and not a span of its own: a fork is something that happened
+    // inside an iteration, not a phase beside it.
+    expect(reorg?.attributes).toMatchObject({ depth: 3, phase: 'inspect' });
   });
 });

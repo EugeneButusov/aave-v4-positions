@@ -27,10 +27,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@packages/ops": "workspace:*",
-    "@packages/postgres": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
+    "@opentelemetry/api": "catalog:",
+    "@packages/ops": "workspace:*",
+    "@packages/postgres": "workspace:*",
     "postgres": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
@@ -38,6 +39,9 @@
   },
   "devDependencies": {
     "@nestjs/testing": "catalog:",
+    "@opentelemetry/context-async-hooks": "catalog:",
+    "@opentelemetry/sdk-metrics": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:",
     "@packages/migrations": "workspace:*"
   }
 }

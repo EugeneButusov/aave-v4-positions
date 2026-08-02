@@ -84,7 +84,12 @@ export class IndexerStatus {
    */
   observeHead(observed: number): number {
     if (observed < this.head) {
-      this.logger.warn(`head regressed ${this.head} -> ${observed}; clamping to the high mark`);
+      // A head going backwards *is* a failover: two providers disagreeing
+      // about the tip is the only thing that produces it.
+      this.logger.warn(
+        { previousHead: this.head, observedHead: observed },
+        'head regressed; clamping to the high mark',
+      );
     }
     this.head = Math.max(this.head, observed);
     return this.head;

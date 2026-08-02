@@ -6,6 +6,7 @@ import {
   type OnApplicationBootstrap,
   type OnApplicationShutdown,
 } from '@nestjs/common';
+import { SpanStatusCode, trace } from '@opentelemetry/api';
 
 import { CHAIN_CLIENT, type BlockHeader, type ChainClient, type Hash } from '../chain/chain-client';
 import {
@@ -23,8 +24,16 @@ import {
   SHUTDOWN_DRAIN_MS,
   type IndexingOptions,
 } from './indexing.options';
+import { IndexerMetrics } from './observability/indexer-metrics';
 import { REORG_DETECTOR, type ReorgDetector } from './reorg/reorg-detector';
 import { sleepUntil } from '../sleep';
+
+/**
+ * Resolved per call rather than held, so a provider registered after this
+ * module loaded is still picked up. With no SDK registered it is the API's
+ * no-op: one allocation per span and no export.
+ */
+const tracer = (): ReturnType<typeof trace.getTracer> => trace.getTracer('@packages/indexing');
 
 /**
  * What one iteration accomplished. Drives both the backoff and, through
@@ -77,6 +86,7 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     @Inject(REORG_DETECTOR) private readonly detector: ReorgDetector,
     @Inject(CURSOR_STORE) private readonly cursorStore: CursorStore,
     private readonly status: IndexerStatus,
+    private readonly metrics: IndexerMetrics,
     @Optional()
     @Inject(BLOCK_PROCESSORS)
     private readonly processors: BlockProcessor[] = [],
@@ -111,12 +121,39 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
    * `failed` is terminal here rather than only in {@link run}, so the state is
    * correct however the service is driven and a caller cannot resurrect a
    * stopped indexer by calling again.
+   *
+   * The span wraps {@link iterate} and not this whole method, so the early
+   * return below stays outside it: a stopped loop answering "still stopped"
+   * every four seconds is not an iteration, and emitting a span for each one
+   * fills a trace backend with nothing.
    */
   async runOnce(): Promise<IterationResult> {
     if (this.status.isFailed) {
       return { kind: 'failed', reason: this.status.failureReason ?? 'indexing stopped' };
     }
-    return this.record(await this.iterate());
+
+    return tracer().startActiveSpan('indexer.iterate', async (span) => {
+      const started = performance.now();
+      try {
+        const result = this.record(await this.iterate());
+        const elapsed = performance.now() - started;
+
+        span.setAttribute('indexer.outcome', result.kind);
+        if (result.kind === 'progressed')
+          span.setAttribute('indexer.cursor.block', result.cursorAt);
+        if (result.kind === 'retry' || result.kind === 'failed') {
+          // A retry is routine to the loop and an error to a trace backend, and
+          // the second framing is the useful one: it is what makes the failing
+          // iterations filterable out of thousands of healthy ones.
+          span.setStatus({ code: SpanStatusCode.ERROR, message: result.reason });
+        }
+
+        this.metrics.iteration(result, elapsed);
+        return result;
+      } finally {
+        span.end();
+      }
+    });
   }
 
   /** Translates what happened into a state transition. */
@@ -211,9 +248,7 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       // The chain forked while the process was down. Nothing else in the design
       // would notice: the detector's window starts empty, so without this the
       // loop would carry on from the cursor onto a branch that lost.
-      this.logger.warn(
-        `reorg across restart: blocks ${verdict.firstInvalidBlock}..${verdict.lastInvalidBlock} are stale`,
-      );
+      this.recordReorg(verdict.firstInvalidBlock, verdict.lastInvalidBlock, 'bootstrap');
       const rewound = await this.applyReorg(
         verdict.firstInvalidBlock,
         verdict.lastInvalidBlock,
@@ -228,9 +263,9 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     this.cursor = stored;
     this.bootstrapped = true;
     if (stored) {
-      this.logger.log(`resuming from block ${stored.lastBlock}`);
+      this.logger.log({ lastBlock: stored.lastBlock }, 'resuming from the stored cursor');
     } else {
-      this.logger.log(`no stored cursor; starting at block ${this.options.startBlock}`);
+      this.logger.log({ startBlock: this.options.startBlock }, 'no stored cursor; starting fresh');
     }
     return null;
   }
@@ -255,11 +290,21 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     const forked = await this.verifyAncestry(header);
     if (forked) return forked;
 
-    const failure = await this.dispatch((p, signal) => p.onBlockRange(from, to, signal));
+    const failure = await this.dispatch((p, signal) =>
+      this.observed(p, 'block-range', from, to, () => p.onBlockRange(from, to, signal)),
+    );
     if (failure) return failure;
 
     await this.detector.commit(header);
     await this.saveCursor(header.number, header.hash);
+
+    this.metrics.indexed(to - from + 1);
+    // A `debug` line per range, so "is it working" has a log answer and not only
+    // a metric one. Deliberately not `info`: at one iteration every few seconds
+    // a healthy indexer would otherwise be the whole log stream. Before this,
+    // an empty range was completely silent — the loop logged nothing and the
+    // event processors log only when they store something.
+    this.logger.debug({ from, to, blocks: to - from + 1 }, 'range indexed');
 
     return { kind: 'progressed', cursorAt: to };
   }
@@ -281,8 +326,11 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     }
 
     if (verdict.type === 'reorg') {
-      this.logger.warn(
-        `reorg at block ${header.number}: blocks ${verdict.firstInvalidBlock}..${verdict.lastInvalidBlock} are stale`,
+      this.recordReorg(
+        verdict.firstInvalidBlock,
+        verdict.lastInvalidBlock,
+        'inspect',
+        header.number,
       );
       return this.applyReorg(
         verdict.firstInvalidBlock,
@@ -311,7 +359,9 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     lastValidHash: Hash,
   ): Promise<IterationResult> {
     const failure = await this.dispatch((p, signal) =>
-      p.onReorg(firstInvalidBlock, lastInvalidBlock, signal),
+      this.observed(p, 'reorg', firstInvalidBlock, lastInvalidBlock, () =>
+        p.onReorg(firstInvalidBlock, lastInvalidBlock, signal),
+      ),
     );
     if (failure) return failure;
 
@@ -352,9 +402,88 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
     return null;
   }
 
+  /**
+   * Wraps one processor's turn in a span and times it.
+   *
+   * Here and not in {@link dispatchToProcessors}, even though that is where the
+   * loop over processors lives. The `invoke` callback is already called once per
+   * processor, so this is per-processor scope without touching a function the
+   * backfill runner shares — and `dispatch.ts` carries a plan to parallelise
+   * that a threaded-through callback would fight.
+   */
+  private async observed(
+    processor: BlockProcessor,
+    operation: 'block-range' | 'reorg',
+    from: number,
+    to: number,
+    invoke: () => ProcessorOutcome | Promise<ProcessorOutcome>,
+  ): Promise<ProcessorOutcome> {
+    return tracer().startActiveSpan(
+      `processor.${processor.name}`,
+      { attributes: { operation, 'block.from': from, 'block.to': to } },
+      async (span) => {
+        const started = performance.now();
+        let status = 'threw';
+        try {
+          const outcome = await invoke();
+          status = outcome.status;
+          if (outcome.status !== 'ok') {
+            span.setStatus({ code: SpanStatusCode.ERROR, message: outcome.reason });
+          }
+          return outcome;
+        } finally {
+          // Recorded in a `finally` so a processor that throws is still timed
+          // and still counted. A thrown error becomes a retry one level up, and
+          // it would be the one outcome missing from the histogram otherwise.
+          this.metrics.processor(processor.name, operation, status, performance.now() - started);
+          span.setAttribute('outcome', status);
+          span.end();
+        }
+      },
+    );
+  }
+
+  /**
+   * A reorg, said three ways at once.
+   *
+   * As a **span event** rather than a span of its own, because a fork is
+   * something that happened *inside* an iteration rather than a phase beside
+   * it — and a span whose parent is the thing that matters adds a level to
+   * every trace to say so.
+   *
+   * The histogram's own count is how often, so there is no separate reorg
+   * counter; its values are how deep, which is the number worth watching
+   * against `FINALITY_DEPTH`.
+   */
+  private recordReorg(
+    firstInvalidBlock: number,
+    lastInvalidBlock: number,
+    phase: 'bootstrap' | 'inspect',
+    atBlock?: number,
+  ): void {
+    const depth = lastInvalidBlock - firstInvalidBlock + 1;
+
+    this.metrics.reorg(depth, phase);
+    trace.getActiveSpan()?.addEvent('reorg', { depth, phase, firstInvalidBlock, lastInvalidBlock });
+    this.logger.warn(
+      {
+        firstInvalidBlock,
+        lastInvalidBlock,
+        depth,
+        phase,
+        ...(atBlock !== undefined && { atBlock }),
+      },
+      phase === 'bootstrap' ? 'reorg across restart; blocks are stale' : 'reorg; blocks are stale',
+    );
+  }
+
   private narrowRange(processorName: string): void {
     this.effectiveMaxRange = Math.max(1, Math.floor(this.effectiveMaxRange / 2));
-    this.logger.warn(`${processorName} asked to narrow; range size now ${this.effectiveMaxRange}`);
+    this.metrics.narrowedTo(this.effectiveMaxRange);
+    this.logger.warn(
+      { processor: processorName, rangeSize: this.effectiveMaxRange },
+      'processor asked to narrow the range',
+    );
   }
 
   /**
@@ -371,7 +500,8 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
 
   private async run(): Promise<void> {
     this.logger.log(
-      `indexing chain ${this.options.chainId} via ${this.options.rpcUrls.length} provider(s)`,
+      { chainId: this.options.chainId, providers: this.options.rpcUrls.length },
+      'indexing started',
     );
 
     while (!this.abort.signal.aborted) {
@@ -383,13 +513,14 @@ export class IndexerService implements OnApplicationBootstrap, OnApplicationShut
       if (result.kind === 'failed') {
         // Terminal by design. Nothing here resets it — a restart does, which is
         // the same posture the rest of the service takes towards bad config.
-        this.logger.fatal(`indexing stopped: ${result.reason}`);
+        this.logger.fatal({ reason: result.reason }, 'indexing stopped');
         return;
       }
 
       if (result.kind === 'retry') {
         this.logger.warn(
-          `iteration failed (attempt ${this.status.consecutiveFailures}): ${result.reason}`,
+          { attempt: this.status.consecutiveFailures, reason: result.reason },
+          'iteration failed',
         );
       }
 
