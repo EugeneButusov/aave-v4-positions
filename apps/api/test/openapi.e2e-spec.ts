@@ -6,6 +6,7 @@ import type { App } from 'supertest/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
+import { httpSetup } from '../src/http.setup';
 import { API_CONTRACT_VERSION, buildOpenApiDocument, setupOpenApi } from '../src/openapi/openapi';
 
 const DOCS_PATH = 'docs';
@@ -31,7 +32,7 @@ describe('openapi', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
 
     app = moduleRef.createNestApplication({ logger: false });
-    app.setGlobalPrefix('api', { exclude: ['health/live', 'health/ready'] });
+    httpSetup(app, { globalPrefix: 'api' });
     setupOpenApi(app, { path: DOCS_PATH });
     await app.init();
 
