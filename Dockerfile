@@ -22,6 +22,7 @@ COPY packages/migrations/package.json ./packages/migrations/
 COPY packages/ops/package.json ./packages/ops/
 COPY packages/postgres/package.json ./packages/postgres/
 COPY packages/prices/package.json ./packages/prices/
+COPY packages/telemetry/package.json ./packages/telemetry/
 COPY packages/token-metadata/package.json ./packages/token-metadata/
 
 # --ignore-scripts skips the `prepare` hook, which installs git hooks: there is
@@ -50,4 +51,16 @@ USER node
 
 # Exec form, so the process is PID 1 and receives SIGTERM directly — a shell
 # wrapper would swallow it and the graceful drain would never run.
-CMD ["node", "--enable-source-maps", "dist/main.js"]
+#
+# `--require` and not `NODE_OPTIONS`. NODE_OPTIONS would be tidier — one line,
+# covering `docker compose run indexer node dist/backfill.js` as well — but the
+# compose healthchecks run `node -e "fetch('…/health/ready')"` every ten
+# seconds, and under NODE_OPTIONS each of those would boot a full SDK, open
+# exporters and register instrumentations six times a minute per container, for
+# a process that lives about fifty milliseconds. That is a trap laid for
+# whoever next edits the healthcheck. Per-entrypoint `--require` cannot do it.
+#
+# Resolved through `/app/node_modules`, which is where `pnpm deploy` puts the
+# workspace packages. `OTEL_SDK_DISABLED=true` makes it a no-op without a
+# rebuild, which is what the overhead A/B in the README relies on.
+CMD ["node", "--require", "@packages/telemetry/start", "--enable-source-maps", "dist/main.js"]

@@ -26,6 +26,7 @@
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
     "@nestjs/swagger": "catalog:",
+    "@opentelemetry/api": "catalog:",
     "nestjs-pino": "catalog:",
     "pino-http": "catalog:",
     "reflect-metadata": "catalog:",
@@ -33,6 +34,7 @@
   },
   "devDependencies": {
     "@nestjs/testing": "catalog:",
+    "@opentelemetry/sdk-trace-base": "catalog:",
     "pino-pretty": "^13.1.3"
   }
 }
