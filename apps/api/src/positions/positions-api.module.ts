@@ -1,6 +1,7 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PositionsModule } from '@aave-positions/positions';
+import { PostgresReservePriceStore, RESERVE_PRICE_STORE } from '@packages/prices';
 import { PostgresTokenMetadataStore, TOKEN_METADATA_STORE } from '@packages/token-metadata';
 import { PostgresSyncStatusStore, SYNC_STATUS_STORE } from '@packages/indexing';
 import { PostgresModule } from '@packages/postgres';
@@ -8,7 +9,11 @@ import { PostgresModule } from '@packages/postgres';
 import type { Env } from '../config/env';
 import { PositionCursors } from './position-cursors';
 import { PositionsController } from './positions.controller';
-import { PositionsService, STALE_AFTER_SECONDS } from './positions.service';
+import {
+  PRICE_STALE_AFTER_SECONDS,
+  PositionsService,
+  STALE_AFTER_SECONDS,
+} from './positions.service';
 
 /**
  * The positions endpoint and the two databases behind it.
@@ -61,6 +66,7 @@ export class PositionsApiModule {
         PositionsService,
         { provide: SYNC_STATUS_STORE, useClass: PostgresSyncStatusStore },
         { provide: TOKEN_METADATA_STORE, useClass: PostgresTokenMetadataStore },
+        { provide: RESERVE_PRICE_STORE, useClass: PostgresReservePriceStore },
         {
           // The key that signs a page token is this service's configuration,
           // and the store deals in page keys precisely so it never sees one.
@@ -73,6 +79,15 @@ export class PositionsApiModule {
           provide: STALE_AFTER_SECONDS,
           useFactory: (config: ConfigService<Env, true>): number =>
             config.get('API_SYNC_STALE_AFTER_SECONDS', { infer: true }),
+          inject: [ConfigService],
+        },
+        {
+          // A separate threshold, not the same number reused. The two clocks
+          // run at different rates — the indexer advances every block, the
+          // oracle is read once a minute — so one bound cannot describe both.
+          provide: PRICE_STALE_AFTER_SECONDS,
+          useFactory: (config: ConfigService<Env, true>): number =>
+            config.get('API_PRICE_STALE_AFTER_SECONDS', { infer: true }),
           inject: [ConfigService],
         },
       ],
