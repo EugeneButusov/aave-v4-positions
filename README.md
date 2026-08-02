@@ -789,7 +789,7 @@ rebalance.
 both contracts with different signatures (§4.4). The position projections filter on `event_name`
 alone — they have no address predicate and cannot get one, since the Spoke address is configuration
 and a migration does not know it. So a Hub `ReportDeficit` in `spoke_events` fires a view that
-reaches for a `user` the Hub form does not have. Measured, in `ledger-separation.spec.ts`:
+reaches for a `user` the Hub form does not have. Measured, once, while deciding this:
 
 | after inserting a Hub `ReportDeficit` into `spoke_events` |           |
 | --------------------------------------------------------- | --------- |
