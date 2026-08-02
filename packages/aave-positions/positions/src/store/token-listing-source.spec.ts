@@ -57,6 +57,40 @@ describe('ClickHouseTokenListings', () => {
     expect(await listings.all(CHAIN_ID)).toEqual([USDC]);
   });
 
+  it('answers from the projection rather than scanning the column', async () => {
+    await events.append([
+      addAsset({ block: 24_722_784 }, USDC, 6, '1'),
+      ...Array.from({ length: 200 }, (_, index) =>
+        updateAsset({ block: 24_730_000 + index }, undefined, undefined, undefined, '1'),
+      ),
+    ]);
+
+    await listings.all(CHAIN_ID);
+    await client.command({ query: 'SYSTEM FLUSH LOGS' });
+
+    // `DISTINCT` over a column outside the sorting key is a full scan, and its
+    // cost grows with `UpdateAsset` history that has no bearing on the answer.
+    // The `listed_tokens` projection on `hub_asset_state` is what stops that,
+    // and it is chosen by the optimizer — so nothing in the query says it is
+    // being used, and nothing would say if it stopped.
+    const used = await client.query({
+      query: `
+        SELECT arrayStringConcat(projections, ',') AS used
+        FROM system.query_log
+        WHERE type = 'QueryFinish'
+          AND current_database = {database:String}
+          AND query LIKE 'SELECT DISTINCT underlying%'
+        ORDER BY event_time DESC
+        LIMIT 1
+      `,
+      query_params: { database: DATABASE },
+      format: 'JSONEachRow',
+    });
+
+    const [row] = await used.json<{ used: string }>();
+    expect(row?.used).toContain('listed_tokens');
+  });
+
   it('finds nothing on a chain it has never indexed', async () => {
     await events.append([addAsset({ block: 24_722_784 }, USDC, 6, '1')]);
 

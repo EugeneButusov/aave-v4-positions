@@ -12,30 +12,23 @@ export interface TokenListings {
 export const TOKEN_LISTINGS = Symbol('TOKEN_LISTINGS');
 
 /**
- * Reads listed token addresses out of the Hub asset fold.
+ * Reads the set of listed ERC-20s.
  *
- * **This looks like a full scan and is not, and the difference is worth knowing
- * before anyone tries to fix it.** `EXPLAIN indexes = 1` reports
- * `Parts: 2/2, Granules: 5/5` — every granule — because `underlying` is not in
- * the sorting key and `chain_id` prunes nothing on a single-chain deployment.
- * That reads like O(`UpdateAsset` history), which grows about 1.5 million rows
- * a year.
+ * **The obvious query, made cheap by the table rather than by rewriting it.**
+ * `DISTINCT` over `underlying` is a full column scan on its own — the column is
+ * not in the sorting key, and `chain_id` prunes nothing on a single-chain
+ * deployment — so at 450,017 rows it read `Parts: 4/4, Granules: 58/58`, and
+ * the cost grew with `UpdateAsset` history at about 1.5 million rows a year.
  *
- * Measured, it is not. `underlying` is NULL on every row except the handful of
- * `AddAsset`s, so ClickHouse stores the column sparsely and skips the NULL runs
- * rather than materialising them. At 3,029,631 rows — two years of history —
- * this query reads **34 rows and 1.83 KiB in 3 ms**, the same as it does at
- * 29,631. Granules *examined* is not data *read*.
+ * `hub_asset_state` carries a `listed_tokens` projection for exactly this, so
+ * the same text now reads **17 rows and 935 bytes**, `Granules: 1/58`, with
+ * `system.query_log.projections` naming it. A projection is chosen by the
+ * optimizer, which is why nothing here had to change and why nothing here
+ * should: writing the query differently is how it stops matching.
  *
- * A purpose-built `(chain_id, underlying)` table fed by a materialized view was
- * built and measured against this: 17 rows, 816 bytes, 1 ms. It was reverted.
- * Two milliseconds does not buy a table, a view, a migration and a replay step —
- * and the replay is the real cost, because a materialized view does not see rows
- * written before it existed.
- *
- * What would change the answer is `underlying` ceasing to be sparse, which needs
- * a Hub listing assets in the same order of magnitude as it emits checkpoints.
- * At 17 assets against 434 `UpdateAsset` per 10,000 blocks, that is not close.
+ * Called rarely in any case — once at start, and after a run that left a gap
+ * open. The steady state is not a query at all: newly listed tokens are pushed
+ * by the processor that ingests the `AddAsset`.
  */
 @Injectable()
 export class ClickHouseTokenListings implements TokenListings {
@@ -43,17 +36,16 @@ export class ClickHouseTokenListings implements TokenListings {
 
   async all(chainId: number): Promise<readonly Address[]> {
     const result = await this.client.query({
-      // The event-grain table, not `hub_assets_current`. That view collapses and
-      // `argMax`es all of `hub_asset_state` to produce 17 rows; discovery needs
-      // only the set of addresses ever listed, and over-fetching a token whose
-      // listing was later retracted costs one wasted ERC-20 read.
+      // Read at event grain, not through `hub_assets_current`: that view
+      // collapses and `argMax`es the whole table to produce 17 rows, where this
+      // wants only the set of addresses ever listed.
       //
       // **No `sign > 0`.** This is an append-only ledger, so a retraction is a
       // second row and the original `sign = +1` survives until a merge — the
       // filter would look like it excluded reorged listings without doing so.
-      // Being lax is deliberate, and a spec pins it: over-fetching a rolled-back
-      // token is a wasted call, while missing one leaves a position permanently
-      // unlabelled.
+      // Being lax is deliberate, and a spec pins it: over-fetching a
+      // rolled-back token is one wasted ERC-20 read, while missing one leaves a
+      // position permanently unlabelled.
       query: `
         SELECT DISTINCT underlying
         FROM hub_asset_state
