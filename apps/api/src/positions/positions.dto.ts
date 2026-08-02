@@ -327,14 +327,16 @@ export class PositionPageDto {
   sync!: SyncDto;
 
   @ApiProperty({
-    example: 1_785_000_000,
+    example: '2026-08-02T11:04:17.000Z',
     description:
-      'Unix seconds every amount on this page was computed at — one instant for the whole ' +
-      'page, so two positions in it cannot disagree about the time. Defaults to now, which ' +
-      'is the same choice the chain makes. Distinct from `sync.lastBlock`: the shares are as ' +
-      'far as the indexer has folded, the amounts are those shares valued at this instant.',
+      'When every amount on this page was computed — one instant for the whole page, so two ' +
+      'positions in it cannot disagree about the time. Defaults to now, which is the same ' +
+      'choice the chain makes. Distinct from `sync.lastBlock`: the shares are as far as the ' +
+      'indexer has folded, the amounts are those shares valued at this instant. ISO 8601, ' +
+      'matching `sync.updatedAt` and `pricing.updatedAt` — the `asOf` **query** parameter ' +
+      'that sets it is still Unix seconds, so round-tripping this value means converting it.',
   })
-  valuedAt!: number;
+  valuedAt!: string;
 
   @ApiProperty({
     type: PricingDto,

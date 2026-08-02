@@ -1410,7 +1410,7 @@ GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
   // How far the indexer has got, and how long ago it got there.
   "sync": { "lastBlock": 25652535, "lastBlockHash": "0x…", "ageSeconds": 7, "stale": false },
   // The instant the amounts below were computed at. A different clock from `sync`.
-  "valuedAt": 1785000000,
+  "valuedAt": "2026-07-25T17:20:00.000Z",
   // A third clock: how current the prices are. Null when nothing here is priced.
   "pricing": { "updatedAt": "2026-08-02T11:04:17.000Z", "ageSeconds": 41, "stale": false },
   "items": [
@@ -1459,6 +1459,14 @@ makes two identical requests return identical numbers. It is bounded at both end
 check**: below the Spoke's genesis nothing exists to value, and above 2100 the caller sent
 milliseconds — unbounded, that would extrapolate the interest index tens of thousands of years and
 return a page of enormous numbers with nothing to say they are wrong.
+
+**All three timestamps go out as ISO 8601**, so `valuedAt` reads like `sync.updatedAt` and
+`pricing.updatedAt` rather than being the one field in the response that is Unix seconds. It is still
+seconds inside — that is what the interest arithmetic extrapolates with — and converted at the
+mapping boundary, where the rest of the wire contract is already decided. The **`asOf` query
+parameter stays Unix seconds**, bounded as above, so round-tripping a `valuedAt` back into a request
+means converting it; the bounds are a units check and an ISO string cannot fail one the way a
+millisecond timestamp can.
 
 **`asset` and `value` are null together**, and only when the join has nothing to offer: a reserve the
 registry has not seen, or a Hub asset with no interest checkpoint yet. Null rather than zero, because

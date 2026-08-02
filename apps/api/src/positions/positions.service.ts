@@ -113,7 +113,10 @@ export class PositionsService {
 
     return {
       sync: toSync(sync, this.staleAfterSeconds),
-      valuedAt: page.valuedAt,
+      // Unix seconds inside — it is what the interest arithmetic extrapolates
+      // with — and ISO on the wire, where the other two clocks already are.
+      // Three timestamps in one response should not be read three ways.
+      valuedAt: new Date(page.valuedAt * 1_000).toISOString(),
       pricing: toPricing(used, this.priceStaleAfterSeconds),
       items: page.items.map((position) =>
         toPosition(position, labels, usdFor(position, priceFor(position, prices))),

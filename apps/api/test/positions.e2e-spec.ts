@@ -35,6 +35,8 @@ const HUB = '0xcca852bc40e560adc3b1cc58ca5b55638ce826c9';
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 const RAY = '1000000000000000000000000000';
 const VALUED_AT = 1_785_000_000;
+/** The same instant as it reaches the wire, beside the other two clocks. */
+const VALUED_AT_ISO = '2026-07-25T17:20:00.000Z';
 
 const PATH = `/api/v1/chains/${CHAIN_ID}/users/${ALICE}/positions`;
 
@@ -202,7 +204,7 @@ describe('positions (e2e)', () => {
           ageSeconds: 7,
           stale: false,
         },
-        valuedAt: VALUED_AT,
+        valuedAt: VALUED_AT_ISO,
         // Null with nothing priced, and it is a distinct field rather than an
         // absent one: a caller has to be able to tell "no prices behind this"
         // from "this deployment does not price".
@@ -339,6 +341,27 @@ describe('positions (e2e)', () => {
       // Amounts accrue every second with nothing emitted, so "now" is a choice.
       // Naming it is what makes two identical requests return identical numbers.
       expect(store.queries[0]?.asOf).toBe(1_785_000_123n);
+    });
+
+    it('reports all three clocks the same way', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [position()], next: null };
+      prices.prices.set(reserveKey(SPOKE, '7'), {
+        price: '99971505',
+        pricedAt: new Date('2026-08-02T11:04:17.000Z'),
+        ageSeconds: 41,
+      });
+
+      const res = await request(app.getHttpServer()).get(PATH).expect(200);
+
+      // `valuedAt` used to be Unix seconds while the two beside it were ISO,
+      // so one response carried two timestamp formats and nothing said which
+      // field used which. The number is still seconds inside the store — that
+      // is what the interest arithmetic extrapolates with — and converted at
+      // the boundary, which is where the rest of the mapping already happens.
+      const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+      expect(res.body.valuedAt).toMatch(iso);
+      expect(res.body.sync.updatedAt).toMatch(iso);
+      expect(res.body.pricing.updatedAt).toMatch(iso);
     });
 
     it('answers an unknown wallet with an empty list, not a 404', async () => {
