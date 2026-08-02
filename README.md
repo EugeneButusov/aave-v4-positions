@@ -697,6 +697,25 @@ asks to retry.
 | `SetUsingAsCollateral` | → `user_position_flags` |                                 |                      |
 | `AddReserve`           | no projection, above    |                                 |                      |
 
+**Why the four hot events are not one view with a `multiIf`.** They share a field _layout_ but not
+field _names_ — `suppliedShares`, `withdrawnShares`, `drawnShares` — so each branch would name a
+different JSON key. `multiIf` does not short-circuit, even with `short_circuit_function_evaluation`
+at its default `enable`: measured, a `Supply` row evaluates the `Withdraw` branch, hits a missing key
+and throws. Merging therefore forces `toInt256OrZero`, which silently writes `0` for a body it cannot
+read — the exact `JSONExtractInt` failure this design rejects.
+
+It is also slower, for the same reason. Every branch runs for every row, so one merged view does four
+JSON parses per column where a filtered view does one:
+
+|                           | median, 22,400 mixed events |
+| ------------------------- | --------------------------- |
+| four views, one per event | **42 ms**                   |
+| one merged view           | **64 ms**                   |
+| no projections at all     | 15 ms                       |
+
+Filtering on a `LowCardinality(String)` costs less than the extractions it skips, so the extra passes
+over the inserted block are cheaper than the work they avoid.
+
 **One `LiquidationCall` log affects up to three positions**, so it gets three views rather than one:
 the borrower's collateral (`−collateralSharesLiquidated` on `collateralReserveId`), the borrower's
 debt (`−drawnSharesLiquidated` on `debtReserveId`), and the liquidator's collateral
