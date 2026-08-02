@@ -90,7 +90,7 @@ describe('PostgresTokenMetadataStore', () => {
 
       // The row existing is what records that the question was put. Without it
       // a token with no `symbol()` is re-read on every sweep, forever.
-      expect(await store.known(CHAIN_ID)).toEqual(new Set([USDC]));
+      expect((await store.labels(CHAIN_ID)).has(USDC)).toBe(true);
     });
 
     it('lower-cases the address it is given', async () => {
@@ -99,7 +99,7 @@ describe('PostgresTokenMetadataStore', () => {
       // checksummed form would join against nothing, forever.
       await store.put([row({ token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48' })]);
 
-      expect(await store.known(CHAIN_ID)).toEqual(new Set([USDC]));
+      expect([...(await store.labels(CHAIN_ID)).keys()]).toEqual([USDC]);
     });
 
     it('writes nothing, and does not fail, for an empty batch', async () => {
@@ -115,7 +115,7 @@ describe('PostgresTokenMetadataStore', () => {
       // Absent rather than present-with-nulls: the caller has to tell "never
       // asked" from "asked, and it has no symbol", because one is a gap to
       // fill and the other is not.
-      const labels = await store.labels(CHAIN_ID, [USDC, WETH]);
+      const labels = await store.labels(CHAIN_ID);
       expect(labels.get(USDC)).toEqual({ symbol: 'USDC', name: 'USD Coin' });
       expect(labels.has(WETH)).toBe(false);
     });
@@ -123,22 +123,14 @@ describe('PostgresTokenMetadataStore', () => {
     it('reports a token that answered nothing as present with nulls', async () => {
       await store.put([row({ symbol: null, name: null })]);
 
-      const labels = await store.labels(CHAIN_ID, [USDC]);
+      const labels = await store.labels(CHAIN_ID);
       expect(labels.has(USDC)).toBe(true);
       expect(labels.get(USDC)).toEqual({ symbol: null, name: null });
     });
 
-    it('asks nothing of the database for an empty page', async () => {
-      // Left to the query, an empty list becomes `= ANY('{}')`, and earlier
-      // shapes of it are a syntax error. A page with no positions is ordinary.
-      expect(await store.labels(CHAIN_ID, [])).toEqual(new Map());
-    });
-
-    it('matches a checksummed address against the stored lower-case one', async () => {
-      await store.put([row()]);
-
-      const labels = await store.labels(CHAIN_ID, ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48']);
-      expect(labels.get(USDC)?.symbol).toBe('USDC');
+    it('is empty for a chain with nothing stored', async () => {
+      // The API asks on every request, including before enrichment has run.
+      expect(await store.labels(CHAIN_ID)).toEqual(new Map());
     });
   });
 
@@ -148,9 +140,9 @@ describe('PostgresTokenMetadataStore', () => {
 
       // The same contract address is deployed on more than one chain, so
       // `chain_id` is part of the key rather than a convenience.
-      expect((await store.labels(CHAIN_ID, [USDC])).get(USDC)?.symbol).toBe('USDC');
-      expect((await store.labels(OTHER_CHAIN, [USDC])).get(USDC)?.symbol).toBe('USDbC');
-      expect(await store.known(OTHER_CHAIN)).toEqual(new Set([USDC]));
+      expect((await store.labels(CHAIN_ID)).get(USDC)?.symbol).toBe('USDC');
+      expect((await store.labels(OTHER_CHAIN)).get(USDC)?.symbol).toBe('USDbC');
+      expect((await store.labels(OTHER_CHAIN)).size).toBe(1);
     });
   });
 });

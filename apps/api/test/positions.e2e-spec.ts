@@ -2,6 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
   POSITION_STORE,
+  TOKEN_METADATA_STORE,
   type Position,
   type PositionPage,
   type PositionQuery,
@@ -61,6 +62,24 @@ function position(over: Partial<Position> = {}): Position {
 }
 
 /**
+ * The same position as it goes out on the wire.
+ *
+ * Separate from {@link position} rather than reused, because the two shapes
+ * have stopped matching: the domain type knows nothing about labels, and the
+ * response carries them. Asserting the response against the domain fixture
+ * would quietly stop checking the mapper the moment the wire gained a field.
+ */
+function wirePosition(
+  label: { symbol: string | null; name: string | null } | null = null,
+): unknown {
+  const { asset, ...rest } = position();
+  return {
+    ...rest,
+    asset: { ...asset, symbol: label?.symbol ?? null, name: label?.name ?? null },
+  };
+}
+
+/**
  * Stands in for ClickHouse. What the real store does is pinned where it lives,
  * against a real server; what is unproven here is the HTTP layer, and a database
  * proves none of it.
@@ -89,10 +108,20 @@ class FakeSync implements SyncStatusStore {
   }
 }
 
+/** Stands in for Postgres, so the wiring test needs no second database. */
+class FakeTokens {
+  labels = new Map<string, { symbol: string | null; name: string | null }>();
+
+  put(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 describe('positions (e2e)', () => {
   let app: INestApplication<App>;
   const store = new FakeStore();
   const sync = new FakeSync();
+  const tokens = new FakeTokens();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -100,6 +129,8 @@ describe('positions (e2e)', () => {
       .useValue(store)
       .overrideProvider(SYNC_STATUS_STORE)
       .useValue(sync)
+      .overrideProvider(TOKEN_METADATA_STORE)
+      .useValue({ labels: () => Promise.resolve(tokens.labels), put: () => Promise.resolve() })
       .compile();
 
     app = moduleRef.createNestApplication({ logger: false });
@@ -131,7 +162,7 @@ describe('positions (e2e)', () => {
           stale: false,
         },
         valuedAt: VALUED_AT,
-        items: [position()],
+        items: [wirePosition()],
         nextCursor: null,
       });
     });
@@ -166,7 +197,22 @@ describe('positions (e2e)', () => {
         hub: HUB,
         underlying: USDC,
         decimals: 6,
+        symbol: null,
+        name: null,
       });
+    });
+
+    it('labels the asset once enrichment has read the token', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [position()], next: null };
+      tokens.labels.set(USDC, { symbol: 'USDC', name: 'USD Coin' });
+
+      const res = await request(app.getHttpServer()).get(PATH).expect(200);
+
+      // Two databases behind one response, which is the shape every later
+      // enrichment lands in — the label comes from Postgres, everything around
+      // it from ClickHouse, and the caller cannot tell.
+      expect(res.body.items[0].asset).toMatchObject({ symbol: 'USDC', name: 'USD Coin' });
+      tokens.labels.clear();
     });
 
     it('reports null rather than zero when the join has nothing to offer', async () => {

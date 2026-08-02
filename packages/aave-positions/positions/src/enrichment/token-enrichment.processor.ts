@@ -166,7 +166,7 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
     if (due) this.lastSweepAt = Date.now();
     if (listed.length === 0) return [];
 
-    const known = await this.store.known(this.options.chainId);
+    const known = await this.store.labels(this.options.chainId);
     return [...new Set(listed.map((token) => token.toLowerCase()))].filter(
       (token) => !known.has(token),
     );

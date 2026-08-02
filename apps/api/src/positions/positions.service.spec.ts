@@ -4,6 +4,8 @@ import {
   type PositionPage,
   type PositionQuery,
   type PositionStore,
+  type TokenLabel,
+  type TokenMetadataStore,
 } from '@aave-positions/positions';
 import type { Hash, SyncStatus, SyncStatusStore } from '@packages/indexing';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -62,6 +64,22 @@ class RecordingStore implements PositionStore {
   }
 }
 
+/** Records when it was asked, so the parallel read can be asserted rather than assumed. */
+class RecordingTokens implements TokenMetadataStore {
+  labelsByToken = new Map<string, TokenLabel>();
+  /** Incremented synchronously, so "was it asked yet" is answerable. */
+  calls = 0;
+
+  labels(): Promise<ReadonlyMap<string, TokenLabel>> {
+    this.calls += 1;
+    return Promise.resolve(this.labelsByToken);
+  }
+
+  put(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 class FixedSync implements SyncStatusStore {
   constructor(private readonly status: SyncStatus | null) {}
 
@@ -80,8 +98,12 @@ function syncAt(ageSeconds: number): SyncStatus {
   };
 }
 
-function serviceWith(store: PositionStore, sync: SyncStatusStore): PositionsService {
-  return new PositionsService(store, sync, STALE_AFTER, cursors);
+function serviceWith(
+  store: PositionStore,
+  sync: SyncStatusStore,
+  tokens: TokenMetadataStore = new RecordingTokens(),
+): PositionsService {
+  return new PositionsService(store, tokens, sync, STALE_AFTER, cursors);
 }
 
 describe('PositionsService', () => {
@@ -221,7 +243,7 @@ describe('PositionsService', () => {
         netBorrowedAmount: '0',
         usingAsCollateral: true,
         events: 3,
-        asset: { assetId: '7', hub: HUB, underlying: USDC, decimals: 6 },
+        asset: { assetId: '7', hub: HUB, underlying: USDC, decimals: 6, symbol: null, name: null },
         value: {
           suppliedAmount: '1000000000',
           drawnDebt: '0',
@@ -231,5 +253,62 @@ describe('PositionsService', () => {
         },
       },
     ]);
+  });
+
+  describe('labels', () => {
+    it('joins a label onto the asset it belongs to', async () => {
+      const tokens = new RecordingTokens();
+      tokens.labelsByToken.set(USDC, { symbol: 'USDC', name: 'USD Coin' });
+      store.page = { valuedAt: VALUED_AT, items: [position()], next: null };
+
+      const { items } = await serviceWith(store, new FixedSync(syncAt(7)), tokens).list(
+        { chainId: CHAIN_ID, user: ALICE },
+        { limit: 50 },
+      );
+
+      expect(items[0]?.asset).toMatchObject({ symbol: 'USDC', name: 'USD Coin' });
+    });
+
+    it('serves null for a token enrichment has not reached', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [position()], next: null };
+
+      // Absent from the map. Distinct in the store from "asked, and it has no
+      // symbol", which is why the sweep can tell them apart — but the wire
+      // cannot express the difference and a caller has no use for it.
+      const { items } = await list();
+      expect(items[0]?.asset).toMatchObject({ symbol: null, name: null });
+    });
+
+    it('asks for labels without waiting for the page', async () => {
+      // The property the two-database split rests on: labels are keyed by
+      // chain alone, so they do not depend on which positions come back. If
+      // this ever became sequential the second round trip would stop being
+      // free, and nothing else would notice.
+      const tokens = new RecordingTokens();
+      let releasePage!: () => void;
+      const slowPage = new Promise<void>((resolve) => {
+        releasePage = resolve;
+      });
+
+      const blocking: PositionStore = {
+        list: async () => {
+          await slowPage;
+          return store.page;
+        },
+      };
+
+      const pending = serviceWith(blocking, new FixedSync(syncAt(7)), tokens).list(
+        { chainId: CHAIN_ID, user: ALICE },
+        { limit: 50 },
+      );
+
+      // Asked while the page is still blocked. Sequential code would not have
+      // reached this call yet.
+      await Promise.resolve();
+      expect(tokens.calls).toBe(1);
+
+      releasePage();
+      await pending;
+    });
   });
 });

@@ -15,16 +15,20 @@ import type { TokenLabel, TokenMetadataRow } from './token-metadata';
  */
 export interface TokenMetadataStore {
   /**
-   * Labels for the tokens on a page, keyed by lower-cased address.
+   * Every label on this chain, keyed by lower-cased address.
    *
-   * A token with no row is **absent from the map**, not present with nulls —
-   * the caller has to be able to tell "never asked" from "asked, and it has no
-   * symbol", because those render differently and one of them is a gap to fill.
+   * **The whole dimension, deliberately not the tokens on a page.** Taking a
+   * page's addresses would make this depend on the page and force it to run
+   * after the ClickHouse query; keyed only by chain it runs *beside* it, which
+   * is what makes the second round trip free — measured at 0.27 ms against a
+   * 28 ms page. It is also the stored half of the gap query, so the enrichment
+   * sweep reads it too.
+   *
+   * A token with no row is **absent from the map**, not present with nulls: the
+   * caller has to tell "never asked" from "asked, and it has no symbol",
+   * because one is a gap to fill and the other is not.
    */
-  labels(chainId: number, tokens: readonly Address[]): Promise<ReadonlyMap<Address, TokenLabel>>;
-
-  /** Every token this chain has a row for. The stored half of the gap query. */
-  known(chainId: number): Promise<ReadonlySet<Address>>;
+  labels(chainId: number): Promise<ReadonlyMap<Address, TokenLabel>>;
 
   /** Upserts whole rows. Re-running with the same input changes nothing. */
   put(rows: readonly TokenMetadataRow[]): Promise<void>;

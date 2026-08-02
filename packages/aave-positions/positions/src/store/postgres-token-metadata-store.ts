@@ -29,32 +29,19 @@ interface Row {
 export class PostgresTokenMetadataStore implements TokenMetadataStore {
   constructor(@Inject(POSTGRES_CLIENT) private readonly sql: Sql) {}
 
-  async labels(
-    chainId: number,
-    tokens: readonly Address[],
-  ): Promise<ReadonlyMap<Address, TokenLabel>> {
-    // An empty page asks for nothing. Left to the query this becomes
-    // `IN ()`, which is a syntax error rather than an empty result.
-    if (tokens.length === 0) return new Map();
-
-    const lowered = tokens.map((token) => token.toLowerCase());
+  async labels(chainId: number): Promise<ReadonlyMap<Address, TokenLabel>> {
+    // Keyed by chain and nothing else, so it does not depend on the page and
+    // can be issued beside the ClickHouse query rather than after it.
     const rows = await this.sql<Row[]>`
       SELECT chain_id, token, symbol, name
       FROM token_metadata
-      WHERE chain_id = ${chainId} AND token = ANY(${this.sql.array([...lowered])})
+      WHERE chain_id = ${chainId}
     `;
 
     // A token with no row is simply not in the map. The caller distinguishes
     // "never asked" from "asked, and there is no symbol" by presence, which is
     // the distinction the nullable columns exist to preserve.
     return new Map(rows.map((row) => [row.token, { symbol: row.symbol, name: row.name }]));
-  }
-
-  async known(chainId: number): Promise<ReadonlySet<Address>> {
-    const rows = await this.sql<{ token: Address }[]>`
-      SELECT token FROM token_metadata WHERE chain_id = ${chainId}
-    `;
-    return new Set(rows.map((row) => row.token));
   }
 
   async put(rows: readonly TokenMetadataRow[]): Promise<void> {

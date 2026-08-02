@@ -44,12 +44,15 @@ class FakeListings implements TokenListings {
 class FakeStore implements TokenMetadataStore {
   readonly rows = new Map<Address, TokenMetadataRow>();
 
-  labels(): Promise<ReadonlyMap<Address, TokenLabel>> {
-    return Promise.resolve(new Map());
-  }
+  readonly labelCalls: number[] = [];
 
-  known(): Promise<ReadonlySet<Address>> {
-    return Promise.resolve(new Set(this.rows.keys()));
+  labels(chainId: number): Promise<ReadonlyMap<Address, TokenLabel>> {
+    this.labelCalls.push(chainId);
+    return Promise.resolve(
+      new Map(
+        [...this.rows].map(([token, row]) => [token, { symbol: row.symbol, name: row.name }]),
+      ),
+    );
   }
 
   put(rows: readonly TokenMetadataRow[]): Promise<void> {
@@ -181,7 +184,7 @@ describe('TokenEnrichmentProcessor', () => {
 
     it('asks the store nothing when the range listed nothing', async () => {
       await processor.onBlockRange(100, 200, NEVER_ABORTED);
-      const known = vi.spyOn(store, 'known');
+      const known = vi.spyOn(store, 'labels');
 
       await processor.onBlockRange(200, 300, NEVER_ABORTED);
 
