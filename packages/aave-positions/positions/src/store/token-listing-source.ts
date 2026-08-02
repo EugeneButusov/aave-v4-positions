@@ -17,14 +17,20 @@ export const TOKEN_LISTINGS = Symbol('TOKEN_LISTINGS');
  * **The obvious query, made cheap by the table rather than by rewriting it.**
  * `DISTINCT` over `underlying` is a full column scan on its own — the column is
  * not in the sorting key, and `chain_id` prunes nothing on a single-chain
- * deployment — so at 450,017 rows it read `Parts: 4/4, Granules: 58/58`, and
- * the cost grew with `UpdateAsset` history at about 1.5 million rows a year.
+ * deployment — and the cost grows with `UpdateAsset` history at about 1.5
+ * million rows a year.
  *
- * `hub_asset_state` carries a `listed_tokens` projection for exactly this, so
- * the same text now reads **17 rows and 935 bytes**, `Granules: 1/58`, with
- * `system.query_log.projections` naming it. A projection is chosen by the
- * optimizer, which is why nothing here had to change and why nothing here
- * should: writing the query differently is how it stops matching.
+ * `hub_asset_state` carries a `listed_tokens` projection for exactly this.
+ * Measured on the same 1,000,017 rows with it on and off: **18 rows and 948
+ * bytes** against 1,000,017 rows and 8.85 MiB. The plan says why — on the
+ * projection `underlying` is the second key column, so
+ * `Condition: chain_id in [1, 1] AND underlying isNotNull` prunes as an index
+ * condition rather than filtering after the read.
+ *
+ * A projection is chosen by the optimizer, which is why nothing here had to
+ * change and why nothing here should: rewriting the query is how it stops
+ * matching. A spec asserts `system.query_log` names the projection, because
+ * otherwise nothing would notice if it stopped being used.
  *
  * Called rarely in any case — once at start, and after a run that left a gap
  * open. The steady state is not a query at all: newly listed tokens are pushed

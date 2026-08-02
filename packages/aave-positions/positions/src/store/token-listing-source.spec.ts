@@ -50,10 +50,10 @@ describe('ClickHouseTokenListings', () => {
       ),
     ]);
 
-    // `UpdateAsset` writes a NULL `underlying` every time, so this is what the
-    // `IS NOT NULL` filter is for — and, because the column is then sparse,
-    // also why the query does not get slower as they pile up. Measured at
-    // 3,029,631 rows: 34 rows read, unchanged from 29,631.
+    // `UpdateAsset` writes a NULL `underlying` every time, which is what the
+    // `IS NOT NULL` filter is for. What stops those piling up into a scan is
+    // the `listed_tokens` projection, pinned by the test above — at 1,000,017
+    // rows the same query reads 18 rows through it and 1,000,017 without.
     expect(await listings.all(CHAIN_ID)).toEqual([USDC]);
   });
 

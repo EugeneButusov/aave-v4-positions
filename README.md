@@ -1535,16 +1535,33 @@ durable copy of a guarantee that exists. And **the last run left a gap open** �
 those addresses have been drained and will not be pushed again, so the retry has
 to re-derive them. One flag covers both.
 
-**The full check looks worse than it is**, which is worth recording because the
-plan reads like a scan. `SELECT DISTINCT underlying FROM hub_asset_state WHERE underlying IS NOT NULL`
-reports `Parts: 2/2, Granules: 5/5` under `EXPLAIN indexes = 1` — every granule,
-because `underlying` is not a sorting key. Measured, it is flat: `underlying` is
-NULL on every row but the handful of `AddAsset`s, so the column is stored
-sparsely and the NULL runs are skipped. At **3,029,631 rows it reads 34 rows and
-1.83 KiB in 3 ms**, the same as at 29,631. Granules _examined_ is not data
-_read_. A purpose-built `(chain_id, underlying)` table fed by a materialized view
-was built and measured against it — 17 rows, 816 bytes, 1 ms — and reverted: two
-milliseconds does not buy a table, a view, a migration and a replay step.
+**The full check is indexed, not scanned.** `SELECT DISTINCT underlying FROM hub_asset_state WHERE underlying IS NOT NULL`
+is a full column scan on its own: `underlying` is not in the sorting key and
+`chain_id` prunes nothing on a single-chain deployment. `hub_asset_state`
+carries a `listed_tokens` projection for it, declared inline on the table so a
+fresh database has it from the first insert. Same query, same data, projection
+on and off:
+
+|                     | rows read | bytes    | plan                                                       |
+| ------------------- | --------- | -------- | ---------------------------------------------------------- |
+| via the projection  | **18**    | 948 B    | `ReadFromMergeTree (listed_tokens)`, `Granules: 1/123`     |
+| projection disabled | 1,000,017 | 8.85 MiB | `ReadFromMergeTree (hub_asset_state)`, `Granules: 122/122` |
+
+The plan says why: on the projection `underlying` is the second key column, so
+`Condition: chain_id in [1, 1] AND underlying isNotNull` is an _index_
+condition. On the base table it can only be a filter applied after reading.
+
+Two things this cost. ClickHouse refuses a projection on a
+`VersionedCollapsingMergeTree` under the default `deduplicate_merge_projection_mode`,
+because a projection aggregates rows as written and cannot see the collapse
+`sign` encodes; `rebuild` is what keeps it usable, and it is safe here only
+because the sole thing read out is the set of `underlying` values. And an
+earlier defence of the unindexed scan — that the column is NULL in all but
+seventeen rows, so it is stored sparsely and reads flat — **was an artifact of
+loading the fixture in two large inserts.** Ingested the way the indexer
+actually writes, in many small parts, the same query reads the whole column.
+Sparseness is decided per part on a ratio nobody controls; it is not something
+to rest a query plan on.
 
 Three rules exist because the obvious version of each is wrong:
 
