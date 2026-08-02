@@ -66,7 +66,7 @@ describe('the fixed-point primitives', () => {
   it('refuses a negative premium instead of inventing one', () => {
     // `premiumOffsetRay` is int200 and really goes negative, so the subtraction
     // can go either way — but the contract closes it with `.toUint256()`, which
-    // reverts. A negative here means the mirror is wrong, not that the formula
+    // reverts. A negative here means the fold is wrong, not that the formula
     // needs a signed branch.
     expect(() => premiumRay(1n, 2n * RAY, RAY)).toThrow(/premium is negative/);
     expect(premiumRay(1n, -1n, RAY)).toBe(RAY + 1n);

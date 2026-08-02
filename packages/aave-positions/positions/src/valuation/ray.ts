@@ -68,7 +68,7 @@ export function linearInterest(rate: bigint, elapsedSeconds: bigint): bigint {
  * `premiumOffsetRay` is `int200` on chain and genuinely negative, so the
  * subtraction can go either way. The contract closes it with `.toUint256()`,
  * which **reverts** on a negative — so a negative premium is not a state the
- * protocol can be in, and producing one here would mean the mirror is wrong
+ * protocol can be in, and producing one here would mean the fold is wrong
  * rather than that the maths needs a signed branch. Throwing keeps that
  * distinction visible instead of returning a number nothing can interpret.
  */

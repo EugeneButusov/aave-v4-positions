@@ -40,7 +40,7 @@ export interface PositionValue {
  *
  * **Shares are the stored truth; {@link value} is derived.** Between events the
  * Hub's index accrues and emits nothing, so a share balance is not a balance
- * (§5) — the amounts are computed at read time from the Hub asset mirror and
+ * (§5) — the amounts are computed at read time from the Hub asset fold and
  * carry the timestamp they were computed at.
  *
  * {@link asset} and {@link value} are **null together**, and only when the join

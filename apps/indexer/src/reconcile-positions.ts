@@ -14,7 +14,7 @@ Compares every valued position the store serves against the Spoke's own
 \`getUserSuppliedAssets\` and \`getUserDebt\`, at zero tolerance (§9.2).
 
 This is the composition check. The arithmetic on its own is validated against
-the same getters by feeding them the chain's \`getAsset\` directly; the mirror on
+the same getters by feeding them the chain's \`getAsset\` directly; the fold on
 its own is validated by \`reconcile:hub\`. What only this can catch is the two
 being wired together wrongly — a reserve resolved to the wrong asset, a
 checkpoint read from the wrong column, a timestamp off by a block.
@@ -23,7 +23,7 @@ checkpoint read from the wrong column, a timestamp off by a block.
 store is valued at that block's timestamp — the index accrues every second, so
 comparing against \`latest\` would drift by however long the calls took.
 
-Requires the mirror to hold full history, and therefore an archive-capable RPC
+Requires the fold to hold full history, and therefore an archive-capable RPC
 to have backfilled it: the reserve registry comes from \`AddReserve\`, which fires
 once per reserve at the Spoke's genesis.
 

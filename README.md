@@ -1145,11 +1145,17 @@ survives one of those columns ceasing to be nullable.
 
 ### Verification
 
-Every guard is mutation-tested — **ten mechanisms removed one at a time, each turning its spec red**:
-the `sign` multiply, five transition directions including `Restore`'s premium term and
-`EliminateDeficit`'s share burn, the `HAVING` collapse, chain-order-vs-version on the argMax,
-`lower()` on the underlying, and the qualified `ORDER BY` (unqualified it binds the `toString` alias
-and sorts 13 before 3 — the same bug the position store's pagination hit).
+Every guard is mutation-tested — **fifteen mechanisms removed one at a time, each turning its spec
+red**. Nine are the fold's: the `sign` multiply, five transition directions including `Restore`'s
+premium term and `EliminateDeficit`'s share burn, the `HAVING` collapse, chain-order-vs-version on
+the argMax, and `lower()` on the underlying.
+
+Six more belong to the store that reads it, and are worth listing separately because a fold spec
+cannot see them — it reads its own output back through the same mapper, so a mapping that is
+internally consistent and wrong looks right: crossing two columns in the mapper, dropping
+`toLowerCase`, dropping the hub or chain predicate from either query, and unqualifying the
+`ORDER BY` (unqualified it binds the `toString` alias and sorts 13 before 3 — the same bug the
+position store's pagination hit).
 
 **Reconciled against `getAsset` at zero tolerance**, in the delta form §5.5 itself used: seed from
 the chain before the window, replay the window through the fold, compare against the chain after
@@ -1166,7 +1172,8 @@ That window is narrow, and the reason is worth stating rather than hiding: a pub
 state for about 127 blocks, which bounds the delta form exactly as it bounded §5.5's own 95-block
 run. The absolute check — all 17 assets, every field, against a fold holding full history — needs
 an archive RPC and is what `reconcile:hub --absolute` does. Everything the narrow window does not
-reach rests on the source transcription above, 22 integration specs and the ten mutation tests.
+reach rests on the source transcription above and on 31 integration specs — 20 over the fold, 11
+over the store that reads it.
 
 ## Balances
 
@@ -1218,7 +1225,7 @@ spec and each mutation-tested:
 - **A negative premium throws rather than returning a number.**
   `premiumOffsetRay` is `int200` and genuinely negative, so the subtraction can go
   either way — but the contract closes it with `.toUint256()`, which reverts. A
-  negative here means the mirror is wrong, not that the formula needs a signed
+  negative here means the fold is wrong, not that the formula needs a signed
   branch. (The plan for this increment had it down as a rounding trap; reading
   `Premium.sol` showed it is not reachable.)
 
@@ -1411,7 +1418,7 @@ Deliberate, in rough order of what comes next.
   check — the store's valued output against `getUserSuppliedAssets` and `getUserDebt` — and it cannot
   run without full history, because the reserve registry comes from `AddReserve` at the Spoke's
   genesis. Its two halves are each verified on their own: the arithmetic 36/36 exact against the
-  chain, the mirror at zero drift in the delta form. What is unproven is the wiring between them.
+  chain, the fold at zero drift in the delta form. What is unproven is the wiring between them.
 - **The absolute Hub reconciliation.** `reconcile:hub` runs today in its delta form, which a public
   endpoint's ~127-block state window bounds to one asset or two. `--absolute` compares all 17 across
   every field but needs an archive RPC to have backfilled the fold first. It is the check that
