@@ -136,10 +136,12 @@ describe('openapi', () => {
       expect(schema.required?.toSorted()).toEqual([
         'items',
         'nextCursor',
+        'portfolio',
         'pricing',
         'sync',
         'valuedAt',
       ]);
+      expect(schema.properties?.['portfolio']).toMatchObject({ nullable: true });
       expect(schema.properties?.['nextCursor']).toMatchObject({ nullable: true });
       // Required *and* nullable, on the same terms: absent would mean the field
       // might not exist, where null means there is nothing priced behind this

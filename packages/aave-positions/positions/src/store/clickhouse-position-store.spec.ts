@@ -236,3 +236,89 @@ describe('ClickHousePositionStore', () => {
     });
   });
 });
+
+describe('ClickHousePositionStore.holdings', () => {
+  beforeAll(async () => {
+    client = await migratedDatabase(DATABASE);
+    events = new ClickHouseSpokeEventStore(client);
+    store = new ClickHousePositionStore(client);
+  });
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  beforeEach(async () => {
+    for (const table of TABLES)
+      // oxlint-disable-next-line no-await-in-loop
+      await client.command({ query: `TRUNCATE TABLE ${table}` });
+  });
+
+  it('returns every open position, past any page size', async () => {
+    // 120 reserves against a listing that pages at 50. `list` would need three
+    // requests to see them; a total computed from the first would be a third
+    // of the truth and look like a whole number.
+    const supplies = Array.from({ length: 120 }, (_, nth) =>
+      supply({ block: 100, log: nth }, ALICE, String(nth), '500'),
+    );
+    await index(100, 100, supplies);
+
+    const { items } = await store.holdings({ chainId: CHAIN_ID, user: ALICE });
+
+    expect(items).toHaveLength(120);
+    expect((await page({ limit: 50 })).items).toHaveLength(50);
+  });
+
+  it('spans every Spoke unless one is named', async () => {
+    await index(100, 100, [
+      supply({ block: 100, log: 0 }, ALICE, '7', '500'),
+      supply({ block: 100, log: 1, spoke: SECOND_SPOKE }, ALICE, '7', '900'),
+    ]);
+
+    const everywhere = await store.holdings({ chainId: CHAIN_ID, user: ALICE });
+    const narrowed = await store.holdings({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE });
+
+    // The same reserve id on two Spokes is two positions (§12.3), and both have
+    // to be here or a per-Spoke total is missing a Spoke.
+    expect(everywhere.items.map((item) => item.spoke)).toEqual([SPOKE, SECOND_SPOKE]);
+    expect(narrowed.items.map((item) => item.spoke)).toEqual([SPOKE]);
+  });
+
+  it('leaves out a closed position, as the listing does', async () => {
+    await index(100, 100, [
+      supply({ block: 100, log: 0 }, ALICE, '7', '500'),
+      withdraw({ block: 100, log: 1 }, ALICE, '7', '500'),
+      supply({ block: 100, log: 2 }, ALICE, '9', '100'),
+    ]);
+
+    const { items } = await store.holdings({ chainId: CHAIN_ID, user: ALICE });
+
+    expect(items.map((item) => item.reserveId)).toEqual(['9']);
+  });
+
+  it('values at the instant it was asked for', async () => {
+    await index(100, 100, [borrow({ block: 100, log: 0 }, ALICE, '7', '1000')]);
+
+    const { valuedAt } = await store.holdings({
+      chainId: CHAIN_ID,
+      user: ALICE,
+      asOf: 1_785_000_000n,
+    });
+
+    expect(valuedAt).toBe(1_785_000_000);
+  });
+
+  it('refuses to total a set it could only read part of', async () => {
+    // The bound is 2000, so this is the first read that cannot be complete.
+    // Refusing is the point: a truncated holdings is a net worth that is
+    // quietly too small, with nothing in the response to say so.
+    const supplies = Array.from({ length: 2_001 }, (_, nth) =>
+      supply({ block: 100, log: nth }, BOB, String(nth), '500'),
+    );
+    await index(100, 100, supplies);
+
+    await expect(store.holdings({ chainId: CHAIN_ID, user: BOB })).rejects.toThrow(
+      /refusing to total a partial set/,
+    );
+  });
+});

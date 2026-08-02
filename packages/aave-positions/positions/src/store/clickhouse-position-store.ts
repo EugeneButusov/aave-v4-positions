@@ -6,11 +6,28 @@ import { CLICKHOUSE_CLIENT } from '@packages/clickhouse';
 
 import type { Position, PositionAsset, PositionValue } from './position';
 import { valuePosition, type AssetState } from '../valuation/valuation';
-import type { PositionPage, PositionQuery, PositionStore } from './position-store';
+import type {
+  PositionHoldings,
+  PositionHoldingsQuery,
+  PositionPage,
+  PositionQuery,
+  PositionStore,
+} from './position-store';
 
 const POSITIONS_VIEW = 'user_positions_current';
 const RESERVES_VIEW = 'spoke_reserves_current';
 const HUB_ASSETS_VIEW = 'hub_assets_current';
+
+/**
+ * The most positions one wallet is assumed to hold, across every Spoke.
+ *
+ * Not a page size — {@link ClickHousePositionStore.holdings} refuses above this
+ * rather than truncating, because it exists to be summed and a short read is a
+ * net worth that is quietly too small. Set far above what the protocol permits:
+ * `maxUserReservesLimit` caps a wallet's reserves per Spoke, the Main Spoke
+ * lists fourteen, and the address book knows fifteen Spokes.
+ */
+const HOLDINGS_CAP = 2_000;
 
 /**
  * This package's schema, owned here rather than in a central list.
@@ -284,5 +301,39 @@ export class ClickHousePositionStore implements PositionStore {
           ? { spoke: last.spoke, reserveId: last.reserveId }
           : null,
     };
+  }
+
+  /**
+   * Every open position, in one read.
+   *
+   * **Built on {@link list} rather than on a second query**, and that is what
+   * makes the bound safe rather than merely large. `list` already fetches one
+   * more row than asked and reports the surplus as `next`, so "there were more
+   * than {@link HOLDINGS_CAP}" is a question the paging machinery already
+   * answers — and answering it is the whole reason this refuses instead of
+   * truncating. A short read here is not a short page; it is a net worth that
+   * is quietly too small, with nothing in the response to say so.
+   *
+   * Duplicating the SQL to drop one `LIMIT` would also duplicate the join
+   * shape, the pushdown argument and the `ORDER BY` trap documented above, and
+   * the copy that drifted would be the one nobody was reading.
+   */
+  async holdings(query: PositionHoldingsQuery): Promise<PositionHoldings> {
+    const page = await this.list({
+      chainId: query.chainId,
+      user: query.user,
+      ...(query.spoke !== undefined && { spoke: query.spoke }),
+      ...(query.asOf !== undefined && { asOf: query.asOf }),
+      limit: HOLDINGS_CAP,
+    });
+
+    if (page.next !== null) {
+      throw new Error(
+        `wallet ${query.user} holds more than ${String(HOLDINGS_CAP)} open positions on chain ` +
+          `${String(query.chainId)}; refusing to total a partial set`,
+      );
+    }
+
+    return { items: page.items, valuedAt: page.valuedAt };
   }
 }
