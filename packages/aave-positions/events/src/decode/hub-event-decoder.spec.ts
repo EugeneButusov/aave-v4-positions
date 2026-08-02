@@ -72,7 +72,7 @@ describe('HubEventDecoder', () => {
 
     // §5.3: the emitted index is the *settled* one, and the block's timestamp
     // is what makes (drawnIndex, drawnRate, t) a self-consistent checkpoint.
-    // All three have to survive decoding for the mirror to be able to use it.
+    // All three have to survive decoding for the fold to be able to use it.
     expect(update.body).toMatchObject({
       assetId: expect.any(String),
       drawnIndex: expect.any(String),

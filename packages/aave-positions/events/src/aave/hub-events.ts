@@ -19,7 +19,7 @@ export const HUB_ABI = IHubV4_ABI;
  * conversion of §5.
  *
  * Ten of them move quantities that are **additive**; three set a value that is
- * **latest-wins**. That split is what the mirror's two tables are built on, but
+ * **latest-wins**. That split is what the fold's two tables are built on, but
  * it does not matter here — this list exists to build the log filter.
  *
  * Deliberately not the whole ABI:

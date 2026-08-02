@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { ClickHouseModule, type ClickHouseOptions } from '@packages/clickhouse';
 
+import { ClickHouseHubAssetStore } from './store/clickhouse-hub-asset-store';
 import { ClickHousePositionStore } from './store/clickhouse-position-store';
+import { HUB_ASSET_STORE } from './store/hub-asset-store';
 import { PositionCursorCodec } from './store/position-cursor';
 import { POSITION_STORE } from './store/position-store';
 
@@ -87,8 +89,12 @@ export class PositionsModule {
           inject: [POSITIONS_OPTIONS],
         },
         { provide: POSITION_STORE, useClass: ClickHousePositionStore },
+        // The other half of a balance. Same client, same module: nothing values
+        // a position without both, so handing out one without the other only
+        // makes the incomplete wiring possible.
+        { provide: HUB_ASSET_STORE, useClass: ClickHouseHubAssetStore },
       ],
-      exports: [POSITION_STORE, clickhouse],
+      exports: [POSITION_STORE, HUB_ASSET_STORE, clickhouse],
     };
   }
 }
