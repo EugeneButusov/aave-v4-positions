@@ -1419,18 +1419,19 @@ GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
       "user": "0x…",
       "spoke": "0x…",
       "reserveId": "7",
-      "suppliedShares": "422166581625087607993", // stored truth
+      // Stored truth, scaled by the asset's decimals. Null when `asset` is.
+      "suppliedShares": "422166581625087.607993",
       // What reserveId resolves to, once the registry and the Hub are both read.
       "asset": { "assetId": "7", "hub": "0x…", "underlying": "0x…", "decimals": 6 },
-      // The shares above in token units, at `valuedAt`. Null together with `asset`.
-      // `price` is the Spoke oracle's, 8 dp; the values are §7.1's unit where 1e26 = $1.
+      // The shares above in whole tokens, at `valuedAt`. Null together with `asset`.
+      // The *Usd fields come from the Spoke's own oracle, and are dollars.
       "value": {
-        "suppliedAmount": "1000000000",
+        "suppliedAmount": "1000",
         "totalDebt": "0",
-        "drawnIndex": "1e27…",
-        "price": "99971505",
-        "suppliedValue": "99971505000000000000000000000",
-        "debtValue": "0",
+        "drawnIndex": "1.00113505584681013396716179", // a ray ratio; 1 is no accrual
+        "priceUsd": "0.99971505",
+        "suppliedAmountUsd": "999.71505",
+        "totalDebtUsd": "0",
       },
     },
   ],
@@ -1464,23 +1465,37 @@ registry has not seen, or a Hub asset with no interest checkpoint yet. Null rath
 a zero amount cannot be told apart from a real zero balance. The position still appears — its shares
 are real either way.
 
-**Three clocks now, because a price is a third source.** `price`, `suppliedValue` and `debtValue`
-come from the Spoke's own oracle, and `pricing` says how fresh they are — reporting the **oldest**
+**Three clocks now, because a price is a third source.** `priceUsd`, `suppliedAmountUsd` and
+`totalDebtUsd` come from the Spoke's own oracle, and `pricing` says how fresh they are — reporting the **oldest**
 price behind the page, since the question a caller has is how far to trust the worst number in front
 of them. Prices are normally written in one upsert and agree; they diverge exactly when the oracle
 refused a reserve and its last good price was left to age, which is the case worth surfacing.
 `stale` measures how long since the indexer last read the oracle, never how long since a feed last
 moved — an hour without an `AnswerUpdated` is ordinary Chainlink behaviour (§7.5).
 
-**The values are in the protocol's unit, where `1e26` is one dollar** (§7.1, `SpokeUtils.toValue`
-against `ORACLE_DECIMALS = 8`). Served that way rather than converted to dollars because it is what
-the contract computes in, so it reconciles against `getUserAccountData` exactly — dividing it here
-would lose digits the chain does not. `debtValue` prices `totalDebt`, the rounded token amount that
-is actually owed; the health factor divides an unrounded ray-scaled debt instead, so when it lands
-the two will differ in the last digits by design.
+**Every number arrives scaled, as a decimal string.** Nothing on the wire is in base units: amounts
+are whole tokens, the `*Usd` fields are dollars, and `drawnIndex` and `premiumOffsetRay` are ray
+ratios. Four different scales meet in one response — the asset's decimals, the oracle's 8, §7.1's 26
+and a ray's 27 — and a caller pairing the wrong one with the wrong field is out by ten orders of
+magnitude with nothing to notice, which is reason enough to do it here once rather than in every
+client.
+
+**Scaled, but still strings, and the arithmetic still happens in the protocol's unit.** §7.1 computes
+where `1e26` is one dollar (`SpokeUtils.toValue` against `ORACLE_DECIMALS = 8`), and that product is
+divided on the way out rather than its inputs rounded on the way in — so `suppliedAmountUsd` keeps
+every digit the contract did and reconciles against `getUserAccountData` exactly. Parsing one of
+these into a float undoes all of it: `422166581625087.607993` has 21 significant digits and a double
+holds 17. `totalDebtUsd` prices `totalDebt`, the rounded token amount actually owed; the health
+factor divides an unrounded ray-scaled debt instead, so when it lands the two will differ in the last
+digits by design.
+
+**A missing scale is null, not a raw integer.** The share fields are scaled by the asset's decimals,
+so when the registry has not resolved the reserve they are null alongside `asset` and `value` — an
+unscaled integer in a field the schema calls decimal would be wrong rather than merely coarse.
+`premiumOffsetRay` survives it, because a ray's 27 is the protocol's constant and not the token's.
 
 **An explicit `asOf` is served without prices at all** — `pricing` is null and so are the three
-fields. Amounts are extrapolated to that instant and the stored price is whatever the oracle last
+`*Usd` fields. Amounts are extrapolated to that instant and the stored price is whatever the oracle last
 said, which is now; pricing one against the other is a number that was never true. The read is
 skipped rather than the result discarded. Making a historical query priceable needs a price series
 rather than a dimension, which is [what comes next](#not-here-yet).

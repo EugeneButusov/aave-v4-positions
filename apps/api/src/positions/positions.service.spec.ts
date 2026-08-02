@@ -18,6 +18,8 @@ const ALICE = '0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8';
 const SPOKE = '0x94e7a5dcbe816e498b89ab752661904e2f56c485';
 const HASH: Hash = `0x${'ab'.repeat(32)}`;
 const HUGE = '422166581625087607993';
+/** The same, at the fixture's 6 decimals — the width a float would have lost. */
+const HUGE_SCALED = '422166581625087.607993';
 const HUB = '0xcca852bc40e560adc3b1cc58ca5b55638ce826c9';
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 const RAY = '1000000000000000000000000000';
@@ -260,27 +262,80 @@ describe('PositionsService', () => {
         user: ALICE,
         spoke: SPOKE,
         reserveId: '7',
-        suppliedShares: HUGE,
-        drawnShares: '400',
+        suppliedShares: HUGE_SCALED,
+        drawnShares: '0.0004',
         premiumShares: '0',
         premiumOffsetRay: '0',
-        netSuppliedAmount: HUGE,
+        netSuppliedAmount: HUGE_SCALED,
         netBorrowedAmount: '0',
         usingAsCollateral: true,
         events: 3,
         asset: { assetId: '7', hub: HUB, underlying: USDC, decimals: 6, symbol: null, name: null },
         value: {
-          suppliedAmount: '1000000000',
+          suppliedAmount: '1000',
           drawnDebt: '0',
           premiumDebt: '0',
           totalDebt: '0',
-          drawnIndex: RAY,
-          price: null,
-          suppliedValue: null,
-          debtValue: null,
+          // A ray of exactly 1e27 is no accrual, and renders as the ratio it is.
+          drawnIndex: '1',
+          priceUsd: null,
+          suppliedAmountUsd: null,
+          totalDebtUsd: null,
         },
       },
     ]);
+  });
+
+  describe('scaling', () => {
+    it('serves null rather than an unscaled integer when the reserve is unresolved', async () => {
+      // No `asset` means no decimals, and the schema says these are decimal
+      // strings. Passing the base-unit integer through would be wrong by up to
+      // eighteen orders of magnitude with nothing on the wire to say so — the
+      // same reason `asset` and `value` are null rather than zeroed.
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [position({ asset: null, value: null })],
+        next: null,
+      };
+
+      const { items } = await list();
+
+      expect(items[0]).toMatchObject({
+        suppliedShares: null,
+        drawnShares: null,
+        premiumShares: null,
+        netSuppliedAmount: null,
+        netBorrowedAmount: null,
+        value: null,
+      });
+    });
+
+    it('still scales the ray, which does not need the asset', async () => {
+      // A ray is a ratio, so 27 is the protocol's constant rather than the
+      // token's — it renders whether or not the registry has caught up.
+      store.page = {
+        valuedAt: VALUED_AT,
+        items: [
+          position({ asset: null, value: null, premiumOffsetRay: '2500000000000000000000000000' }),
+        ],
+        next: null,
+      };
+
+      const { items } = await list();
+
+      expect(items[0]?.premiumOffsetRay).toBe('2.5');
+    });
+
+    it('drops the value when the asset is missing but the store still valued it', async () => {
+      // The store nulls the two together, so this cannot happen today. Pinned
+      // anyway: the mapping must not reach for `decimals` it does not have, and
+      // a future store that relaxed the rule would otherwise crash here.
+      store.page = { valuedAt: VALUED_AT, items: [position({ asset: null })], next: null };
+
+      const { items } = await list();
+
+      expect(items[0]?.value).toBeNull();
+    });
   });
 
   describe('labels', () => {
@@ -369,12 +424,13 @@ describe('PositionsService', () => {
 
       const { items } = await list();
 
-      // §7.1: `amount × price × 10^(18 − dec)`, where 1e26 is one dollar.
-      // 1000000000 (6dp USDC) × 99971505 (8dp) × 1e12 = 1000 USDC ≈ $999.71.
+      // §7.1: `amount × price × 10^(18 − dec)`, where 1e26 is one dollar —
+      // 1000000000 (6dp USDC) × 99971505 (8dp) × 1e12 — then divided by that
+      // 1e26 on the way out. 1000 USDC at $0.99971505 is $999.71505.
       expect(items[0]?.value).toMatchObject({
-        price: USDC_PRICE,
-        suppliedValue: '99971505000000000000000000000',
-        debtValue: '0',
+        priceUsd: '0.99971505',
+        suppliedAmountUsd: '999.71505',
+        totalDebtUsd: '0',
       });
     });
 
@@ -395,7 +451,9 @@ describe('PositionsService', () => {
       // `totalDebt`, which is what is owed. The health factor deliberately does
       // not reuse this — it divides an unrounded ray-scaled debt — so the two
       // are meant to differ in the last digits.
-      expect(items[0]?.value?.debtValue).toBe((500_000_001n * 99_971_505n * 10n ** 12n).toString());
+      // Still exact: the protocol's unit is divided by 1e26, never rounded, so
+      // the trailing digits the contract computed all survive.
+      expect(items[0]?.value?.totalDebtUsd).toBe('499.85752599971505');
     });
 
     it('serves null rather than zero for a reserve with no price', async () => {
@@ -407,9 +465,9 @@ describe('PositionsService', () => {
       // A zero would be indistinguishable from a real one — and the oracle
       // reverts rather than answer zero (§7.4), so a real one cannot occur.
       expect(items[0]?.value).toMatchObject({
-        price: null,
-        suppliedValue: null,
-        debtValue: null,
+        priceUsd: null,
+        suppliedAmountUsd: null,
+        totalDebtUsd: null,
       });
       expect(pricing).toBeNull();
     });
@@ -423,7 +481,7 @@ describe('PositionsService', () => {
 
       const { items } = await list();
 
-      expect(items[0]?.value?.price).toBeNull();
+      expect(items[0]?.value?.priceUsd).toBeNull();
     });
 
     it('reports the oldest price behind the page', async () => {
@@ -471,7 +529,7 @@ describe('PositionsService', () => {
       // whatever the oracle last said, which is now. Pricing one against the
       // other is a number that was never true.
       expect(pricing).toBeNull();
-      expect(items[0]?.value).toMatchObject({ price: null, suppliedValue: null });
+      expect(items[0]?.value).toMatchObject({ priceUsd: null, suppliedAmountUsd: null });
       // Not fetched and discarded — not fetched.
       expect(prices.calls).toBe(0);
     });

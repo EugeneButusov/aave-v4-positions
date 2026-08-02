@@ -62,63 +62,66 @@ export class PositionAssetDto {
 
 export class PositionValueDto {
   @ApiProperty({
-    example: '1000000000',
-    description: 'Underlying redeemable for the supplied shares, rounded down as the Hub does.',
+    example: '1000',
+    description:
+      'Underlying redeemable for the supplied shares, in whole tokens, rounded down as the ' +
+      'Hub does.',
   })
   suppliedAmount!: string;
 
   @ApiProperty({ example: '0', description: 'Principal debt, rounded up as the Spoke does.' })
   drawnDebt!: string;
 
-  @ApiProperty({ example: '0', description: 'Accrued risk premium, in token units.' })
+  @ApiProperty({ example: '0', description: 'Accrued risk premium, in whole tokens.' })
   premiumDebt!: string;
 
   @ApiProperty({ example: '0', description: '`drawnDebt + premiumDebt`.' })
   totalDebt!: string;
 
   @ApiProperty({
-    example: '1000000000000000000000000000',
+    example: '1.00113505584681013396716179',
     description:
-      'The interest index this valuation used: the last checkpoint extrapolated to `valuedAt`. ' +
-      'Published so a caller can reproduce the arithmetic rather than trust it.',
+      'The interest index this valuation used: the last checkpoint extrapolated to `valuedAt`, ' +
+      'as a ray ratio where `1` is no accrual. Published so a caller can reproduce the ' +
+      'arithmetic rather than trust it.',
   })
   drawnIndex!: string;
 
   @ApiProperty({
     type: String,
     nullable: true,
-    example: '99971505',
+    example: '0.99971505',
     description:
-      "What Aave's own oracle prices this reserve at, to **8 decimals** — so `99971505` is " +
-      "$0.99971505. This is the protocol's view rather than the market's, which is the " +
-      'right one for a position: it is the number that drives liquidation. Null when the ' +
-      'oracle has not been read for this reserve yet, or when `asOf` is set — see `pricing`.',
+      "What Aave's own oracle prices one whole token at, in dollars. This is the protocol's " +
+      "view rather than the market's, which is the right one for a position: it is the " +
+      'number that drives liquidation. Null when the oracle has not been read for this ' +
+      'reserve yet, or when `asOf` is set — see `pricing`.',
   })
-  price!: string | null;
+  priceUsd!: string | null;
 
   @ApiProperty({
     type: String,
     nullable: true,
-    example: '99971505000000000000000000000',
+    example: '999.71505',
     description:
-      "What `suppliedAmount` is worth, in the protocol's own `Value` unit where **`1e26` is " +
-      'one dollar**. Served in that unit rather than converted to dollars because it is what ' +
-      'the contract computes in, so it reconciles against `getUserAccountData` exactly; ' +
-      'dividing loses digits the chain does not. Null on the same terms as `price`.',
+      'What `suppliedAmount` is worth, in dollars. Every digit the protocol computed is kept ' +
+      "— §7.1's unit puts `1e26` at one dollar, and this is that number divided rather than " +
+      'rounded, so it still reconciles against `getUserAccountData` exactly. Null on the ' +
+      'same terms as `priceUsd`.',
   })
-  suppliedValue!: string | null;
+  suppliedAmountUsd!: string | null;
 
   @ApiProperty({
     type: String,
     nullable: true,
     example: '0',
     description:
-      'What `totalDebt` is worth, in the same unit. Note this prices the **rounded** token ' +
-      'amount, which is what is owed and what a caller should display. The health factor is ' +
-      'computed from an unrounded ray-scaled debt instead, so the two will differ in the last ' +
-      'digits by design. Null on the same terms as `price`.',
+      'What `totalDebt` is worth, in dollars. Note this prices the **rounded** token amount, ' +
+      'which is what is owed and what a caller should display. The health factor is computed ' +
+      'from an unrounded ray-scaled debt instead, so the two will differ in the last digits ' +
+      'by design. Null on the same terms as `priceUsd`.',
   })
-  debtValue!: string | null;
+  totalDebtUsd!: string | null;
 }
 
 export class PricingDto {
@@ -180,34 +183,62 @@ export class PositionDto {
   reserveId!: string;
 
   @ApiProperty({
-    example: '500000000000000000000',
-    description: 'Supplied balance, in shares. Not an asset amount — see the endpoint description.',
+    type: String,
+    nullable: true,
+    example: '500.5',
+    description:
+      "Supplied balance, in shares, scaled by the asset's decimals. Not an asset amount — " +
+      'see the endpoint description. **Null exactly when `asset` is**: the scale lives on the ' +
+      'asset, so without it there is no honest way to render this, and an unscaled integer ' +
+      'in a field documented as decimal would be wrong by orders of magnitude.',
   })
-  suppliedShares!: string;
-
-  @ApiProperty({ example: '0', description: 'Borrowed balance, in shares.' })
-  drawnShares!: string;
-
-  @ApiProperty({ example: '0', description: 'Accrued risk premium, in shares.' })
-  premiumShares!: string;
-
-  @ApiProperty({ example: '0', description: 'Premium offset, in ray.' })
-  premiumOffsetRay!: string;
+  suppliedShares!: string | null;
 
   @ApiProperty({
-    example: '500000000000000000000',
-    description:
-      'Net principal supplied, in asset units. A *flow*, not a balance: it sums what ' +
-      'the events carried, and between events the interest index accrues while emitting ' +
-      'nothing.',
+    type: String,
+    nullable: true,
+    example: '0',
+    description: 'Borrowed balance, in shares. Null on the same terms as `suppliedShares`.',
   })
-  netSuppliedAmount!: string;
+  drawnShares!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '0',
+    description: 'Accrued risk premium, in shares. Null on the same terms as `suppliedShares`.',
+  })
+  premiumShares!: string | null;
 
   @ApiProperty({
     example: '0',
-    description: 'Net principal borrowed, in asset units. Also a flow.',
+    description:
+      'Premium offset, as a ray ratio. **Never null**, unlike the share fields beside it: ' +
+      "a ray's scale is the protocol's fixed 27 rather than the asset's, so it can be " +
+      'rendered whether or not the registry has resolved the reserve.',
   })
-  netBorrowedAmount!: string;
+  premiumOffsetRay!: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '500.5',
+    description:
+      'Net principal supplied, in asset units. A *flow*, not a balance: it sums what ' +
+      'the events carried, and between events the interest index accrues while emitting ' +
+      'nothing. Null on the same terms as `suppliedShares`.',
+  })
+  netSuppliedAmount!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '0',
+    description:
+      'Net principal borrowed, in asset units. Also a flow. Null on the same terms as ' +
+      '`suppliedShares`.',
+  })
+  netBorrowedAmount!: string | null;
 
   @ApiProperty({
     example: true,
@@ -241,7 +272,7 @@ export class PositionDto {
     type: PositionValueDto,
     nullable: true,
     description:
-      'The shares above, converted to token units at `valuedAt`. Null when `asset` is, and ' +
+      'The shares above, converted to whole tokens at `valuedAt`. Null when `asset` is, and ' +
       'also when the Hub has listed the asset but not yet checkpointed its index — a zero ' +
       'there could not be told apart from a real zero balance.',
   })

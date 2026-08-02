@@ -29,6 +29,8 @@ const SECOND_SPOKE = '0x973a023a77420ba610f06b3858ad991df6d85a08';
 const HASH: Hash = `0x${'ab'.repeat(32)}`;
 /** Past 2^53, where a JSON number would silently lose the tail. */
 const HUGE = '422166581625087607993';
+/** The same at the fixture's 6 decimals, which is how it reaches the wire. */
+const HUGE_SCALED = '422166581625087.607993';
 const HUB = '0xcca852bc40e560adc3b1cc58ca5b55638ce826c9';
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 const RAY = '1000000000000000000000000000';
@@ -72,17 +74,36 @@ function position(over: Partial<Position> = {}): Position {
  */
 function wirePosition(
   label: { symbol: string | null; name: string | null } | null = null,
-  usd: { price: string; suppliedValue: string; debtValue: string } | null = null,
+  usd: { priceUsd: string; suppliedAmountUsd: string; totalDebtUsd: string } | null = null,
 ): unknown {
-  const { asset, value, ...rest } = position();
+  const { asset } = position();
+  // **Written out rather than spread from the fixture**, because the two no
+  // longer hold the same numbers: the domain carries base units and the wire
+  // carries them scaled. A spread would have compared the mapper's output with
+  // its own input and passed while scaling nothing.
   return {
-    ...rest,
+    chainId: CHAIN_ID,
+    user: ALICE,
+    spoke: SPOKE,
+    reserveId: '7',
+    suppliedShares: HUGE_SCALED,
+    drawnShares: '0',
+    premiumShares: '0',
+    premiumOffsetRay: '0',
+    netSuppliedAmount: HUGE_SCALED,
+    netBorrowedAmount: '0',
+    usingAsCollateral: true,
+    events: 3,
     asset: { ...asset, symbol: label?.symbol ?? null, name: label?.name ?? null },
     value: {
-      ...value,
-      price: usd?.price ?? null,
-      suppliedValue: usd?.suppliedValue ?? null,
-      debtValue: usd?.debtValue ?? null,
+      suppliedAmount: '1000',
+      drawnDebt: '0',
+      premiumDebt: '0',
+      totalDebt: '0',
+      drawnIndex: '1',
+      priceUsd: usd?.priceUsd ?? null,
+      suppliedAmountUsd: usd?.suppliedAmountUsd ?? null,
+      totalDebtUsd: usd?.totalDebtUsd ?? null,
     },
   };
 }
@@ -199,8 +220,11 @@ describe('positions (e2e)', () => {
       // float64 has 53 bits of mantissa and share balances run far past it. The
       // failure mode is a few wei of drift, which reads as a rounding bug rather
       // than the parse error it is.
-      expect(res.body.items[0].suppliedShares).toBe(HUGE);
+      expect(res.body.items[0].suppliedShares).toBe(HUGE_SCALED);
       expect(typeof res.body.items[0].suppliedShares).toBe('string');
+      // Scaled, and still every digit: 15 before the point and the asset's 6
+      // after it. A JSON number would have kept 17 of those 21.
+      expect(res.body.items[0].suppliedShares).toMatch(/^\d{15}\.\d{6}$/);
       expect(typeof res.body.items[0].reserveId).toBe('string');
       // The valued half too — it is the one a caller actually reads, and the
       // one where a wei of drift looks like a rounding bug rather than a bug.
@@ -252,8 +276,8 @@ describe('positions (e2e)', () => {
       // Three reads behind one response now — the fold from ClickHouse, the
       // label and the price from Postgres — and the caller cannot tell.
       expect(res.body.items[0].value).toMatchObject({
-        price: '99971505',
-        suppliedValue: '99971505000000000000000000000',
+        priceUsd: '0.99971505',
+        suppliedAmountUsd: '999.71505',
       });
       // The third clock, beside `sync` and `valuedAt`.
       expect(res.body.pricing).toEqual({
@@ -279,7 +303,11 @@ describe('positions (e2e)', () => {
       // Amounts are extrapolated to that instant; the stored price is current.
       // A value mixing the two is a number that never existed.
       expect(res.body.pricing).toBeNull();
-      expect(res.body.items[0].value).toMatchObject({ price: null, suppliedValue: null });
+      expect(res.body.items[0].value).toMatchObject({
+        priceUsd: null,
+        suppliedAmountUsd: null,
+        totalDebtUsd: null,
+      });
       prices.prices.clear();
     });
 
@@ -294,8 +322,15 @@ describe('positions (e2e)', () => {
 
       // A zero amount here is indistinguishable from a real zero balance, and
       // JSON has a null for exactly this. The position still appears, because
-      // its shares are real.
-      expect(res.body.items[0]).toMatchObject({ asset: null, value: null, suppliedShares: HUGE });
+      // it is real — but its share counts cannot be rendered, since the scale
+      // that makes them numbers lives on the asset that is missing.
+      expect(res.body.items[0]).toMatchObject({
+        asset: null,
+        value: null,
+        suppliedShares: null,
+        reserveId: '7',
+        events: 3,
+      });
     });
 
     it('values the page at the instant it was asked for, and says so', async () => {

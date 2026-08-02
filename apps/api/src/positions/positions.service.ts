@@ -19,6 +19,7 @@ import {
 import { SYNC_STATUS_STORE, type SyncStatus, type SyncStatusStore } from '@packages/indexing';
 
 import { PositionCursors, type CursorScope } from './position-cursors';
+import { ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS, scale, toDecimal } from './scale';
 import type { PositionPageDto, PositionDto, PricingDto, SyncDto } from './positions.dto';
 import type { PositionParams, PositionQueryParams } from './positions.schema';
 
@@ -27,9 +28,9 @@ export const PRICE_STALE_AFTER_SECONDS = Symbol('PRICE_STALE_AFTER_SECONDS');
 
 /** The USD half of a position, or nothing when there is no price behind it. */
 interface Usd {
-  readonly price: string;
-  readonly suppliedValue: string;
-  readonly debtValue: string;
+  readonly priceUsd: string;
+  readonly suppliedAmountUsd: string;
+  readonly totalDebtUsd: string;
 }
 
 const NO_PRICES: ReadonlyMap<string, ReservePrice> = new Map();
@@ -184,14 +185,23 @@ function usdFor(position: Position, price: ReservePrice | undefined): Usd | null
   const { decimals } = position.asset;
   const answer = BigInt(price.price);
 
+  // Computed in the protocol's unit and divided only on the way out. Scaling
+  // the inputs first would round twice — once into whole tokens and again into
+  // dollars — and §7.1's reconciliation is exact or it is nothing.
   return {
-    price: price.price,
-    suppliedValue: toValue(BigInt(position.value.suppliedAmount), decimals, answer).toString(),
+    priceUsd: scale(price.price, ORACLE_DECIMALS),
+    suppliedAmountUsd: toDecimal(
+      toValue(BigInt(position.value.suppliedAmount), decimals, answer),
+      VALUE_DECIMALS,
+    ),
     // `totalDebt`, which is rounded up into token units as the Spoke rounds a
     // repayment. That is the right number to display and the wrong one for a
     // health factor, which divides an unrounded ray-scaled debt — the two are
     // meant to differ in the last digits.
-    debtValue: toValue(BigInt(position.value.totalDebt), decimals, answer).toString(),
+    totalDebtUsd: toDecimal(
+      toValue(BigInt(position.value.totalDebt), decimals, answer),
+      VALUE_DECIMALS,
+    ),
   };
 }
 
@@ -206,17 +216,27 @@ function toPosition(
   // use for it — but the store keeps them apart so the sweep knows what to do.
   const label = position.asset === null ? undefined : labels.get(position.asset.underlying);
 
+  // **The asset is what carries the scale**, so without it these cannot be
+  // rendered — an unscaled integer in a field the schema calls decimal is not a
+  // degraded answer, it is a wrong one by up to eighteen orders of magnitude.
+  // Null for the same reason `asset` and `value` are null rather than zeroed.
+  const decimals = position.asset?.decimals;
+  const scaled = (amount: string): string | null =>
+    decimals === undefined ? null : scale(amount, decimals);
+
   return {
     chainId: position.chainId,
     user: position.user,
     spoke: position.spoke,
     reserveId: position.reserveId,
-    suppliedShares: position.suppliedShares,
-    drawnShares: position.drawnShares,
-    premiumShares: position.premiumShares,
-    premiumOffsetRay: position.premiumOffsetRay,
-    netSuppliedAmount: position.netSuppliedAmount,
-    netBorrowedAmount: position.netBorrowedAmount,
+    suppliedShares: scaled(position.suppliedShares),
+    drawnShares: scaled(position.drawnShares),
+    premiumShares: scaled(position.premiumShares),
+    // A ray is a ratio, so its scale is the protocol's fixed 27 and not the
+    // asset's — which is why this one survives an unresolved reserve.
+    premiumOffsetRay: scale(position.premiumOffsetRay, RAY_DECIMALS),
+    netSuppliedAmount: scaled(position.netSuppliedAmount),
+    netBorrowedAmount: scaled(position.netBorrowedAmount),
     usingAsCollateral: position.usingAsCollateral,
     events: position.events,
     // Copied rather than spread, for the reason the DTOs exist at all: these
@@ -234,17 +254,17 @@ function toPosition(
             name: label?.name ?? null,
           },
     value:
-      position.value === null
+      position.value === null || decimals === undefined
         ? null
         : {
-            suppliedAmount: position.value.suppliedAmount,
-            drawnDebt: position.value.drawnDebt,
-            premiumDebt: position.value.premiumDebt,
-            totalDebt: position.value.totalDebt,
-            drawnIndex: position.value.drawnIndex,
-            price: usd?.price ?? null,
-            suppliedValue: usd?.suppliedValue ?? null,
-            debtValue: usd?.debtValue ?? null,
+            suppliedAmount: scale(position.value.suppliedAmount, decimals),
+            drawnDebt: scale(position.value.drawnDebt, decimals),
+            premiumDebt: scale(position.value.premiumDebt, decimals),
+            totalDebt: scale(position.value.totalDebt, decimals),
+            drawnIndex: scale(position.value.drawnIndex, RAY_DECIMALS),
+            priceUsd: usd?.priceUsd ?? null,
+            suppliedAmountUsd: usd?.suppliedAmountUsd ?? null,
+            totalDebtUsd: usd?.totalDebtUsd ?? null,
           },
   };
 }
