@@ -23,6 +23,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aave-dao/aave-address-book": "catalog:",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
     "@packages/clickhouse": "workspace:*",

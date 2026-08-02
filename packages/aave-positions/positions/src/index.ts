@@ -52,6 +52,37 @@ export {
   type EnrichmentOptions,
 } from './enrichment/token-enrichment.module';
 
+export type { ReservePrice, ReservePriceRow } from './store/reserve-price';
+export {
+  RESERVE_PRICE_STORE,
+  reserveKey,
+  type ReservePriceStore,
+} from './store/reserve-price-store';
+export { PostgresReservePriceStore } from './store/postgres-reserve-price-store';
+export {
+  ClickHouseReserveListings,
+  RESERVE_LISTINGS,
+  type ReserveListings,
+} from './store/reserve-listing-source';
+
+export {
+  RESERVE_PRICE_READER,
+  type ReservePriceReader,
+  type ReservePrices,
+} from './pricing/reserve-price-reader';
+export { ViemReservePriceReader } from './pricing/viem-reserve-price-reader';
+export {
+  RESERVE_PRICE_OPTIONS,
+  ReservePriceProcessor,
+  type ReservePriceOptions,
+} from './pricing/reserve-price.processor';
+export {
+  RESERVE_PRICE_PROCESSOR,
+  ReservePriceModule,
+  type PricingAsyncOptions,
+  type PricingOptions,
+} from './pricing/reserve-price.module';
+
 export {
   PositionsModule,
   type PositionsAsyncOptions,

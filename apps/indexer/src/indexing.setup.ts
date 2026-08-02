@@ -8,6 +8,8 @@ import {
 } from '@aave-positions/events';
 import {
   PendingTokens,
+  RESERVE_PRICE_PROCESSOR,
+  ReservePriceModule,
   TOKEN_ENRICHMENT_PROCESSOR,
   TokenEnrichmentModule,
 } from '@aave-positions/positions';
@@ -147,8 +149,43 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     }),
   });
 
+  /**
+   * What Aave prices each reserve at, refreshed on a timer.
+   *
+   * The Spoke and its oracle are registered together because the oracle is
+   * per-Spoke and keyed by `reserveId` (§7.4) — a reserve id means nothing
+   * without knowing which contract to ask.
+   *
+   * Off the loop's critical path like enrichment, and for the same reason. The
+   * difference is what wakes it: enrichment waits for an `AddAsset`, because a
+   * range without one cannot have changed the answer. Nothing in the Aave event
+   * stream announces a price, so this asks how long it has been instead.
+   */
+  const pricing = ReservePriceModule.forRootAsync({
+    imports: [ConfigModule],
+    inject: [ConfigService],
+    useFactory: (config: ConfigService<Env, true>) => ({
+      chainId: config.get('CHAIN_ID', { infer: true }),
+      spoke: config.get('MAIN_SPOKE_ADDRESS', { infer: true }),
+      oracle: config.get('MAIN_SPOKE_ORACLE_ADDRESS', { infer: true }),
+      refreshMs: config.get('RESERVE_PRICE_REFRESH_MS', { infer: true }),
+      retryMs: config.get('RESERVE_PRICE_RETRY_MS', { infer: true }),
+      rpc: {
+        rpcUrls: config.get('RPC_URLS', { infer: true }),
+        rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),
+      },
+      clickhouse: {
+        url: config.get('CLICKHOUSE_URL', { infer: true }),
+        database: config.get('CLICKHOUSE_DATABASE', { infer: true }),
+        username: config.get('CLICKHOUSE_USER', { infer: true }),
+        password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
+      },
+      postgres: { url: config.get('POSTGRES_URL', { infer: true }) },
+    }),
+  });
+
   return IndexingModule.forRootAsync({
-    imports: [ConfigModule, spokeEvents, hubEvents, enrichment, postgres],
+    imports: [ConfigModule, spokeEvents, hubEvents, enrichment, pricing, postgres],
     // Re-exported so the readiness probes both resolve through this module,
     // against the clients it already built. Only one of the two event modules
     // can be re-exported: both export ClickHouseHealthIndicator, and two
@@ -169,7 +206,12 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
       // where it is how a pod boots its probes without indexing.
       autoStart: overrides.autoStart ?? config.get('INDEXER_AUTOSTART', { infer: true }),
     }),
-    processors: [SPOKE_EVENT_PROCESSOR, HUB_EVENT_PROCESSOR, TOKEN_ENRICHMENT_PROCESSOR],
+    processors: [
+      SPOKE_EVENT_PROCESSOR,
+      HUB_EVENT_PROCESSOR,
+      TOKEN_ENRICHMENT_PROCESSOR,
+      RESERVE_PRICE_PROCESSOR,
+    ],
     reorgDetector: HashChainReorgDetector,
     cursorStore: PostgresCursorStore,
     providers: [

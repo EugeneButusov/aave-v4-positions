@@ -291,6 +291,16 @@ pnpm --filter @aave-v4-positions/indexer enrich:tokens -- --force
 pnpm --filter @aave-v4-positions/indexer enrich:tokens -- --token 0xa0b8…eb48
 ```
 
+Prices keep themselves current the same way, on a timer rather than an event — nothing in the Aave
+stream announces one. This command reads them when you ask instead, and reports every reserve rather
+than a count, which is how an oracle that refuses one shows up as a name rather than as a USD value
+that is quietly null on the endpoint.
+
+```bash
+pnpm --filter @aave-v4-positions/indexer price:reserves
+pnpm --filter @aave-v4-positions/indexer price:reserves -- --dry-run
+```
+
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
 
 ## Configuration
@@ -321,9 +331,12 @@ every deployment shares, and a per-process one gives pagination that fails only 
 | `INDEXER_STALL_THRESHOLD_MS`   | `300000`   | How long without progress before readiness fails.                                                                    |
 | `INDEXER_AUTOSTART`            | `true`     | `false` boots the probes without indexing.                                                                           |
 | `MAIN_SPOKE_ADDRESS`           | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
+| `MAIN_SPOKE_ORACLE_ADDRESS`    | its oracle | Which oracle prices that Spoke's reserves. Per-Spoke and keyed by `reserveId`, so it travels with the Spoke.         |
 | `CORE_HUB_ADDRESS`             | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
 | `TOKEN_ENRICHMENT_RETRY_MS`    | `60000`    | How long enrichment waits after a run left a gap open. A successful run waits not at all.                            |
 | `TOKEN_ENRICHMENT_CONCURRENCY` | `4`        | Tokens read at once. A public endpoint rate-limits a burst before seventeen calls become slow.                       |
+| `RESERVE_PRICE_REFRESH_MS`     | `60000`    | How long a price stays good. Unlike enrichment's delay this one applies after _success_ — a price is never finished. |
+| `RESERVE_PRICE_RETRY_MS`       | `15000`    | After a read that left a price stale. Shorter: §7.1 weighs collateral against debt, so only the ratio is wrong.      |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
 the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's

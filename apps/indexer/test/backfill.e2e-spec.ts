@@ -27,6 +27,13 @@ describe('backfill wiring (e2e)', () => {
     // Order matters and is asserted: enrichment's fast path reads what the Hub
     // processor wrote earlier in the same dispatch.
     //
+    // Pricing is here for a different reason from enrichment's, and it is worth
+    // being explicit that it does *not* need the range. It reads the oracle at
+    // the chain head, so a backfill over historical blocks gives it nothing —
+    // it is registered because this list is the daemon's list, and the two must
+    // not diverge. Its position is incidental: it derives its work from the
+    // reserve registry rather than from what the dispatch carried.
+    //
     // Matched loosely: the event processors name themselves after the contract
     // they follow, so pinning the whole string would tie this to one address.
     const processors = moduleRef.get<BlockProcessor[]>(BLOCK_PROCESSORS, { strict: false });
@@ -34,6 +41,7 @@ describe('backfill wiring (e2e)', () => {
       'aave-spoke',
       'aave-hub',
       'token-enrichment',
+      'reserve-prices',
     ]);
 
     await moduleRef.close();
