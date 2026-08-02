@@ -1033,30 +1033,50 @@ balance, because between events the index accrues and emits nothing (§5).
 
 ### What it costs
 
-Measured against a full mainnet backfill, genesis 24,720,899 to the tip — 25,729 ledger rows folding
-into **5,347 positions, 3,380 of them open**, plus 3,240 flag rows. The event
+Counted on a full mainnet backfill, genesis to head 25,666,105 — 25,775 ledger rows folding into
+**5,355 positions, 3,388 of them open**, plus 3,240 flag rows. The event
 mix matches the catalogue the analysis extracted independently: 10,181 `Supply`, 5,360 `Borrow`,
 4,238 `Withdraw`, 3,240 `SetUsingAsCollateral`, 2,605 `Repay`, 91 `LiquidationCall`, 14 `AddReserve`.
 
 **On the write path**, which is where a materialized view actually charges you, since its SELECT runs
-in the inserting thread:
+in the inserting thread. Re-measured on the current schema — **10 projections over `spoke_events`**
+(the nine position views plus the reserve registry) and **13 over `hub_events`**, where the figures
+this table used to carry were taken with nine and none:
 
-|                                                                  | with the projections | without |
-| ---------------------------------------------------------------- | -------------------- | ------- |
-| retract a populated 1000-block range (148 events)                | ~23 ms               | ~12 ms  |
-| retract an empty range — most backfill chunks, every quiet block | ~8 ms, 0 rows read   | ~8 ms   |
-| build the whole fold from the ledger in one pass                 | 215 ms               | —       |
+|                                                                  |         |
+| ---------------------------------------------------------------- | ------- |
+| retract a populated 1000-block spoke range, 10 views             | ~18 ms  |
+| retract a populated 1000-block hub range, 13 views               | ~17 ms  |
+| retract an empty range — most backfill chunks, every quiet block | ~10 ms  |
+| rebuild every position projection from the ledger, one pass      | ~193 ms |
 
-So the projections roughly double a populated retraction and add about 11 ms to it, once per
-dispatched range, against a 12-second block time. The empty-range case is unchanged because there is
-nothing to project. The last row is the number that matters for the replay rule above: rebuilding
-every projection from the ledger is a fifth of a second, not an outage.
+Once per dispatched range, against a 12-second block time, and the two ledgers are retracted
+independently. The empty-range case barely moves because there is nothing to project. The last row
+is what makes the replay rule cheap: rebuilding every projection is a fifth of a second, not an
+outage.
 
-**On the read path**, a per-wallet page is ~18 ms and the global "open positions ranked by size" is
-~19 ms. Worth being honest about what that does and does not prove: at 5,347 rows the whole
-`user_positions` table is a single 8,192-row granule, so a per-wallet read touches all of it no matter
-what. The pruning is visible in `EXPLAIN indexes = 1` — both `UNION ALL` branches drop to 1/5 and 2/4
-granules — but it cannot show up in rows read until the table outgrows one granule.
+**These are synthetic events at mainnet's scale and mix** — 25,775 spoke and 58,878 hub rows, the
+proportions taken from the two real backfills — because reproducing the real one needs an archive
+RPC. What that costs is body variety; what it preserves is what the numbers are about, which is how
+much work one inserted row triggers.
+
+**On the read path**, a per-wallet page is **~9 ms for shares alone and ~28 ms with the registry and
+Hub joins**. The joins are the larger half of that, and the reason is worth stating because it is not
+the one the join was argued on:
+
+`hub_assets_current` collapses and `argMax`es the whole of `hub_asset_state` — **29,614 event-grain
+rows to produce 17** — and the join gives it no predicate to prune by, because the valuation needs
+the asset dimension whole. So **the read view is O(`UpdateAsset` history), not O(assets)**. That
+distinction was invisible in an earlier benchmark that seeded the state table with 17 rows directly
+and measured the joins at 9 ms; against a real Hub history they cost about 19.
+
+It is fine now and it does not stay fine: `UpdateAsset` fires 434 times per 10k blocks, so
+`hub_asset_state` grows by roughly 1.5 million rows a year. [Not here yet](#not-here-yet) carries
+what to do about it.
+
+At 2,142 positions the whole `user_positions` table is a single 8,192-row granule, so a per-wallet
+read touches all of it no matter what. The pruning is visible in `EXPLAIN indexes = 1` — both
+`UNION ALL` branches drop granules — but it cannot show up in rows read until the table outgrows one.
 
 **Reconciled against the chain**, which is the check that actually matters (§9): all 3,380 open
 positions compared to `getUserPosition` on the Spoke, **zero mismatches**, at zero tolerance (§9.2).
@@ -1133,8 +1153,14 @@ and sorts 13 before 3 — the same bug the position store's pagination hit).
 
 **Reconciled against `getAsset` at zero tolerance**, in the delta form §5.5 itself used: seed from
 the chain before the window, replay the window through the fold, compare against the chain after
-it. One 59-block window at block 25,667,068, **10 field comparisons across the asset that moved,
-zero drift** — exercising `Restore` and the `UpdateAsset` checkpoint.
+it. One 59-block window at block 25,667,358, **44 field comparisons across the four assets that
+moved, zero drift** — exercising `Restore`, `Add`, `Draw` and the `UpdateAsset` checkpoint.
+
+`index_timestamp` is one of the fields compared, and it is the one worth naming: the event carries no
+timestamp, so the fold derives the checkpoint's time from the block's, and every extrapolated debt
+hangs off it. Shifting every stored checkpoint back an hour turns the run red on all four assets by
+exactly 3,600 seconds — which is how the comparison earned its place, having originally been left
+out.
 
 That window is narrow, and the reason is worth stating rather than hiding: a public endpoint serves
 state for about 127 blocks, which bounds the delta form exactly as it bounded §5.5's own 95-block
@@ -1216,10 +1242,12 @@ reporting `valuedAt` keeps the two from being silently conflated.
 
 **Two `LEFT JOIN`s, where the collateral flag got a `UNION ALL`.** That one was
 event-grain and unbounded; these are the registry and the Hub's asset list — 14
-and 17 rows, bounded by listings rather than by history. Measured rather than
-argued: at 200,000 positions, 37x mainnet, the joins take a median page from
-9.5 ms to 18.4 ms. Roughly double, on a query fast enough that doubling is 9 ms,
-and it buys away two more round trips.
+and 17 rows, bounded by listings rather than by history — and that last clause
+turns out to be the interesting one. The 17 rows are the _result_; producing
+them collapses the whole of `hub_asset_state`, which is not bounded at all. See
+[what it costs](#what-it-costs): the joins take a per-wallet page from ~9 ms to
+~28 ms against a real Hub history, where an earlier benchmark that seeded the
+state table directly measured them at half that.
 
 ### Verification
 
@@ -1370,6 +1398,15 @@ Deliberate, in rough order of what comes next.
   Spoke's fourteen reserves sit at `CF = 0`, so the flag alone overstates collateral for those. It is
   a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
   highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
+- **A materialized `hub_assets_current`.** The read view collapses and `argMax`es all of
+  `hub_asset_state` — 29,614 rows today to produce 17 — on every page, because the valuation needs
+  the asset dimension whole and the join gives it nothing to prune by. That is O(`UpdateAsset`
+  history), and `UpdateAsset` fires 434 times per 10k blocks, so the table grows about 1.5 million
+  rows a year. Two shapes fit: an `AggregatingMergeTree` keyed by asset holding `argMaxState` per
+  latest-wins column, which trades the retraction story the event grain exists for; or caching the
+  17-row dimension in the process and refreshing it on a timer, which is a cache with everything that
+  implies. The first is where the design pressure points, and it wants its own measurement rather
+  than a guess.
 - **The two reconciliations that need an archive RPC.** `reconcile:positions` is the composition
   check — the store's valued output against `getUserSuppliedAssets` and `getUserDebt` — and it cannot
   run without full history, because the reserve registry comes from `AddReserve` at the Spoke's

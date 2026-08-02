@@ -234,11 +234,13 @@ export class ClickHousePositionStore implements PositionStore {
         -- asset list — 14 and 17 rows on mainnet, bounded by how many assets a
         -- Hub lists rather than by history.
         --
-        -- Not free, though, and the measurement says so rather than the
-        -- argument: at 200,000 positions — 37x mainnet — the two joins take the
-        -- median page from 9.5 ms to 18.4 ms. That roughly doubles it, on a
-        -- query fast enough that doubling is 9 ms, and it buys away two more
-        -- round trips and the stitching that would follow them.
+        -- Not free, and the bound is not the one the argument suggests. 17 rows
+        -- is the *result* of hub_assets_current; producing it collapses and
+        -- argMaxes the whole of hub_asset_state, which grows with UpdateAsset
+        -- volume rather than with the asset count. Measured against a realistic
+        -- Hub history — 29,614 state rows — the joins take a per-wallet page
+        -- from ~9 ms to ~28 ms. Fine now; the README's "Not here yet" says what
+        -- to do when it stops being.
         --
         -- LEFT, because a position must survive a reserve the registry has not
         -- seen. The nulls that produces are reported as nulls rather than zeros.
