@@ -18,7 +18,10 @@ CREATE TABLE IF NOT EXISTS indexer_cursor (
     -- permanent, unrecoverable reorg. Refusing the write makes that a loud
     -- failure at the moment it happens instead of a wrong answer later.
     last_hash  text        NOT NULL CHECK (last_hash ~ '^0x[0-9a-f]{64}$'),
-    -- Nothing reads this. It is for the operator answering "is this indexer
-    -- alive?" from psql when the process itself is not reachable.
+    -- How the question "is this indexer alive?" is answered without reaching
+    -- the process: from psql, and by SyncStatusStore, which serves it beside
+    -- every payload the read API returns. Compare it against now() on this
+    -- server rather than in the reader — it is written by this server's clock,
+    -- so a reader subtracting its own would report skew as staleness.
     updated_at timestamptz NOT NULL DEFAULT now()
 )
