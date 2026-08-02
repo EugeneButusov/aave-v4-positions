@@ -18,4 +18,4 @@ import { join } from 'node:path';
  * lives in Postgres because it is a small keyed dimension that gets replaced in
  * place — see `010_token_metadata.sql` for the measurements behind that.
  */
-export const POSITION_POSTGRES_MIGRATIONS_DIR = join(__dirname, 'postgres-migrations');
+export const TOKEN_METADATA_MIGRATIONS_DIR = join(__dirname, 'migrations');

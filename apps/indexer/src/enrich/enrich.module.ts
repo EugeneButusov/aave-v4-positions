@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { PendingTokens, TokenEnrichmentModule } from '@aave-positions/positions';
+import { PendingTokens, TokenEnrichmentModule } from '@packages/token-metadata';
 import { LoggingModule } from '@packages/ops';
 
 import { validateEnv, type Env } from '../config/env';

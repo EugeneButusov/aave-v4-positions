@@ -64,6 +64,7 @@ what is missing below is the config events that decide whether a supply counts a
 │   │       ├── postgres-migrations/  the two tables the Postgres adapters own
 │   │       └── test-support/    fakes and port contracts, exported so adapters run them
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
+│   ├── token-metadata/      what an ERC-20 calls itself — fetched, not folded
 │   └── aave-positions/      packages that know about Aave
 │       ├── events/          ABI bindings, decoders, two append-only event ledgers
 │       └── positions/       the fold over that log, and the store that reads it
@@ -81,6 +82,14 @@ is scoped `@packages` — the directory is the whole of its identity. Anything t
 nested under `packages/aave-positions/` and scoped `@aave-positions`, so the import line says
 whether a module is protocol-aware before you open it. `@aave-v4-positions` stays on the two apps,
 which _are_ the product.
+
+`@packages/token-metadata` is the one place that rule is applied to the _subject_ rather than to
+every line of the implementation, and it is worth saying so rather than letting someone discover it.
+What it holds is an ERC-20's own `symbol()` and `name()` — an Ethereum standard, nothing to do with
+Aave, and the reason `Erc20MetadataReader` sits in `@packages/indexing` too. The one Aave-shaped
+thing in it is the query that asks _which_ tokens to read, which today reads the Hub asset fold. That
+is a table name, not a type: nothing in the package imports `@aave-positions/*` outside its fixtures,
+so pointing it at a different listing source is a new adapter rather than a new package.
 
 `@packages/ops` holds the operational concerns both services share: probes, structured logging and
 the shutdown sequence — everything an operator needs and nothing a position needs. The name is the

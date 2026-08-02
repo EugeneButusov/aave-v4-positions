@@ -1,26 +1,22 @@
 {
-  "name": "@aave-positions/positions",
+  "name": "@packages/token-metadata",
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
-  "description": "The Aave v4 position fold: materialized views over the Spoke event ledger, and the read store over them",
+  "description": "What an ERC-20 calls itself, read from the token and stored beside whatever listed it",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./test-support": {
-      "types": "./dist/test-support/index.d.ts",
-      "default": "./dist/test-support/index.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/clickhouse-migrations','dist/store/clickhouse-migrations',{recursive:true})\"",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/migrations','dist/migrations',{recursive:true})\"",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -31,11 +27,14 @@
     "@nestjs/common": "catalog:",
     "@packages/clickhouse": "workspace:*",
     "@packages/indexing": "workspace:*",
+    "@packages/postgres": "workspace:*",
+    "postgres": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:"
   },
   "devDependencies": {
     "@aave-positions/events": "workspace:*",
+    "@aave-positions/positions": "workspace:*",
     "@nestjs/testing": "catalog:",
     "@packages/migrations": "workspace:*"
   }

@@ -1,7 +1,9 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PositionsModule } from '@aave-positions/positions';
+import { PostgresTokenMetadataStore, TOKEN_METADATA_STORE } from '@packages/token-metadata';
 import { PostgresSyncStatusStore, SYNC_STATUS_STORE } from '@packages/indexing';
+import { PostgresModule } from '@packages/postgres';
 
 import type { Env } from '../config/env';
 import { PositionCursors } from './position-cursors';
@@ -30,10 +32,6 @@ import { PositionsService, STALE_AFTER_SECONDS } from './positions.service';
 @Module({})
 export class PositionsApiModule {
   static forRoot(): DynamicModule {
-    // One registration for both databases. `PositionsModule` builds and
-    // re-exports each, so constructing Postgres here as well would give this
-    // process two pools against one server — one for the indexer's cursor, one
-    // for token metadata, neither aware of the other.
     const positions = PositionsModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -44,17 +42,25 @@ export class PositionsApiModule {
           username: config.get('CLICKHOUSE_USER', { infer: true }),
           password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
         },
-        postgres: { url: config.get('POSTGRES_URL', { infer: true }) },
+      }),
+    });
+
+    const postgres = PostgresModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
+        url: config.get('POSTGRES_URL', { infer: true }),
       }),
     });
 
     return {
       module: PositionsApiModule,
-      imports: [ConfigModule, positions],
+      imports: [ConfigModule, positions, postgres],
       controllers: [PositionsController],
       providers: [
         PositionsService,
         { provide: SYNC_STATUS_STORE, useClass: PostgresSyncStatusStore },
+        { provide: TOKEN_METADATA_STORE, useClass: PostgresTokenMetadataStore },
         {
           // The key that signs a page token is this service's configuration,
           // and the store deals in page keys precisely so it never sees one.
@@ -70,7 +76,7 @@ export class PositionsApiModule {
           inject: [ConfigService],
         },
       ],
-      exports: [positions],
+      exports: [positions, postgres],
     };
   }
 }

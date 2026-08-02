@@ -4,9 +4,8 @@ import {
   type PositionPage,
   type PositionQuery,
   type PositionStore,
-  type TokenLabel,
-  type TokenMetadataStore,
 } from '@aave-positions/positions';
+import { type TokenLabel, type TokenMetadataStore } from '@packages/token-metadata';
 import type { Hash, SyncStatus, SyncStatusStore } from '@packages/indexing';
 import { beforeEach, describe, expect, it } from 'vitest';
 

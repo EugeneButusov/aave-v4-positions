@@ -33,6 +33,7 @@
     "@packages/migrations": "workspace:*",
     "@packages/ops": "workspace:*",
     "@packages/postgres": "workspace:*",
+    "@packages/token-metadata": "workspace:*",
     "postgres": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",

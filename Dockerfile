@@ -21,6 +21,7 @@ COPY packages/indexing/package.json ./packages/indexing/
 COPY packages/migrations/package.json ./packages/migrations/
 COPY packages/ops/package.json ./packages/ops/
 COPY packages/postgres/package.json ./packages/postgres/
+COPY packages/token-metadata/package.json ./packages/token-metadata/
 
 # --ignore-scripts skips the `prepare` hook, which installs git hooks: there is
 # no git repository here, and the image needs none. Everything prepare would

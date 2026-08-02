@@ -20,6 +20,9 @@ export default defineConfig({
       '@aave-positions/positions': fileURLToPath(
         new URL('../../packages/aave-positions/positions/src/index.ts', import.meta.url),
       ),
+      '@packages/token-metadata': fileURLToPath(
+        new URL('../../packages/token-metadata/src/index.ts', import.meta.url),
+      ),
       '@packages/clickhouse': fileURLToPath(
         new URL('../../packages/clickhouse/src/index.ts', import.meta.url),
       ),
