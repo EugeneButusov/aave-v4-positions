@@ -62,8 +62,47 @@ CREATE TABLE IF NOT EXISTS hub_asset_state
     decimals           Nullable(UInt8),
 
     -- +1 live, -1 retraction.
-    sign               Int8
+    sign               Int8,
+
+    -- **An index for "which ERC-20s has the Hub listed", which is otherwise a
+    -- scan.** Enrichment needs that set, and asking for it directly is
+    -- `SELECT DISTINCT underlying ... WHERE underlying IS NOT NULL` —
+    -- `underlying` is not in the sorting key and `chain_id` prunes nothing on a
+    -- single-chain deployment, so `DISTINCT` walks the whole column to build
+    -- its set. Measured at 600,017 rows: `Parts: 4/4, Granules: 76/76`. Since
+    -- `UpdateAsset` writes a NULL `underlying` every time it fires — 434 per
+    -- 10,000 blocks, about 1.5 million rows a year — the cost of the question
+    -- grows with history that has no bearing on the answer.
+    --
+    -- With this, the same query reads **17 rows and 935 bytes in 2 ms**,
+    -- `Granules: 1/76`, and `system.query_log.projections` names it. The query
+    -- does not change: a projection is chosen by the optimizer, so the caller
+    -- keeps asking the obvious question and stops paying for it.
+    --
+    -- **`count()` is not for reading.** It is the minimal aggregate that makes
+    -- this a grouped projection — eighteen rows rather than a re-sorted copy of
+    -- every row — and it counts rows *as written*, before the collapse below
+    -- has cancelled anything. Only the set of `underlying` values is safe to
+    -- trust here, which is all enrichment wants: it is deliberately lax about
+    -- retraction, because a listing rolled back by a reorg costs one wasted
+    -- ERC-20 read and nothing else.
+    PROJECTION listed_tokens
+    (
+        SELECT
+            chain_id,
+            underlying,
+            count()
+        GROUP BY chain_id, underlying
+    )
 )
 ENGINE = VersionedCollapsingMergeTree(sign, version)
 PARTITION BY chain_id
 ORDER BY (chain_id, hub, asset_id, block_number, log_index)
+-- **Required, and the table is refused without it.** ClickHouse rejects a
+-- projection on a `VersionedCollapsingMergeTree` under the default `throw` —
+-- "not supported ... with deduplicate_merge_projection_mode = throw" — because
+-- a projection aggregates rows as written and cannot see the collapse `sign`
+-- encodes. `rebuild` recomputes it from merged data instead of dropping it,
+-- which is what keeps it usable; the caveat that comes with that is the one
+-- spelled out on `count()` above.
+SETTINGS deduplicate_merge_projection_mode = 'rebuild'

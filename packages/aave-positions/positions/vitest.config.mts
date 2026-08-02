@@ -13,6 +13,7 @@ export default defineConfig({
       '@packages/migrations': fileURLToPath(
         new URL('../../migrations/src/index.ts', import.meta.url),
       ),
+      '@packages/postgres': fileURLToPath(new URL('../../postgres/src/index.ts', import.meta.url)),
     },
   },
   test: {
@@ -30,6 +31,13 @@ export default defineConfig({
       CLICKHOUSE_URL: process.env['CLICKHOUSE_URL'] ?? 'http://localhost:8123',
       CLICKHOUSE_USER: process.env['CLICKHOUSE_USER'] ?? 'default',
       CLICKHOUSE_PASSWORD: process.env['CLICKHOUSE_PASSWORD'] ?? '',
+      // Token metadata is the one table here that is not a fold, and it lives
+      // in Postgres — so this project needs both servers. Same default as the
+      // indexing package's, because both are pointed at the same local server
+      // and CI runs it with `POSTGRES_HOST_AUTH_METHOD=trust`. Without it
+      // postgres.js falls back to the OS user, which on a runner is `runner`
+      // and fails as "role does not exist" — a confusing way to say unset.
+      POSTGRES_URL: process.env['POSTGRES_URL'] ?? 'postgres://postgres@localhost:5432/postgres',
     },
     coverage: {
       provider: 'v8',

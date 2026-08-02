@@ -2,7 +2,6 @@ import { Module, type DynamicModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PositionsModule } from '@aave-positions/positions';
 import { PostgresSyncStatusStore, SYNC_STATUS_STORE } from '@packages/indexing';
-import { PostgresModule } from '@packages/postgres';
 
 import type { Env } from '../config/env';
 import { PositionCursors } from './position-cursors';
@@ -15,21 +14,26 @@ import { PositionsService, STALE_AFTER_SECONDS } from './positions.service';
  * Named apart from `@aave-positions/positions`' own `PositionsModule`, which it
  * builds: that one owns the query, this one owns the HTTP surface over it.
  *
- * **Two databases, because the answer needs both.** ClickHouse holds the fold;
- * Postgres holds the indexer's cursor, which is how a response says which block
- * it is true as of. The API reads that row and writes nothing to it — going
- * through `SyncStatusStore` rather than issuing the SQL here keeps the table
- * owned by the package that migrates it, so a schema change breaks a typed port
- * instead of a string literal in an app.
+ * **Two databases, because the answer needs both.** ClickHouse holds the fold.
+ * Postgres holds the indexer's cursor — which is how a response says the block
+ * it is true as of — and the token metadata the labels come from. The API reads
+ * both and writes to neither; going through `SyncStatusStore` rather than
+ * issuing the SQL here keeps the table owned by the package that migrates it,
+ * so a schema change breaks a typed port instead of a string literal in an app.
  *
- * Both database modules are re-exported, so the importing module can register
- * their health indicators without constructing a second client of either. The
- * indicators resolve inside `HealthModule`'s own injector, which is why passing
- * the classes there is not enough on its own.
+ * Both clients come from `PositionsModule`, which builds and re-exports them,
+ * and are re-exported again so the importing module can register their health
+ * indicators without constructing a third. The indicators resolve inside
+ * `HealthModule`'s own injector, which is why passing the classes there is not
+ * enough on its own.
  */
 @Module({})
 export class PositionsApiModule {
   static forRoot(): DynamicModule {
+    // One registration for both databases. `PositionsModule` builds and
+    // re-exports each, so constructing Postgres here as well would give this
+    // process two pools against one server — one for the indexer's cursor, one
+    // for token metadata, neither aware of the other.
     const positions = PositionsModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -40,20 +44,13 @@ export class PositionsApiModule {
           username: config.get('CLICKHOUSE_USER', { infer: true }),
           password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
         },
-      }),
-    });
-
-    const postgres = PostgresModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>) => ({
-        url: config.get('POSTGRES_URL', { infer: true }),
+        postgres: { url: config.get('POSTGRES_URL', { infer: true }) },
       }),
     });
 
     return {
       module: PositionsApiModule,
-      imports: [ConfigModule, positions, postgres],
+      imports: [ConfigModule, positions],
       controllers: [PositionsController],
       providers: [
         PositionsService,
@@ -73,7 +70,7 @@ export class PositionsApiModule {
           inject: [ConfigService],
         },
       ],
-      exports: [positions, postgres],
+      exports: [positions],
     };
   }
 }

@@ -152,6 +152,26 @@ export const envSchema = z.object({
     .default(CORE_HUB_ADDRESS)
     .transform((value) => value.toLowerCase()),
 
+  /**
+   * How long enrichment waits before retrying after a run left a gap open.
+   *
+   * Only after a *failure*. A run that resolved everything imposes no delay, so
+   * a newly listed token is picked up on the next dispatch rather than waiting
+   * out a timer it did not earn. This is the backstop against a dead provider
+   * being re-asked on every block.
+   */
+  TOKEN_ENRICHMENT_RETRY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(60_000),
+
+  /**
+   * How many tokens are read from the chain at once.
+   *
+   * Four, not unbounded. A public endpoint rate-limits a burst long before
+   * seventeen calls become slow, and the transport is configured with
+   * `retryCount: 0`, so one 429 under an unbounded fan-out fails the whole
+   * sweep.
+   */
+  TOKEN_ENRICHMENT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+
   ...clickHouseEnv,
   ...postgresEnv,
 });

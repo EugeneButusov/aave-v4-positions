@@ -33,6 +33,15 @@ export interface HubEventsOptions {
   readonly hub: Address;
   readonly rpc: ChainClientOptions;
   readonly clickhouse: ClickHouseOptions;
+  /**
+   * Told which ERC-20s a range listed, as it is ingested.
+   *
+   * `AddAsset` is decoded here and nowhere else, so this is the one moment the
+   * address is known without going back to a database for it. Optional: an
+   * indexer that serves no labels has no use for it, and ingestion behaves
+   * identically either way.
+   */
+  readonly onListed?: (tokens: readonly Address[]) => void;
 }
 
 export interface HubEventsAsyncOptions<TDeps extends unknown[] = unknown[]> extends Pick<
@@ -115,7 +124,11 @@ export class HubEventsModule {
         {
           provide: token,
           useFactory: (resolved: HubEventsOptions, logs: LogReader, store: EventStore) =>
-            new AaveEventProcessor(hubEventSource(resolved.chainId, resolved.hub), logs, store),
+            new AaveEventProcessor(
+              hubEventSource(resolved.chainId, resolved.hub, resolved.onListed),
+              logs,
+              store,
+            ),
           inject: [HUB_EVENTS_OPTIONS, LOG_READER, HUB_EVENT_STORE],
         },
       ],

@@ -11,8 +11,9 @@ import {
 } from '@packages/indexing';
 import { Logger } from '@nestjs/common';
 
-import { HUB_STATE_TOPICS } from './aave/hub-events';
+import { HUB_STATE_TOPICS, listedTokens } from './aave/hub-events';
 import { SPOKE_POSITION_TOPICS } from './aave/spoke-events';
+import type { DecodedEvent } from './decode/decoded-event';
 import { UndecodableLogError, type ContractLogDecoder } from './decode/decoder';
 import { HubEventDecoder } from './decode/hub-event-decoder';
 import { SpokeEventDecoder } from './decode/spoke-event-decoder';
@@ -32,6 +33,17 @@ export interface EventSource {
   readonly contract: Address;
   readonly topics: readonly Hash[];
   readonly decoder: ContractLogDecoder;
+  /**
+   * Told what was just written, after it is written.
+   *
+   * **Write-only, and never awaited.** A listener exists so a downstream
+   * concern can react to an event it would otherwise have to go and look for —
+   * re-reading the ledger every range to rediscover what this processor had in
+   * hand and threw away. Ingestion must not slow down or fail for one, so its
+   * return value is ignored and it is called after the append rather than
+   * before: nothing here is a second write path.
+   */
+  readonly onAppended?: (events: readonly DecodedEvent[]) => void;
 }
 
 export function spokeEventSource(chainId: number, spoke: Address): EventSource {
@@ -44,13 +56,30 @@ export function spokeEventSource(chainId: number, spoke: Address): EventSource {
   };
 }
 
-export function hubEventSource(chainId: number, hub: Address): EventSource {
+/**
+ * @param onListed told which ERC-20s a range listed, as it is ingested.
+ *
+ * The Hub is where a token first appears, and `AddAsset` carries the address —
+ * so this is the one place the set of listed tokens is known without asking a
+ * database for it. Enrichment subscribes rather than polling.
+ */
+export function hubEventSource(
+  chainId: number,
+  hub: Address,
+  onListed?: (tokens: readonly Address[]) => void,
+): EventSource {
   return {
     chainId,
     role: 'hub',
     contract: hub,
     topics: HUB_STATE_TOPICS,
     decoder: new HubEventDecoder(chainId, hub),
+    ...(onListed && {
+      onAppended: (events): void => {
+        const tokens = listedTokens(events);
+        if (tokens.length > 0) onListed(tokens);
+      },
+    }),
   };
 }
 
@@ -115,6 +144,11 @@ export class AaveEventProcessor implements BlockProcessor {
     if (events.length > 0) {
       this.logger.log(`blocks ${from}..${to}: stored ${events.length} event(s)`);
     }
+
+    // After the write, and not awaited. A listener is a downstream concern
+    // reacting to what landed; it must not be able to fail or delay ingestion.
+    this.source.onAppended?.(events);
+
     return ok();
   }
 

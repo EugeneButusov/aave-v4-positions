@@ -17,6 +17,12 @@ export {
   type LogReader,
   type RawLog,
 } from './chain/log-reader';
+export { ViemErc20MetadataReader } from './chain/viem-erc20-metadata-reader';
+export {
+  ERC20_METADATA_READER,
+  type Erc20MetadataReader,
+  type TokenMetadata,
+} from './chain/erc20-metadata-reader';
 
 export { CURSOR_STORE, type Cursor, type CursorStore } from './indexing/cursor/cursor-store';
 export { PostgresCursorStore } from './indexing/cursor/postgres-cursor-store';

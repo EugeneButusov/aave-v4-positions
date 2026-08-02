@@ -4,10 +4,12 @@ import {
   type LogReader,
   type RawLog,
 } from '@packages/indexing';
+import { encodeAbiParameters, encodeEventTopics } from 'viem';
 import { describe, expect, it } from 'vitest';
 
+import { HUB_ABI } from './aave/hub-events';
 import { SPOKE_POSITION_TOPICS } from './aave/spoke-events';
-import { AaveEventProcessor, spokeEventSource } from './aave-event-processor';
+import { AaveEventProcessor, hubEventSource, spokeEventSource } from './aave-event-processor';
 import type { DecodedEvent } from './decode/decoded-event';
 import type { EventStore } from './store/event-store';
 import fixture from './decode/spoke-logs.fixture.json';
@@ -164,5 +166,91 @@ describe('AaveEventProcessor', () => {
     );
 
     expect(build(new StubReader([])).name).not.toBe(other.name);
+  });
+
+  describe('telling a listener what it just wrote', () => {
+    const HUB = '0xcca852bc40e560adc3b1cc58ca5b55638ce826c9';
+
+    /**
+     * A real `AddAsset` log: `assetId` and `underlying` indexed, `decimals` in
+     * the data. Topics derived from the ABI rather than pasted, so a signature
+     * change breaks this loudly instead of silently matching nothing.
+     */
+    function addAssetLog(underlying: `0x${string}`): RawLog {
+      return {
+        address: HUB,
+        topics: encodeEventTopics({
+          abi: HUB_ABI,
+          eventName: 'AddAsset',
+          args: { assetId: 1n, underlying },
+        }) as RawLog['topics'],
+        data: encodeAbiParameters([{ type: 'uint8' }], [6]),
+        blockNumber: 24_722_784,
+        blockHash: `0x${'ab'.repeat(32)}`,
+        blockTimestamp: 1_785_000_000,
+        transactionHash: `0x${'cd'.repeat(32)}`,
+        transactionIndex: 0,
+        logIndex: 0,
+      };
+    }
+
+    it('hands a Hub listing to the listener, after the write', async () => {
+      const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' as const;
+      const store = new RecordingStore();
+      const seen: (readonly string[])[] = [];
+      const order: string[] = [];
+
+      const source = hubEventSource(CHAIN_ID, HUB, (tokens) => {
+        order.push('listener');
+        seen.push(tokens);
+      });
+      const appending = new RecordingStore();
+      appending.append = (events) => {
+        order.push('append');
+        return store.append(events);
+      };
+
+      const reader = new StubReader([addAssetLog(USDC)]);
+      await new AaveEventProcessor(source, reader, appending).onBlockRange(1, 2, running);
+
+      // After, not before: a listener reacts to what landed, and must never be
+      // able to make ingestion report a write it did not do.
+      expect(order).toEqual(['append', 'listener']);
+      expect(seen).toEqual([[USDC]]);
+    });
+
+    it('says nothing when the range listed nothing', async () => {
+      const seen: (readonly string[])[] = [];
+      const source = hubEventSource(CHAIN_ID, HUB, (tokens) => seen.push(tokens));
+
+      await new AaveEventProcessor(source, new StubReader([]), new RecordingStore()).onBlockRange(
+        1,
+        2,
+        running,
+      );
+
+      // Which is every range after genesis, and the whole reason the consumer
+      // can stop asking a database whether anything happened.
+      expect(seen).toEqual([]);
+    });
+
+    it('ingests identically with no listener at all', async () => {
+      const store = new RecordingStore();
+      const reader = new StubReader([]);
+
+      const outcome = await new AaveEventProcessor(
+        hubEventSource(CHAIN_ID, HUB),
+        reader,
+        store,
+      ).onBlockRange(1, 2, running);
+
+      // Optional by design: an indexer serving no labels has no use for it, and
+      // ingestion cannot behave differently because one is absent.
+      expect(outcome).toEqual({ status: 'ok' });
+      expect(store.calls).toEqual([
+        { kind: 'revert', from: 1, to: 2 },
+        { kind: 'append', count: 0 },
+      ]);
+    });
   });
 });

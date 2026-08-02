@@ -1,6 +1,8 @@
 import { getAbiItem, toEventSelector } from 'viem';
 import { describe, expect, it } from 'vitest';
 
+import type { DecodedEvent } from '../decode/decoded-event';
+
 import {
   CORE_HUB_ADDRESS,
   CORE_HUB_GENESIS_BLOCK,
@@ -8,6 +10,7 @@ import {
   HUB_STATE_EVENTS,
   HUB_STATE_TOPICS,
   isHubStateEvent,
+  listedTokens,
 } from './hub-events';
 import { MAIN_SPOKE_GENESIS_BLOCK, SPOKE_POSITION_TOPICS } from './spoke-events';
 
@@ -78,5 +81,74 @@ describe('Hub event catalogue', () => {
 
   it('defaults to a lower-cased address, since log addresses arrive that way', () => {
     expect(CORE_HUB_ADDRESS).toBe('0xcca852bc40e560adc3b1cc58ca5b55638ce826c9');
+  });
+});
+
+function event(eventName: string, body: Record<string, unknown>): DecodedEvent {
+  return {
+    chainId: 1,
+    address: CORE_HUB_ADDRESS,
+    blockNumber: 24_722_784,
+    blockHash: `0x${'ab'.repeat(32)}`,
+    blockTimestamp: 1_785_000_000,
+    txHash: `0x${'cd'.repeat(32)}`,
+    txIndex: 0,
+    logIndex: 0,
+    eventName,
+    topic1: null,
+    topic2: null,
+    topic3: null,
+    body,
+    data: '0x',
+  };
+}
+
+describe('listedTokens', () => {
+  const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+  const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+
+  it('takes the underlying off every AddAsset', () => {
+    expect(
+      listedTokens([
+        event('AddAsset', { assetId: '1', underlying: USDC, decimals: 6 }),
+        event('AddAsset', { assetId: '2', underlying: WETH, decimals: 18 }),
+      ]),
+    ).toEqual([USDC, WETH]);
+  });
+
+  it('ignores every other Hub event', () => {
+    // The claim the whole push rests on: `AddAsset` is the only event that can
+    // widen the listed set. `Remove` is a liquidity withdrawal, not a
+    // delisting (§4.5), and there is no delisting event at all — so a batch
+    // without an `AddAsset` cannot have changed anything.
+    const others = HUB_STATE_EVENTS.filter((name) => name !== 'AddAsset');
+    expect(others.length).toBeGreaterThan(0);
+    expect(others).toContain('Remove');
+
+    expect(listedTokens(others.map((name) => event(name, { underlying: USDC })))).toEqual([]);
+  });
+
+  it('lower-cases, because the fold and the store both do', () => {
+    const checksummed = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+    expect(listedTokens([event('AddAsset', { underlying: checksummed })])).toEqual([USDC]);
+  });
+
+  it('reports one token however many times it was listed', () => {
+    // A range re-dispatched after a retry replays the same events, and two
+    // asset ids sharing an underlying is not ruled out. Either must be one read.
+    expect(
+      listedTokens([
+        event('AddAsset', { assetId: '1', underlying: USDC }),
+        event('AddAsset', { assetId: '2', underlying: USDC }),
+      ]),
+    ).toEqual([USDC]);
+  });
+
+  it('skips a body that carries no usable address', () => {
+    // `body` is `Record<string, unknown>` by design. A wrong ABI would put
+    // anything here, and writing it to a keyed column is worse than dropping it.
+    expect(listedTokens([event('AddAsset', { assetId: '1' })])).toEqual([]);
+    expect(listedTokens([event('AddAsset', { underlying: '' })])).toEqual([]);
+    expect(listedTokens([event('AddAsset', { underlying: 42 })])).toEqual([]);
   });
 });

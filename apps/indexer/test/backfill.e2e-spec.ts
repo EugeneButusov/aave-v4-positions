@@ -16,14 +16,25 @@ describe('backfill wiring (e2e)', () => {
 
     expect(moduleRef.get(BackfillRunner)).toBeInstanceOf(BackfillRunner);
 
-    // Both streams, and that is the point: a processor added to the daemon and
-    // forgotten here would not fail — a backfill would quietly run fewer
-    // processors over the range and report success.
+    // Both streams and enrichment, and that is the point: a processor added to
+    // the daemon and forgotten here would not fail — a backfill would quietly
+    // run fewer processors over the range and report success.
     //
-    // Matched loosely: each processor names itself after the contract it
-    // follows, so pinning the whole string would tie this to one address.
+    // Enrichment belongs here specifically. Backfilling the genesis range is
+    // one of the two ways the token dimension gets filled, because that is the
+    // only range that carries an `AddAsset`; the daemon's sweep is the other.
+    //
+    // Order matters and is asserted: enrichment's fast path reads what the Hub
+    // processor wrote earlier in the same dispatch.
+    //
+    // Matched loosely: the event processors name themselves after the contract
+    // they follow, so pinning the whole string would tie this to one address.
     const processors = moduleRef.get<BlockProcessor[]>(BLOCK_PROCESSORS, { strict: false });
-    expect(processors.map((p) => p.name.replace(/\(.*/, ''))).toEqual(['aave-spoke', 'aave-hub']);
+    expect(processors.map((p) => p.name.replace(/\(.*/, ''))).toEqual([
+      'aave-spoke',
+      'aave-hub',
+      'token-enrichment',
+    ]);
 
     await moduleRef.close();
   });

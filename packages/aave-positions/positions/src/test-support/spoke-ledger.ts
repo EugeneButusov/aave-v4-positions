@@ -143,7 +143,15 @@ const CONNECTION = {
  */
 export async function migratedDatabase(name: string): Promise<ClickHouseClient> {
   const bootstrap = createClient(CONNECTION);
-  await bootstrap.command({ query: `CREATE DATABASE IF NOT EXISTS ${name}` });
+  // **Dropped first, not `IF NOT EXISTS`.** `migrate` skips ids already in
+  // `schema_migrations`, so a database left behind by an earlier run keeps
+  // whatever schema it was first created with — editing a migration would then
+  // have no effect locally, and the suite would go on testing a table that no
+  // longer matches the file. Found the hard way: a mutation that removed a
+  // projection from `021` left every spec green here and would have failed only
+  // in CI, where the server is always fresh.
+  await bootstrap.command({ query: `DROP DATABASE IF EXISTS ${name}` });
+  await bootstrap.command({ query: `CREATE DATABASE ${name}` });
   await bootstrap.close();
 
   const client = createClient({ ...CONNECTION, database: name });

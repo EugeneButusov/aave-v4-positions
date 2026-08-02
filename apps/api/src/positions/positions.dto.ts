@@ -38,6 +38,26 @@ export class PositionAssetDto {
 
   @ApiProperty({ example: 6, description: 'Token decimals, as the Hub listed them.' })
   decimals!: number;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'USDC',
+    description:
+      "The token's own `symbol()`. **A label, not an identity** — nothing stops two tokens " +
+      'claiming the same one, or claiming a familiar one in a different alphabet. `underlying` ' +
+      'is the identity. Null when the token has no `symbol()`, which ERC-20 permits, and also ' +
+      'in the window before enrichment has reached a newly listed asset.',
+  })
+  symbol!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'USD Coin',
+    description: "The token's own `name()`. Null on the same terms as `symbol`.",
+  })
+  name!: string | null;
 }
 
 export class PositionValueDto {

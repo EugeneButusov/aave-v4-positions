@@ -17,7 +17,8 @@
     "test:cov": "vitest run --coverage",
     "migrate": "node dist/migrate.js",
     "reconcile:hub": "node --enable-source-maps dist/reconcile-hub.js",
-    "reconcile:positions": "node --enable-source-maps dist/reconcile-positions.js"
+    "reconcile:positions": "node --enable-source-maps dist/reconcile-positions.js",
+    "enrich:tokens": "node --enable-source-maps dist/enrich-tokens.js"
   },
   "dependencies": {
     "@aave-positions/events": "workspace:*",

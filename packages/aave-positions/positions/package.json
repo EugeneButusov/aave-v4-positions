@@ -16,19 +16,22 @@
     "dist"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/clickhouse-migrations','dist/store/clickhouse-migrations',{recursive:true})\"",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/clickhouse-migrations','dist/store/clickhouse-migrations',{recursive:true});require('node:fs').cpSync('src/postgres-migrations','dist/postgres-migrations',{recursive:true})\"",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@packages/clickhouse": "workspace:*",
-    "@packages/indexing": "workspace:*",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
+    "@packages/clickhouse": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@packages/postgres": "workspace:*",
+    "postgres": "catalog:",
     "reflect-metadata": "catalog:",
-    "rxjs": "catalog:"
+    "rxjs": "catalog:",
+    "viem": "catalog:"
   },
   "devDependencies": {
     "@aave-positions/events": "workspace:*",

@@ -763,7 +763,8 @@ Worth separating clearly, because public RPCs blur it commercially:
 The design in §5 satisfies this and then some: because the Hub emits its own index
 (§5.3), **the entire pipeline — backfill, valuation, and historical queries — reads logs
 only.** No archive node, and no `eth_call` on the critical path at all. `eth_call` is used
-solely by the reconciliation job (§9), and only at `latest`. This is a deliberate constraint to
+by the reconciliation job (§9) and by token-metadata enrichment (§12.5), both only at `latest` and
+neither while serving a request. This is a deliberate constraint to
 state in the README, not an accident.
 
 Caveat: some providers gate `eth_getLogs` history behind an "archive" plan anyway. That is a
@@ -1155,9 +1156,11 @@ which is a strictly better alert than a price trigger.
 
 ### 12.5 Out of scope
 
-- **Token name and symbol.** Not present in any Aave event. A one-time ERC-20 read per reserve
-  (14 calls, immutable, cached forever) or a static token list. Cheap, but it is enrichment,
-  not indexed data.
+- **Token name and symbol.** Not present in any Aave event. A one-time ERC-20 read per *Hub asset*
+  — 17 here, not the 14 Spoke reserves, since the address comes from `AddAsset` — immutable and
+  cached forever, or a static token list. Cheap, but it is enrichment, not indexed data. **[built]**
+  — see the README's enrichment section; it reads from the token rather than a list, because a list
+  has no `name` and is silent on anything listed after its release.
 - **Market price and oracle deviation.** The protocol's own oracle answers "what is this worth
   *to Aave*", which is what drives liquidation and is therefore the right price for a position
   view. An independent market price (§11) is a separate enrichment concern.
