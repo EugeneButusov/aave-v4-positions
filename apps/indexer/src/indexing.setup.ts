@@ -10,7 +10,7 @@ import {
   PendingTokens,
   TOKEN_ENRICHMENT_PROCESSOR,
   TokenEnrichmentModule,
-} from '@aave-positions/positions';
+} from '@aave-positions/enrichment';
 import {
   BLOCK_HEADER_STORE,
   HashChainReorgDetector,

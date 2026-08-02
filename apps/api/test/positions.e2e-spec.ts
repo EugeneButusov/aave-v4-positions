@@ -1,8 +1,8 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { TOKEN_METADATA_STORE } from '@aave-positions/enrichment';
 import {
   POSITION_STORE,
-  TOKEN_METADATA_STORE,
   type Position,
   type PositionPage,
   type PositionQuery,

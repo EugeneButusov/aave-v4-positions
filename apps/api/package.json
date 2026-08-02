@@ -16,16 +16,17 @@
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {
+    "@aave-positions/enrichment": "workspace:*",
     "@aave-positions/positions": "workspace:*",
-    "@packages/clickhouse": "workspace:*",
-    "@packages/indexing": "workspace:*",
-    "@packages/ops": "workspace:*",
-    "@packages/postgres": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/config": "catalog:",
     "@nestjs/core": "catalog:",
     "@nestjs/platform-express": "catalog:",
     "@nestjs/swagger": "catalog:",
+    "@packages/clickhouse": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@packages/ops": "workspace:*",
+    "@packages/postgres": "workspace:*",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
     "zod": "catalog:"

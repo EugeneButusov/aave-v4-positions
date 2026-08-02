@@ -1,5 +1,6 @@
 import { Module, type DynamicModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { EnrichmentReadModule } from '@aave-positions/enrichment';
 import { PositionsModule } from '@aave-positions/positions';
 import { PostgresSyncStatusStore, SYNC_STATUS_STORE } from '@packages/indexing';
 
@@ -30,10 +31,6 @@ import { PositionsService, STALE_AFTER_SECONDS } from './positions.service';
 @Module({})
 export class PositionsApiModule {
   static forRoot(): DynamicModule {
-    // One registration for both databases. `PositionsModule` builds and
-    // re-exports each, so constructing Postgres here as well would give this
-    // process two pools against one server — one for the indexer's cursor, one
-    // for token metadata, neither aware of the other.
     const positions = PositionsModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -44,13 +41,24 @@ export class PositionsApiModule {
           username: config.get('CLICKHOUSE_USER', { infer: true }),
           password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
         },
+      }),
+    });
+
+    // **The read side only.** The processor that fills this table lives in
+    // `TokenEnrichmentModule`, and an API replica must never acquire one by
+    // importing the thing it reads — every replica would then fan out over the
+    // same ERC-20s and race the same rows.
+    const enrichment = EnrichmentReadModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService<Env, true>) => ({
         postgres: { url: config.get('POSTGRES_URL', { infer: true }) },
       }),
     });
 
     return {
       module: PositionsApiModule,
-      imports: [ConfigModule, positions],
+      imports: [ConfigModule, positions, enrichment],
       controllers: [PositionsController],
       providers: [
         PositionsService,
@@ -70,7 +78,7 @@ export class PositionsApiModule {
           inject: [ConfigService],
         },
       ],
-      exports: [positions],
+      exports: [positions, enrichment],
     };
   }
 }

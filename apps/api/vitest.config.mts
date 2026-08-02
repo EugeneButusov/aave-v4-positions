@@ -13,6 +13,9 @@ export default defineConfig({
   // stale dist — and watch mode would never see the change at all.
   resolve: {
     alias: {
+      '@aave-positions/enrichment': fileURLToPath(
+        new URL('../../packages/aave-positions/enrichment/src/index.ts', import.meta.url),
+      ),
       '@aave-positions/positions': fileURLToPath(
         new URL('../../packages/aave-positions/positions/src/index.ts', import.meta.url),
       ),

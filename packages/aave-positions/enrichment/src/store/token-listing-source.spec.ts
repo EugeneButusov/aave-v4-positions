@@ -2,8 +2,13 @@ import type { ClickHouseClient } from '@clickhouse/client';
 import { ClickHouseHubEventStore } from '@aave-positions/events';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { HUB_TABLES, addAsset, updateAsset } from '../test-support/hub-ledger';
-import { CHAIN_ID, migratedDatabase } from '../test-support/spoke-ledger';
+import {
+  CHAIN_ID,
+  HUB_TABLES,
+  addAsset,
+  migratedDatabase,
+  updateAsset,
+} from '@aave-positions/positions/test-support';
 import { ClickHouseTokenListings } from './token-listing-source';
 
 /** Its own database: sibling suites share table names and would truncate this one. */

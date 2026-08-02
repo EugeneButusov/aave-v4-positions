@@ -21,6 +21,7 @@
     "enrich:tokens": "node --enable-source-maps dist/enrich-tokens.js"
   },
   "dependencies": {
+    "@aave-positions/enrichment": "workspace:*",
     "@aave-positions/events": "workspace:*",
     "@aave-positions/positions": "workspace:*",
     "@clickhouse/client": "catalog:",

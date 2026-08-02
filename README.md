@@ -66,7 +66,8 @@ what is missing below is the config events that decide whether a supply counts a
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
 │   └── aave-positions/      packages that know about Aave
 │       ├── events/          ABI bindings, decoders, two append-only event ledgers
-│       └── positions/       the fold over that log, and the store that reads it
+│       ├── positions/       the fold over that log, and the store that reads it
+│       └── enrichment/      what no Aave event carries, fetched and kept beside it
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -121,6 +122,15 @@ package, and the asymmetry is the design — ingestion is code, so that package 
 write path, while this one owns a query, because the database maintains the projection. There is
 nothing here to start and nothing to keep in step with the indexer.
 
+`@aave-positions/enrichment` is everything the protocol does not put in an event. Today that is what
+each token calls itself; anything else fetched rather than folded lands beside it. It is a third
+package rather than a folder in the fold because it is a different _kind_ of data and says so at
+every level — fetched rather than derived, Postgres rather than ClickHouse, replaced in place rather
+than collapsed, and filled by a worker rather than by a view. It also has a shape neither neighbour
+has: it both writes and is read, so it ships a write-side module the indexer registers and a
+read-side module the API imports, and an API replica cannot acquire a worker by importing the thing
+it reads.
+
 `apps/indexer` is left with about 310 lines: `main.ts`, `AppModule`, env validation and the
 migration entry point. Everything it _does_ comes from the packages it wires together, which is what
 makes the engine reusable and the Aave half independently testable. It is also the composition point
@@ -130,8 +140,9 @@ sets ship together — the same reason it is the application that names which pr
 `apps/api` is the same shape on the read side: a controller, a service that maps the domain type onto
 a wire contract, and the request schemas. It owns two things the packages deliberately do not — the
 cursor's wire format, because the key that signs it is this service's configuration, and the decision
-that an unindexed chain is a 404. Everything else it serves comes from `@aave-positions/positions`
-and, for the block a response is true as of, `@packages/indexing`. It writes to neither database.
+that an unindexed chain is a 404. Everything else it serves comes from `@aave-positions/positions`,
+`@aave-positions/enrichment` and — for the block a response is true as of — `@packages/indexing`. It
+writes to neither database.
 
 `pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
 no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config

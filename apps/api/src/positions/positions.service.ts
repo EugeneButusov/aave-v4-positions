@@ -1,12 +1,10 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
-  POSITION_STORE,
   TOKEN_METADATA_STORE,
-  type Position,
-  type PositionStore,
   type TokenLabel,
   type TokenMetadataStore,
-} from '@aave-positions/positions';
+} from '@aave-positions/enrichment';
+import { POSITION_STORE, type Position, type PositionStore } from '@aave-positions/positions';
 import { SYNC_STATUS_STORE, type SyncStatus, type SyncStatusStore } from '@packages/indexing';
 
 import { PositionCursors, type CursorScope } from './position-cursors';
