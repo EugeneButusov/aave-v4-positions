@@ -59,7 +59,19 @@ const ADDITIVE = [
  * none did, the mirror holds null and the field is reported skipped rather than
  * counted as agreement.
  */
-const LATEST_WINS = ['drawnIndex', 'drawnRate', 'realizedFees', 'liquidityFee'] as const;
+const LATEST_WINS = [
+  'drawnIndex',
+  'drawnRate',
+  'realizedFees',
+  'liquidityFee',
+  // The checkpoint's own time, and the field the whole extrapolation hangs off:
+  // `drawnIndex(t)` applies linear interest from *here*, so an hour's error
+  // shifts every debt in the asset by an hour of interest. It is the one
+  // latest-wins value the mirror derives rather than reads — the event carries
+  // no timestamp and `accrue()` sets `lastUpdateTimestamp = block.timestamp`,
+  // so this checks that derivation against what the chain actually stored.
+  'checkpointAt',
+] as const;
 
 /**
  * The chain's `getAsset` struct, reduced to the fields the mirror folds.
@@ -80,6 +92,7 @@ function chainFields(a: {
   drawnRate: bigint;
   realizedFees: bigint;
   liquidityFee: number;
+  lastUpdateTimestamp: number;
 }): Readonly<Record<string, bigint>> {
   return {
     liquidity: a.liquidity,
@@ -93,7 +106,42 @@ function chainFields(a: {
     drawnRate: a.drawnRate,
     realizedFees: a.realizedFees,
     liquidityFee: BigInt(a.liquidityFee),
+    checkpointAt: BigInt(a.lastUpdateTimestamp),
   };
+}
+
+/**
+ * The mirror's value for a latest-wins field, as an integer.
+ *
+ * All of them are decimal strings or numbers except `index_timestamp`, which the
+ * store formats as an ISO instant so a caller gets an unambiguous UTC time
+ * rather than a locale-dependent one. Comparing it means going back to seconds.
+ */
+/**
+ * How each latest-wins comparison reads its value off the mirror row.
+ *
+ * Named one at a time rather than indexed dynamically: this is the mapping
+ * between the comparison's field names and the row's, and a wrong pair would
+ * compare two unrelated numbers and report agreement. Keyed by the field list,
+ * so adding a comparison without an accessor does not compile.
+ */
+const MIRROR_FIELD: Readonly<
+  Record<(typeof LATEST_WINS)[number], (row: HubAsset) => string | number | null>
+> = {
+  drawnIndex: (row) => row.drawnIndex,
+  drawnRate: (row) => row.drawnRate,
+  realizedFees: (row) => row.realizedFees,
+  liquidityFee: (row) => row.liquidityFee,
+  // The store formats this as an ISO instant so a caller gets an unambiguous
+  // UTC time; comparing it against the chain's uint40 means going back to
+  // seconds.
+  checkpointAt: (row) =>
+    row.indexTimestamp === null ? null : Date.parse(row.indexTimestamp) / 1000,
+};
+
+function mirrorValue(row: HubAsset, field: (typeof LATEST_WINS)[number]): bigint | null {
+  const value = MIRROR_FIELD[field](row);
+  return value === null ? null : BigInt(value);
 }
 
 interface Mismatch {
@@ -214,7 +262,7 @@ async function main(): Promise<void> {
     }
 
     for (const field of LATEST_WINS) {
-      const value = row[field];
+      const value = mirrorValue(row, field);
       if (value === null) {
         // No event of that kind inside the window. Not agreement, and not
         // drift — say so rather than counting it either way.
@@ -222,7 +270,7 @@ async function main(): Promise<void> {
         continue;
       }
       const expected = after[field] ?? 0n;
-      const actual = BigInt(value);
+      const actual = value;
       compared += 1;
       if (expected !== actual) {
         mismatches.push({

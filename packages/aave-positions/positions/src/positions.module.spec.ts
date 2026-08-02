@@ -4,6 +4,8 @@ import { Test } from '@nestjs/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ClickHousePositionStore } from './store/clickhouse-position-store';
+import { ClickHouseHubAssetStore } from './store/clickhouse-hub-asset-store';
+import { HUB_ASSET_STORE, type HubAssetStore } from './store/hub-asset-store';
 import { POSITION_STORE, type PositionStore } from './store/position-store';
 import { PositionsModule } from './positions.module';
 
@@ -35,6 +37,15 @@ describe('PositionsModule', () => {
     const moduleRef = await Test.createTestingModule({ imports: [positions()] }).compile();
 
     expect(moduleRef.get<PositionStore>(POSITION_STORE)).toBeInstanceOf(ClickHousePositionStore);
+  });
+
+  it('exports the Hub asset store beside the position one', async () => {
+    const moduleRef = await Test.createTestingModule({ imports: [positions()] }).compile();
+
+    // Both or neither: nothing values a position without the Hub's index, so a
+    // graph that hands out one and not the other only makes incomplete wiring
+    // possible.
+    expect(moduleRef.get<HubAssetStore>(HUB_ASSET_STORE)).toBeInstanceOf(ClickHouseHubAssetStore);
   });
 
   it('re-exports ClickHouse, so a probe needs no second client', async () => {
