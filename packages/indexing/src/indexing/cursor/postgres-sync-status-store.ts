@@ -41,7 +41,11 @@ export class PostgresSyncStatusStore implements SyncStatusStore {
           -- own now(), so a reader subtracting it from its own clock reports
           -- skew as staleness — and a fast reader would call a healthy indexer
           -- stale.
-          EXTRACT(EPOCH FROM (now() - updated_at)) AS age_seconds
+          --
+          -- Floored to whole seconds. EXTRACT returns microseconds, and six
+          -- decimal places on a figure compared against a threshold in tens of
+          -- seconds is precision nobody can use and everybody has to read.
+          floor(EXTRACT(EPOCH FROM (now() - updated_at)))::bigint AS age_seconds
       FROM indexer_cursor
       WHERE chain_id = ${chainId}
     `;

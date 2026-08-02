@@ -32,6 +32,12 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
     .setTitle('Aave v4 Positions API')
     .setDescription(DESCRIPTION)
     .setVersion(API_CONTRACT_VERSION)
+    .addTag(
+      'positions',
+      'Folded from the Spoke event stream. Balances are shares — no token address, ' +
+        'no price, no health factor, because the Hub events those need are not ingested ' +
+        'yet. Every response carries the block it is true as of.',
+    )
     .addTag('health', 'Kubernetes probes. Outside the API prefix, and unversioned.')
     .build();
 

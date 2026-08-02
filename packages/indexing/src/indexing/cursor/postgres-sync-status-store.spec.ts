@@ -92,9 +92,10 @@ describe('PostgresSyncStatusStore', () => {
       lastHash: hashOf('a', 500),
     });
 
-    await expect(store.get(CHAIN_ID)).resolves.toMatchObject({
-      ageSeconds: expect.closeTo(0, 0),
-    });
+    // Whole seconds. EXTRACT returns microseconds, and six decimal places on a
+    // figure compared against a threshold in tens of seconds is precision
+    // nobody can use.
+    await expect(store.get(CHAIN_ID)).resolves.toMatchObject({ ageSeconds: 0 });
 
     await sql`UPDATE indexer_cursor SET updated_at = now() - interval '90 seconds'`;
 

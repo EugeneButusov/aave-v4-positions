@@ -13,7 +13,19 @@ export default defineConfig({
   // stale dist — and watch mode would never see the change at all.
   resolve: {
     alias: {
+      '@aave-positions/positions': fileURLToPath(
+        new URL('../../packages/aave-positions/positions/src/index.ts', import.meta.url),
+      ),
+      '@packages/clickhouse': fileURLToPath(
+        new URL('../../packages/clickhouse/src/index.ts', import.meta.url),
+      ),
+      '@packages/indexing': fileURLToPath(
+        new URL('../../packages/indexing/src/index.ts', import.meta.url),
+      ),
       '@packages/ops': fileURLToPath(new URL('../../packages/ops/src/index.ts', import.meta.url)),
+      '@packages/postgres': fileURLToPath(
+        new URL('../../packages/postgres/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {
@@ -21,8 +33,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.spec.ts', 'test/**/*.e2e-spec.ts'],
-    // Hermetic: NODE_ENV=test makes ConfigModule skip any local .env file.
-    env: { NODE_ENV: 'test', LOG_LEVEL: 'silent' },
+    // Hermetic: no database is reached. Neither client opens a socket at boot,
+    // and the specs override the two stores — what the real ones do is pinned
+    // where they live, against real servers, and no double could reproduce it.
+    env: {
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'silent',
+      // Long enough to satisfy the codec, which refuses a guessable key.
+      POSITIONS_CURSOR_SECRET: 'spec-cursor-secret'.padEnd(32, '.'),
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

@@ -33,6 +33,49 @@ export const envSchema = z.object({
     .transform((value) => value.replace(/^\/+|\/+$/g, '')),
 
   SHUTDOWN_GRACE_SECONDS: z.coerce.number().int().min(0).max(300).default(10),
+
+  /**
+   * Where the fold lives.
+   *
+   * Copied from the indexer's contract rather than shared with it. These are
+   * two independently deployable services, and hoisting the fragment into
+   * `@packages/clickhouse` would put a validation library in the package that
+   * owns the client — a cost paid by every consumer to save four lines here.
+   */
+  CLICKHOUSE_URL: z.url().default('http://localhost:8123'),
+  CLICKHOUSE_DATABASE: z.string().min(1).default('default'),
+  CLICKHOUSE_USER: z.string().min(1).default('default'),
+  // Empty is legitimate: a container started with CLICKHOUSE_SKIP_USER_SETUP
+  // has no password, which is how the test and CI instances run.
+  CLICKHOUSE_PASSWORD: z.string().default(''),
+
+  /**
+   * Where the indexer records how far it got. Read-only from here — the API
+   * stamps every response with it and writes nothing.
+   */
+  POSTGRES_URL: z.url().default('postgres://postgres@localhost:5432/postgres'),
+
+  /**
+   * Signs pagination cursors, so one cannot be altered or carried to a
+   * different listing.
+   *
+   * Required, with no default: a default would be a key every deployment
+   * shares, and a shared key is not a signature. **Must be identical across
+   * replicas** — each process signs with its own copy, so a per-process secret
+   * means a cursor issued by one pod is rejected by the next, which shows up as
+   * pagination that fails only under load and only sometimes.
+   */
+  POSITIONS_CURSOR_SECRET: z.string().min(32),
+
+  /**
+   * Above this, a response reports itself stale.
+   *
+   * Deliberately *not* the indexer's `INDEXER_STALL_THRESHOLD_MS` (300s). That
+   * one decides whether to drain traffic from a pod; this one tells a reader
+   * their numbers are a minute old. Different questions, and a reader wants to
+   * know long before an operator does.
+   */
+  API_SYNC_STALE_AFTER_SECONDS: z.coerce.number().int().min(1).default(60),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -106,6 +106,26 @@ services:
       SHUTDOWN_GRACE_SECONDS: '5'
       API_HOST: 0.0.0.0
       API_PORT: '3000'
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: aave
+      CLICKHOUSE_USER: aave
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+      # Read-only from here: the API stamps responses with how far the indexer
+      # got, and writes nothing to this database.
+      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
+      # A known value so `docker compose up` works unconfigured. Set your own in
+      # any deployment — a shared key is not a signature — and set the SAME one
+      # on every replica.
+      POSITIONS_CURSOR_SECRET: ${POSITIONS_CURSOR_SECRET:-local-development-cursor-secret-0000}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      # Without this a fresh stack answers 500s from a view that does not exist
+      # yet, for as long as the migration takes.
+      migrate:
+        condition: service_completed_successfully
     ports:
       - '${API_PORT:-3000}:3000'
     healthcheck:

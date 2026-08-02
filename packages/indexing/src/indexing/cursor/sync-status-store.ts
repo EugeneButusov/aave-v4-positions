@@ -12,8 +12,8 @@ export interface SyncStatus {
   readonly lastHash: Hash;
   readonly updatedAt: Date;
   /**
-   * Seconds since the indexer last advanced, **measured by the database's own
-   * clock**.
+   * Whole seconds since the indexer last advanced, **measured by the database's
+   * own clock**.
    *
    * Not derivable from {@link updatedAt} by a reader: that timestamp is written
    * by the database, so subtracting it from a different process's clock reports
