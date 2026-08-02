@@ -43,6 +43,49 @@ describe('PositionsModule', () => {
     expect(moduleRef.get(ClickHouseHealthIndicator)).toBeInstanceOf(ClickHouseHealthIndicator);
   });
 
+  it('takes options with no imports at all', async () => {
+    // A factory that closes over its configuration rather than injecting it —
+    // which is every test harness, and any application that reads its settings
+    // before Nest starts.
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        PositionsModule.forRootAsync({
+          useFactory: () => ({
+            clickhouse: {
+              url: 'http://clickhouse.invalid',
+              database: 'aave',
+              username: 'aave',
+              password: '',
+            },
+            cursorSecret: 'spec-cursor-secret'.padEnd(32, '.'),
+          }),
+        }),
+      ],
+    }).compile();
+
+    expect(moduleRef.get<PositionStore>(POSITION_STORE)).toBeInstanceOf(ClickHousePositionStore);
+  });
+
+  it('rejects a cursor secret short enough to guess', async () => {
+    await expect(
+      Test.createTestingModule({
+        imports: [
+          PositionsModule.forRootAsync({
+            useFactory: () => ({
+              clickhouse: {
+                url: 'http://clickhouse.invalid',
+                database: 'aave',
+                username: 'aave',
+                password: '',
+              },
+              cursorSecret: 'too-short',
+            }),
+          }),
+        ],
+      }).compile(),
+    ).rejects.toThrow(/at least 32/);
+  });
+
   it('reaches the database not at all while building', async () => {
     const fetch = vi.fn<() => Promise<Response>>();
     vi.stubGlobal('fetch', fetch);

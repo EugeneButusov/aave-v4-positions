@@ -1,127 +1,41 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { createClient, type ClickHouseClient } from '@clickhouse/client';
-import {
-  ClickHouseEventStore,
-  EVENT_MIGRATIONS_DIR,
-  type DecodedEvent,
-} from '@aave-positions/events';
-import { loadMigrations, migrate, splitStatements } from '@packages/clickhouse';
-import type { Address } from '@packages/indexing';
+import type { ClickHouseClient } from '@clickhouse/client';
+import { ClickHouseEventStore, type DecodedEvent } from '@aave-positions/events';
+import { splitStatements } from '@packages/clickhouse';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore, POSITION_MIGRATIONS_DIR } from './clickhouse-position-store';
 import { PositionCursorCodec } from './position-cursor';
 import type { Position } from './position';
+import {
+  ALICE,
+  BOB,
+  CHAIN_ID,
+  HUGE,
+  ROUTER,
+  SPOKE,
+  TABLES,
+  addReserve,
+  borrow,
+  event,
+  liquidate,
+  migratedDatabase,
+  reportDeficit,
+  repay,
+  setCollateral,
+  supply,
+  withdraw,
+  type At,
+} from '../test-support/spoke-ledger';
 
-const CHAIN_ID = 1;
-const SPOKE: Address = '0x94e7a5dcbe816e498b89ab752661904e2f56c485';
-/** Checksummed, as viem hands them back. Lower-casing them is the fold's job. */
-const ALICE = '0x82D16fF1C724ab72F218A3f7f6DD3E5385ee87E8';
-const BOB = '0xB8516f75DCf450b5b455b5114F5a92F6abD37dCa';
-/** A position manager, and never the owner of a position (§2). */
-const ROUTER = '0xe68ab4F90Fe026B9873F5F276eD2d7efBbbE42Be';
-/** Past 2^53 and past Int64 max, which is where JSONExtractInt returns 0. */
-const HUGE = '422166581625087607993';
+/** Its own database: sibling suites share table names and would truncate this one. */
+const DATABASE = 'spec_position_fold';
 
 let client: ClickHouseClient;
 let events: ClickHouseEventStore;
 let store: ClickHousePositionStore;
-
-interface At {
-  readonly block: number;
-  readonly log?: number;
-}
-
-function event(name: string, at: At, body: Record<string, unknown>): DecodedEvent {
-  return {
-    chainId: CHAIN_ID,
-    address: SPOKE,
-    blockNumber: at.block,
-    blockHash: `0x${'aa'.repeat(32)}`,
-    blockTimestamp: 1_785_000_000,
-    txHash: `0x${'bb'.repeat(32)}`,
-    txIndex: 0,
-    logIndex: at.log ?? 0,
-    eventName: name,
-    topic1: null,
-    topic2: null,
-    topic3: null,
-    body,
-    data: '0x',
-  };
-}
-
-const NO_PREMIUM = { sharesDelta: '0', offsetRayDelta: '0', restoredPremiumRay: '0' };
-
-const supply = (at: At, user: string, reserveId: string, shares: string, caller = user) =>
-  event('Supply', at, {
-    reserveId,
-    caller,
-    user,
-    suppliedShares: shares,
-    suppliedAmount: shares,
-  });
-
-const withdraw = (at: At, user: string, reserveId: string, shares: string) =>
-  event('Withdraw', at, {
-    reserveId,
-    caller: user,
-    user,
-    withdrawnShares: shares,
-    withdrawnAmount: shares,
-  });
-
-const borrow = (at: At, user: string, reserveId: string, shares: string) =>
-  event('Borrow', at, { reserveId, caller: user, user, drawnShares: shares, drawnAmount: shares });
-
-const repay = (at: At, user: string, reserveId: string, shares: string, premium = NO_PREMIUM) =>
-  event('Repay', at, {
-    reserveId,
-    caller: user,
-    user,
-    drawnShares: shares,
-    totalAmountRepaid: shares,
-    premiumDelta: premium,
-  });
-
-const setCollateral = (at: At, user: string, reserveId: string, on: boolean) =>
-  event('SetUsingAsCollateral', at, { reserveId, caller: user, user, usingAsCollateral: on });
-
-const reportDeficit = (at: At, user: string, reserveId: string, shares: string) =>
-  event('ReportDeficit', at, { reserveId, user, drawnShares: shares, premiumDelta: NO_PREMIUM });
-
-const addReserve = (at: At, reserveId: string, assetId: string, hub: string) =>
-  event('AddReserve', at, { reserveId, assetId, hub });
-
-function liquidate(
-  at: At,
-  parts: {
-    user: string;
-    liquidator: string;
-    collateralReserveId: string;
-    debtReserveId: string;
-    collateralSharesLiquidated: string;
-    drawnSharesLiquidated: string;
-    receiveShares?: boolean;
-    collateralSharesToLiquidator?: string;
-  },
-): DecodedEvent {
-  return event('LiquidationCall', at, {
-    collateralReserveId: parts.collateralReserveId,
-    debtReserveId: parts.debtReserveId,
-    user: parts.user,
-    liquidator: parts.liquidator,
-    receiveShares: parts.receiveShares ?? false,
-    debtAmountRestored: parts.drawnSharesLiquidated,
-    drawnSharesLiquidated: parts.drawnSharesLiquidated,
-    premiumDelta: NO_PREMIUM,
-    collateralAmountRemoved: parts.collateralSharesLiquidated,
-    collateralSharesLiquidated: parts.collateralSharesLiquidated,
-    collateralSharesToLiquidator: parts.collateralSharesToLiquidator ?? '0',
-  });
-}
 
 /** What the processor does with a dispatched range: cancel, then write. */
 async function index(from: number, to: number, batch: DecodedEvent[]): Promise<void> {
@@ -129,7 +43,7 @@ async function index(from: number, to: number, batch: DecodedEvent[]): Promise<v
   await events.append(batch);
 }
 
-/** One wallet's open positions on the configured Spoke — all the store serves. */
+/** One wallet's open positions, read back the way an application would. */
 async function positions(user: string = ALICE): Promise<Position[]> {
   const page = await store.list({ chainId: CHAIN_ID, user, spoke: SPOKE, limit: 100 });
   return [...page.items];
@@ -186,33 +100,9 @@ async function ledgerRow(at: At, version: number, sign: 1 | -1, on: boolean): Pr
   });
 }
 
-const CONNECTION = {
-  url: process.env['CLICKHOUSE_URL'] ?? 'http://localhost:8123',
-  username: process.env['CLICKHOUSE_USER'] ?? 'default',
-  password: process.env['CLICKHOUSE_PASSWORD'] ?? '',
-};
-
-/**
- * A database of this suite's own, and not a tidiness preference.
- *
- * The events package's specs run against the same server and the same table
- * names. Sharing one database has them truncating each other's fixtures, and —
- * worse — the projections created here start firing on that suite's synthetic
- * bodies, which are minimal by design and carry no `reserveId`. Its specs would
- * fail for a reason that has nothing to do with what they test.
- */
-const DATABASE = 'spec_positions';
-
 describe('the position fold', () => {
   beforeAll(async () => {
-    const bootstrap = createClient(CONNECTION);
-    await bootstrap.command({ query: `CREATE DATABASE IF NOT EXISTS ${DATABASE}` });
-    await bootstrap.close();
-
-    client = createClient({ ...CONNECTION, database: DATABASE });
-    // Both directories, ordered by ordinal across them — which is what puts the
-    // views after the table they read.
-    await migrate(client, await loadMigrations([EVENT_MIGRATIONS_DIR, POSITION_MIGRATIONS_DIR]));
+    client = await migratedDatabase(DATABASE);
     events = new ClickHouseEventStore(client);
     store = new ClickHousePositionStore(
       client,
@@ -225,8 +115,7 @@ describe('the position fold', () => {
   });
 
   beforeEach(async () => {
-    // Test-only. Nothing in either package removes a row.
-    for (const table of ['spoke_events', 'user_positions', 'user_position_flags'])
+    for (const table of TABLES)
       // oxlint-disable-next-line no-await-in-loop
       await client.command({ query: `TRUNCATE TABLE ${table}` });
   });
@@ -502,122 +391,23 @@ describe('the position fold', () => {
     });
   });
 
-  describe('the store', () => {
-    it('hides a closed position but keeps its history', async () => {
-      await index(100, 200, [
-        supply({ block: 100 }, ALICE, '7', '500'),
-        withdraw({ block: 200 }, ALICE, '7', '500'),
-      ]);
+  it('keeps AddReserve in the ledger and out of the fold', async () => {
+    await index(100, 200, [
+      addReserve({ block: 100 }, '7', '3', '0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9'),
+      supply({ block: 200 }, ALICE, '7', '500'),
+    ]);
 
-      expect(await positions()).toEqual([]);
-      // The row is still there — §12.1 says a position *exists* while its shares
-      // are non-zero, not that its history stops having happened.
-      expect(await scalar(`SELECT sum(events) AS n FROM user_positions`)).toBe('2');
-    });
-
-    it('keeps AddReserve in the ledger and out of the fold', async () => {
-      await index(100, 200, [
-        addReserve({ block: 100 }, '7', '3', '0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9'),
-        supply({ block: 200 }, ALICE, '7', '500'),
-      ]);
-
-      // The eighth event has no projection: nothing reads reserveId ->
-      // (assetId, hub) until Hub ingestion gives assetId a meaning. It is still
-      // captured, so building that registry later reads data already stored
-      // rather than re-indexing the chain — and until then it must not leak a
-      // row into the fold, which is what a careless projection would do.
-      expect(await positions()).toEqual([
-        expect.objectContaining({ reserveId: '7', suppliedShares: '500', events: 1 }),
-      ]);
-      expect(
-        await scalar(
-          `SELECT count() AS n FROM spoke_events_current WHERE event_name = 'AddReserve'`,
-        ),
-      ).toBe('1');
-    });
-
-    it('pages through every position exactly once', async () => {
-      const seeded = ['3', '7', '13', '21', '34'];
-      await index(
-        100,
-        100,
-        seeded.map((reserveId, i) => supply({ block: 100, log: i }, ALICE, reserveId, '500')),
-      );
-
-      const seen: string[] = [];
-      let cursor: string | undefined;
-      do {
-        // Sequential by definition — each page's cursor comes from the last one.
-        // oxlint-disable-next-line no-await-in-loop
-        const page = await store.list({
-          chainId: CHAIN_ID,
-          user: ALICE,
-          spoke: SPOKE,
-          limit: 2,
-          ...(cursor && { cursor }),
-        });
-        seen.push(...page.items.map((p) => p.reserveId));
-        cursor = page.nextCursor ?? undefined;
-      } while (cursor !== undefined);
-
-      // Keyset, so the boundary is a key rather than a row count: nothing is
-      // returned twice or skipped even though the indexer is free to write
-      // between pages. Sorted as UInt256, so 13 precedes 21 rather than 3.
-      expect(seen).toEqual(['3', '7', '13', '21', '34']);
-    });
-
-    it('reports no next cursor on the last page', async () => {
-      await index(100, 100, [supply({ block: 100 }, ALICE, '7', '500')]);
-
-      expect(
-        await store.list({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE, limit: 1 }),
-      ).toMatchObject({ nextCursor: null });
-    });
-
-    it('takes a checksummed address and resumes from its own cursor', async () => {
-      await index(100, 100, [
-        supply({ block: 100, log: 0 }, ALICE, '7', '500'),
-        supply({ block: 100, log: 1 }, ALICE, '13', '500'),
-      ]);
-
-      // Checksummed on the way in, because that is what a caller reads off a
-      // block explorer, and the fold stores it lower-cased.
-      const first = await store.list({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE, limit: 1 });
-      const second = await store.list({
-        chainId: CHAIN_ID,
-        user: ALICE,
-        spoke: SPOKE,
-        limit: 1,
-        cursor: first.nextCursor ?? '',
-      });
-
-      expect(first.items.map((p) => p.reserveId)).toEqual(['7']);
-      expect(second.items.map((p) => p.reserveId)).toEqual(['13']);
-    });
-
-    it("refuses one wallet's cursor when replayed against another's listing", async () => {
-      await index(100, 100, [
-        supply({ block: 100, log: 0 }, ALICE, '7', '500'),
-        supply({ block: 100, log: 1 }, ALICE, '13', '500'),
-        supply({ block: 100, log: 2 }, BOB, '7', '500'),
-        supply({ block: 100, log: 3 }, BOB, '13', '500'),
-      ]);
-
-      const alice = await store.list({ chainId: CHAIN_ID, user: ALICE, spoke: SPOKE, limit: 1 });
-
-      // The signature covers the listing, not just the resume point. Unsigned,
-      // this is a well-formed reserve id and Bob's page would silently start
-      // past it.
-      await expect(
-        store.list({
-          chainId: CHAIN_ID,
-          user: BOB,
-          spoke: SPOKE,
-          limit: 1,
-          cursor: alice.nextCursor ?? '',
-        }),
-      ).rejects.toThrow(/does not match this listing/);
-    });
+    // The eighth event has no projection: nothing reads reserveId ->
+    // (assetId, hub) until Hub ingestion gives assetId a meaning. It is still
+    // captured, so building that registry later reads data already stored
+    // rather than re-indexing the chain — and until then it must not leak a
+    // row into the fold, which is what a careless projection would do.
+    expect(await positions()).toEqual([
+      expect.objectContaining({ reserveId: '7', suppliedShares: '500', events: 1 }),
+    ]);
+    expect(
+      await scalar(`SELECT count() AS n FROM spoke_events_current WHERE event_name = 'AddReserve'`),
+    ).toBe('1');
   });
 
   it('issues no DELETE and no ALTER against anything it maintains', async () => {
