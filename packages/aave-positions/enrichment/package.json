@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
-  "description": "What Aave does not put in an event: what each token calls itself",
+  "description": "What Aave does not put in an event: what each token calls itself, and what the Spoke's oracle prices its reserves at",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -23,6 +23,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@aave-dao/aave-address-book": "catalog:",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
     "@packages/clickhouse": "workspace:*",
@@ -30,7 +31,8 @@
     "@packages/postgres": "workspace:*",
     "postgres": "catalog:",
     "reflect-metadata": "catalog:",
-    "rxjs": "catalog:"
+    "rxjs": "catalog:",
+    "viem": "catalog:"
   },
   "devDependencies": {
     "@aave-positions/events": "workspace:*",

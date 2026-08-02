@@ -223,6 +223,9 @@ importers:
 
   packages/aave-positions/enrichment:
     dependencies:
+      '@aave-dao/aave-address-book':
+        specifier: 'catalog:'
+        version: 4.61.2(viem@2.55.10(typescript@7.0.2)(zod@4.4.3))
       '@clickhouse/client':
         specifier: 'catalog:'
         version: 1.23.1
@@ -247,6 +250,9 @@ importers:
       rxjs:
         specifier: 'catalog:'
         version: 7.8.2
+      viem:
+        specifier: 'catalog:'
+        version: 2.55.10(typescript@7.0.2)(zod@4.4.3)
     devDependencies:
       '@aave-positions/events':
         specifier: workspace:*
