@@ -125,6 +125,9 @@ importers:
       '@packages/postgres':
         specifier: workspace:*
         version: link:../../packages/postgres
+      '@packages/prices':
+        specifier: workspace:*
+        version: link:../../packages/prices
       '@packages/token-metadata':
         specifier: workspace:*
         version: link:../../packages/token-metadata
@@ -189,6 +192,9 @@ importers:
       '@packages/postgres':
         specifier: workspace:*
         version: link:../../packages/postgres
+      '@packages/prices':
+        specifier: workspace:*
+        version: link:../../packages/prices
       '@packages/token-metadata':
         specifier: workspace:*
         version: link:../../packages/token-metadata
@@ -405,6 +411,52 @@ importers:
       '@nestjs/testing':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
+
+  packages/prices:
+    dependencies:
+      '@aave-dao/aave-address-book':
+        specifier: 'catalog:'
+        version: 4.61.2(viem@2.55.10(typescript@7.0.2)(zod@4.4.3))
+      '@clickhouse/client':
+        specifier: 'catalog:'
+        version: 1.23.1
+      '@nestjs/common':
+        specifier: 'catalog:'
+        version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@packages/clickhouse':
+        specifier: workspace:*
+        version: link:../clickhouse
+      '@packages/indexing':
+        specifier: workspace:*
+        version: link:../indexing
+      '@packages/postgres':
+        specifier: workspace:*
+        version: link:../postgres
+      postgres:
+        specifier: 'catalog:'
+        version: 3.4.9
+      reflect-metadata:
+        specifier: 'catalog:'
+        version: 0.2.2
+      rxjs:
+        specifier: 'catalog:'
+        version: 7.8.2
+      viem:
+        specifier: 'catalog:'
+        version: 2.55.10(typescript@7.0.2)(zod@4.4.3)
+    devDependencies:
+      '@aave-positions/events':
+        specifier: workspace:*
+        version: link:../aave-positions/events
+      '@aave-positions/positions':
+        specifier: workspace:*
+        version: link:../aave-positions/positions
+      '@nestjs/testing':
+        specifier: 'catalog:'
+        version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
+      '@packages/migrations':
+        specifier: workspace:*
+        version: link:../migrations
 
   packages/token-metadata:
     dependencies:

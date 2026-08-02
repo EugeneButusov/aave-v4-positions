@@ -16,6 +16,9 @@ export default defineConfig({
       '@aave-positions/positions': fileURLToPath(
         new URL('../../packages/aave-positions/positions/src/index.ts', import.meta.url),
       ),
+      '@packages/prices': fileURLToPath(
+        new URL('../../packages/prices/src/index.ts', import.meta.url),
+      ),
       '@packages/token-metadata': fileURLToPath(
         new URL('../../packages/token-metadata/src/index.ts', import.meta.url),
       ),

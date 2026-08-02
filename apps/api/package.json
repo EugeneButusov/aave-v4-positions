@@ -26,6 +26,7 @@
     "@packages/indexing": "workspace:*",
     "@packages/ops": "workspace:*",
     "@packages/postgres": "workspace:*",
+    "@packages/prices": "workspace:*",
     "@packages/token-metadata": "workspace:*",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",

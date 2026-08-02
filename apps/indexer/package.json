@@ -18,7 +18,8 @@
     "migrate": "node dist/migrate.js",
     "reconcile:hub": "node --enable-source-maps dist/reconcile-hub.js",
     "reconcile:positions": "node --enable-source-maps dist/reconcile-positions.js",
-    "enrich:tokens": "node --enable-source-maps dist/enrich-tokens.js"
+    "enrich:tokens": "node --enable-source-maps dist/enrich-tokens.js",
+    "price:reserves": "node --enable-source-maps dist/price-reserves.js"
   },
   "dependencies": {
     "@aave-positions/events": "workspace:*",
@@ -33,6 +34,7 @@
     "@packages/migrations": "workspace:*",
     "@packages/ops": "workspace:*",
     "@packages/postgres": "workspace:*",
+    "@packages/prices": "workspace:*",
     "@packages/token-metadata": "workspace:*",
     "postgres": "catalog:",
     "reflect-metadata": "catalog:",

@@ -65,6 +65,7 @@ what is missing below is the config events that decide whether a supply counts a
 │   │       └── test-support/    fakes and port contracts, exported so adapters run them
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
 │   ├── token-metadata/      what an ERC-20 calls itself — fetched, not folded
+│   ├── prices/              what a reserve is priced at, read from the Spoke's oracle
 │   └── aave-positions/      packages that know about Aave
 │       ├── events/          ABI bindings, decoders, two append-only event ledgers
 │       └── positions/       the fold over that log, and the store that reads it
@@ -89,7 +90,11 @@ What it holds is an ERC-20's own `symbol()` and `name()` — an Ethereum standar
 Aave, and the reason `Erc20MetadataReader` sits in `@packages/indexing` too. The one Aave-shaped
 thing in it is the query that asks _which_ tokens to read, which today reads the Hub asset fold. That
 is a table name, not a type: nothing in the package imports `@aave-positions/*` outside its fixtures,
-so pointing it at a different listing source is a new adapter rather than a new package.
+so pointing it at a different listing source is a new adapter rather than a new package. `prices`
+is the weaker case of the two and worth naming as such: it binds `IAaveOracleV4` and is keyed by
+`reserveId`, so it knows more about Aave than its scope admits. It sits here because it is the same
+_kind_ of thing as its neighbour — a small fetched dimension with a worker and a Postgres table — and
+keeping the pair together says more about the codebase than keeping the scope pure would.
 
 `@packages/ops` holds the operational concerns both services share: probes, structured logging and
 the shutdown sequence — everything an operator needs and nothing a position needs. The name is the
@@ -300,6 +305,25 @@ pnpm --filter @aave-v4-positions/indexer enrich:tokens -- --force
 pnpm --filter @aave-v4-positions/indexer enrich:tokens -- --token 0xa0b8…eb48
 ```
 
+Prices keep themselves current too, but **on a timer rather than on the indexing loop**, and the
+difference is not cosmetic. Token metadata is on-chain state that changes on chain, so enrichment can
+wait for the event that changes it — a range carrying no `AddAsset` cannot have changed the answer.
+An oracle's feeds move off chain on their own schedule and no Aave event announces one, so a block
+dispatch is the wrong trigger: the loop does not dispatch when it is caught up, when it has stalled,
+or when `INDEXER_AUTOSTART` is off, and prices driven from it would silently freeze in all three.
+Pricing runs beside the pipeline instead, on its own clock and its own switch, so the two fail
+independently — a provider that cannot serve a wide `eth_getLogs` may serve `eth_call` perfectly
+well. It is also why a backfill, which replays historical blocks, does not acquire a poller.
+
+This command reads them when you ask instead, and reports every reserve rather than a count, which is
+how an oracle that refuses one shows up as a name rather than as a USD value that is quietly null on
+the endpoint.
+
+```bash
+pnpm --filter @aave-v4-positions/indexer price:reserves
+pnpm --filter @aave-v4-positions/indexer price:reserves -- --dry-run
+```
+
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
 
 ## Configuration
@@ -330,9 +354,13 @@ every deployment shares, and a per-process one gives pagination that fails only 
 | `INDEXER_STALL_THRESHOLD_MS`   | `300000`   | How long without progress before readiness fails.                                                                    |
 | `INDEXER_AUTOSTART`            | `true`     | `false` boots the probes without indexing.                                                                           |
 | `MAIN_SPOKE_ADDRESS`           | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
+| `MAIN_SPOKE_ORACLE_ADDRESS`    | its oracle | Which oracle prices that Spoke's reserves. Per-Spoke and keyed by `reserveId`, so it travels with the Spoke.         |
 | `CORE_HUB_ADDRESS`             | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
 | `TOKEN_ENRICHMENT_RETRY_MS`    | `60000`    | How long enrichment waits after a run left a gap open. A successful run waits not at all.                            |
 | `TOKEN_ENRICHMENT_CONCURRENCY` | `4`        | Tokens read at once. A public endpoint rate-limits a burst before seventeen calls become slow.                       |
+| `RESERVE_PRICE_REFRESH_MS`     | `60000`    | How long a price stays good. A wall-clock timer, not a block tick — see below.                                       |
+| `RESERVE_PRICE_RETRY_MS`       | `15000`    | After a read that left a price stale. Shorter: §7.1 weighs collateral against debt, so only the ratio is wrong.      |
+| `RESERVE_PRICE_AUTOSTART`      | `true`     | Whether to poll the oracle. Its own switch: reading an oracle and walking the chain fail independently.              |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
 the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's

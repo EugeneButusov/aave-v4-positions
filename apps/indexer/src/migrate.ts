@@ -1,5 +1,6 @@
 import { EVENT_MIGRATIONS_DIR } from '@aave-positions/events';
 import { POSITION_MIGRATIONS_DIR } from '@aave-positions/positions';
+import { PRICE_MIGRATIONS_DIR } from '@packages/prices';
 import { TOKEN_METADATA_MIGRATIONS_DIR } from '@packages/token-metadata';
 import { migrate as migrateClickHouse } from '@packages/clickhouse';
 import { INDEXING_MIGRATIONS_DIR } from '@packages/indexing';
@@ -27,7 +28,11 @@ import { clickHouseEnvSchema, postgresEnvSchema } from './config/env';
  * reintroduce the collision and then try to apply Postgres DDL to ClickHouse.
  */
 const CLICKHOUSE_MIGRATION_DIRS = [EVENT_MIGRATIONS_DIR, POSITION_MIGRATIONS_DIR];
-const POSTGRES_MIGRATION_DIRS = [INDEXING_MIGRATIONS_DIR, TOKEN_METADATA_MIGRATIONS_DIR];
+const POSTGRES_MIGRATION_DIRS = [
+  INDEXING_MIGRATIONS_DIR,
+  TOKEN_METADATA_MIGRATIONS_DIR,
+  PRICE_MIGRATIONS_DIR,
+];
 
 function report(database: string, applied: string[]): void {
   console.warn(
