@@ -113,10 +113,12 @@ describe('openapi', () => {
     it('types every share and amount as a string, not a number', () => {
       const schema = document.components?.schemas?.['PositionDto'] as SchemaNode;
 
-      // The contract the description commits to. float64 has 53 bits of
-      // mantissa and share balances run far past it, so a schema saying
-      // `number` would have generated clients parsing away the tail — a few wei
-      // of drift that reads as a rounding bug rather than a type error.
+      // The contract the description commits to, and scaling did not weaken it.
+      // float64 has 53 bits of mantissa and share balances run far past it, so
+      // a schema saying `number` would have generated clients parsing away the
+      // tail — a few wei of drift that reads as a rounding bug rather than a
+      // type error. A decimal point does not help: `422166581625087.607993`
+      // parses to a double just as lossily as the integer did.
       for (const field of [
         'suppliedShares',
         'drawnShares',
@@ -127,6 +129,47 @@ describe('openapi', () => {
         'reserveId',
       ]) {
         expect(schema.properties?.[field]).toMatchObject({ type: 'string' });
+      }
+    });
+
+    it('marks the scale-dependent fields nullable, and the ray not', () => {
+      const schema = document.components?.schemas?.['PositionDto'] as SchemaNode;
+
+      // These carry a decimal point, and the number of digits behind it comes
+      // from the asset. When the registry has not resolved the reserve there is
+      // no scale, so the honest answer is null rather than a raw integer.
+      for (const field of [
+        'suppliedShares',
+        'drawnShares',
+        'premiumShares',
+        'netSuppliedAmount',
+        'netBorrowedAmount',
+      ]) {
+        expect(schema.properties?.[field]).toMatchObject({ nullable: true });
+      }
+
+      // A ray's scale is the protocol's fixed 27, so it never depends on the
+      // join and must not have been swept up with the others.
+      expect(schema.properties?.['premiumOffsetRay']).not.toMatchObject({ nullable: true });
+    });
+
+    it('names the USD fields for what they are priced in', () => {
+      const schema = document.components?.schemas?.['PositionValueDto'] as SchemaNode;
+
+      expect(schema.required?.toSorted()).toEqual([
+        'drawnDebt',
+        'drawnIndex',
+        'premiumDebt',
+        'priceUsd',
+        'suppliedAmount',
+        'suppliedAmountUsd',
+        'totalDebt',
+        'totalDebtUsd',
+      ]);
+      // Required *and* nullable: absent would mean the field might not exist,
+      // where null means the oracle has not priced this reserve.
+      for (const field of ['priceUsd', 'suppliedAmountUsd', 'totalDebtUsd']) {
+        expect(schema.properties?.[field]).toMatchObject({ type: 'string', nullable: true });
       }
     });
 
