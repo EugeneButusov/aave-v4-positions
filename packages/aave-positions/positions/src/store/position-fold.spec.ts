@@ -215,7 +215,7 @@ describe('the position fold', () => {
 
   beforeEach(async () => {
     // Test-only. Nothing in either package removes a row.
-    for (const table of ['spoke_events', 'user_positions', 'user_position_flags', 'spoke_reserves'])
+    for (const table of ['spoke_events', 'user_positions', 'user_position_flags'])
       // oxlint-disable-next-line no-await-in-loop
       await client.command({ query: `TRUNCATE TABLE ${table}` });
   });
@@ -477,7 +477,7 @@ describe('the position fold', () => {
       await client.command({ query: `DROP VIEW position_supply` });
       await index(500, 500, [supply({ block: 500 }, ALICE, '7', '100')]);
       await client.command({
-        query: await readFile(join(POSITION_MIGRATIONS_DIR, '013_position_supply.sql'), 'utf8'),
+        query: await readFile(join(POSITION_MIGRATIONS_DIR, '012_position_supply.sql'), 'utf8'),
       });
 
       await index(500, 500, [supply({ block: 500 }, ALICE, '7', '100')]);
@@ -506,21 +506,25 @@ describe('the position fold', () => {
       expect(await scalar(`SELECT sum(events) AS n FROM user_positions`)).toBe('2');
     });
 
-    it('resolves the asset from the registry, and reads null before AddReserve lands', async () => {
-      await index(100, 100, [supply({ block: 100 }, ALICE, '7', '500')]);
-      expect((await positions())[0]).toMatchObject({ assetId: null, hub: null });
-
-      await index(200, 200, [
-        addReserve({ block: 200 }, '7', '3', '0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9'),
+    it('keeps AddReserve in the ledger and out of the fold', async () => {
+      await index(100, 200, [
+        addReserve({ block: 100 }, '7', '3', '0xCca852Bc40e560adC3b1Cc58CA5b55638ce826c9'),
+        supply({ block: 200 }, ALICE, '7', '500'),
       ]);
 
-      // Resolved at read time, never joined at insert time: a materialized view
-      // sees only the block being inserted, and the backfill's first chunk can
-      // carry a Supply and the AddReserve that names its asset together.
-      expect((await positions())[0]).toMatchObject({
-        assetId: '3',
-        hub: '0xcca852bc40e560adc3b1cc58ca5b55638ce826c9',
-      });
+      // The eighth event has no projection: nothing reads reserveId ->
+      // (assetId, hub) until Hub ingestion gives assetId a meaning. It is still
+      // captured, so building that registry later reads data already stored
+      // rather than re-indexing the chain — and until then it must not leak a
+      // row into the fold, which is what a careless projection would do.
+      expect(await positions()).toEqual([
+        expect.objectContaining({ reserveId: '7', suppliedShares: '500', events: 1 }),
+      ]);
+      expect(
+        await scalar(
+          `SELECT count() AS n FROM spoke_events_current WHERE event_name = 'AddReserve'`,
+        ),
+      ).toBe('1');
     });
 
     it('pages through every position exactly once', async () => {
@@ -617,7 +621,7 @@ describe('the position fold', () => {
     expect(
       await scalar(
         `SELECT count() AS n FROM system.mutations
-         WHERE table IN ('user_positions', 'user_position_flags', 'spoke_reserves')`,
+         WHERE table IN ('user_positions', 'user_position_flags')`,
       ),
     ).toBe('0');
   });

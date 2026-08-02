@@ -19,18 +19,17 @@ export interface Position {
   readonly user: Address;
   /** The Spoke this position lives on. Two Spokes are two independent positions. */
   readonly spoke: Address;
-  readonly reserveId: string;
-
   /**
-   * The reserve's asset within its Hub, from `AddReserve`.
+   * The Spoke's own key for the reserve, and the only asset identity available
+   * from Spoke logs.
    *
-   * `null` when the registry has no entry — which happens legitimately while a
-   * backfill is mid-flight and has not yet reached the `AddReserve` log. The
-   * underlying ERC-20 address is deliberately absent: it is on the Hub's
-   * `AddAsset`, not on any Spoke event, so it arrives with Hub ingestion.
+   * The Hub's `assetId` and the underlying ERC-20 address both land with Hub
+   * ingestion — `AddReserve` carries the first and no Spoke event carries the
+   * second. The ledger already stores every `AddReserve`, so projecting that
+   * mapping is a later increment over data that is already here, not a
+   * re-index.
    */
-  readonly assetId: string | null;
-  readonly hub: Address | null;
+  readonly reserveId: string;
 
   readonly suppliedShares: string;
   readonly drawnShares: string;

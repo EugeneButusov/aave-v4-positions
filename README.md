@@ -643,8 +643,14 @@ where the ledger's leads with the block — different access pattern, different 
 
 Not keyed on the token address, because **no Spoke event carries one**. `AddReserve(reserveId,
 assetId, hub)` indexes all three of its parameters and has no `underlying`; the ERC-20 address is on
-the Hub's `AddAsset`, so it arrives with Hub ingestion. Until then a position resolves to an
-`assetId` and a `hub` through a fourteen-row registry, joined at read time.
+the Hub's `AddAsset`. So `reserve_id` is the only asset identity a position has here, and both the
+Hub's `assetId` and the token address arrive with Hub ingestion.
+
+`AddReserve` is therefore the one ingested event with **no projection**. It is captured in the ledger
+like the other seven, so building the `reserveId → (assetId, hub)` registry later reads data that is
+already stored rather than re-indexing the chain — but nothing can use `assetId` until there is Hub
+state to join it against, and a projection built ahead of its first reader is one more thing to keep
+correct for nobody.
 
 ### One table per kind of aggregate
 
@@ -689,7 +695,7 @@ asks to retry.
 | `ReportDeficit`        | `user`, `reserveId`     | `−drawnShares`, `+premiumDelta` | —                    |
 | `LiquidationCall` ×3   | see below               |                                 |                      |
 | `SetUsingAsCollateral` | → `user_position_flags` |                                 |                      |
-| `AddReserve`           | → `spoke_reserves`      |                                 |                      |
+| `AddReserve`           | no projection, above    |                                 |                      |
 
 **One `LiquidationCall` log affects up to three positions**, so it gets three views rather than one:
 the borrower's collateral (`−collateralSharesLiquidated` on `collateralReserveId`), the borrower's
@@ -773,7 +779,7 @@ balance, because between events the index accrues and emits nothing (§5).
 ### What it costs
 
 Measured against a full mainnet backfill, genesis 24,720,899 to the tip — 25,729 ledger rows folding
-into **5,347 positions, 3,380 of them open**, plus 3,240 flag rows and the 14-row registry. The event
+into **5,347 positions, 3,380 of them open**, plus 3,240 flag rows. The event
 mix matches the catalogue the analysis extracted independently: 10,181 `Supply`, 5,360 `Borrow`,
 4,238 `Withdraw`, 3,240 `SetUsingAsCollateral`, 2,605 `Repay`, 91 `LiquidationCall`, 14 `AddReserve`.
 
@@ -936,7 +942,9 @@ Deliberate, in rough order of what comes next.
   a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
   highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
 - **Core Hub events**, and so any valuation at all — and with them the token address, which no Spoke
-  event carries. Shares are stored; converting them to asset
+  event carries, plus the `reserveId → (assetId, hub)` registry that joins a position to Hub state.
+  That registry is a projection of `AddReserve`, which the ledger already stores, so it lands with
+  the increment that first has a use for it. Shares are stored; converting them to asset
   amounts needs Hub state. `UpdateAsset` is the one worth having first and on its own — §5.3 shows
   the Hub emits its own interest index, which is what lets debt be valued with no archive node and
   no rate-strategy model. The 11-event Hub asset mirror is the highest-risk fold in the design

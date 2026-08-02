@@ -1,7 +1,7 @@
 -- Supply: shares in, assets in.
 --
--- The first of eight projections, and the one whose comments the rest do not
--- repeat. Three invariants hold in every one of them:
+-- The first projection, and the one whose comments the rest do not repeat.
+-- Three invariants hold in every one of them:
 --
 --  1. FROM spoke_events, never spoke_events_current. A materialized view is an
 --     insert trigger and nothing inserts into a plain view — measured, the DDL

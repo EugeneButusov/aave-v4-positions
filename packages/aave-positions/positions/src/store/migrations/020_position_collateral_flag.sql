@@ -4,6 +4,11 @@
 -- folding the sign into a value: this target collapses rather than sums, so the
 -- retraction has to arrive as the pair's other half. See 011 for why the flag
 -- cannot live in user_positions at all.
+--
+-- `AddReserve` has no projection. It is captured in the ledger like the other
+-- seven, but nothing reads reserveId -> (assetId, hub) until Hub ingestion gives
+-- assetId a meaning, and a projection built in advance of its first consumer is
+-- one more thing to keep correct for no reader.
 CREATE MATERIALIZED VIEW IF NOT EXISTS position_collateral_flag TO user_position_flags AS
 SELECT
     chain_id,
