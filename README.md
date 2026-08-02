@@ -31,11 +31,13 @@ decoded against the official ABIs into two append-only ledgers;
 it; [the Hub asset fold](#the-hub-asset-fold) over the Hub's, reconciled against the chain's own
 `getAsset`; [balances](#balances) — the §5 arithmetic that turns shares into token amounts, exact
 against `getUserDebt` and `getUserSuppliedAssets`; and
-[the endpoint that serves them](#the-positions-endpoint), block-stamped and paged.
+[the endpoint that serves them](#the-positions-endpoint), block-stamped and paged; and
+[enrichment](#enrichment) — what each token calls itself, read from the ERC-20 because no Aave event
+carries it, and kept current without anyone running anything.
 
 **Not yet:** position _type_ as §12.1 defines it, prices, health factors, Kubernetes manifests.
-Balances are token amounts now; what is missing above them is USD, and what is missing below is the
-config events that decide whether a supply counts as collateral. See
+Balances are token amounts with a symbol beside them now; what is missing above them is USD, and
+what is missing below is the config events that decide whether a supply counts as collateral. See
 [Not here yet](#not-here-yet).
 
 ## Layout
@@ -280,6 +282,15 @@ pnpm --filter @aave-v4-positions/indexer reconcile:hub -- --from X --to Y
 pnpm --filter @aave-v4-positions/indexer reconcile:positions -- --users 0xabc,0xdef
 ```
 
+Token metadata fills itself in — the indexer enriches a new listing in the dispatch that ingests it,
+and sweeps for anything missed. This command is the repair tool for the two things that path
+deliberately will not do: re-read a token it already has, and read one you name.
+
+```bash
+pnpm --filter @aave-v4-positions/indexer enrich:tokens -- --force
+pnpm --filter @aave-v4-positions/indexer enrich:tokens -- --token 0xa0b8…eb48
+```
+
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
 
 ## Configuration
@@ -298,19 +309,21 @@ every deployment shares, and a per-process one gives pagination that fails only 
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
 
-| variable                     | default    |                                                                                                                      |
-| ---------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration.                                                   |
-| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                                                                     |
-| `FINALITY_DEPTH`             | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained.         |
-| `INDEXER_START_BLOCK`        | `24720891` | Core Hub genesis, the earlier of the two contracts. Read on a cold start and never again; see [Resuming](#resuming). |
-| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                                                                               |
-| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                                                                      |
-| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                                                                      |
-| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                                                                    |
-| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                                                                           |
-| `MAIN_SPOKE_ADDRESS`         | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
-| `CORE_HUB_ADDRESS`           | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
+| variable                       | default    |                                                                                                                      |
+| ------------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `CHAIN_ID`                     | _required_ | Checked against what the providers report, on the first iteration.                                                   |
+| `RPC_URLS`                     | _required_ | Comma-separated, tried in order.                                                                                     |
+| `FINALITY_DEPTH`               | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained.         |
+| `INDEXER_START_BLOCK`          | `24720891` | Core Hub genesis, the earlier of the two contracts. Read on a cold start and never again; see [Resuming](#resuming). |
+| `INDEXER_MAX_RANGE_SIZE`       | `1000`     | Blocks per dispatch while catching up.                                                                               |
+| `INDEXER_POLL_INTERVAL_MS`     | `4000`     |                                                                                                                      |
+| `INDEXER_RPC_TIMEOUT_MS`       | `10000`    |                                                                                                                      |
+| `INDEXER_STALL_THRESHOLD_MS`   | `300000`   | How long without progress before readiness fails.                                                                    |
+| `INDEXER_AUTOSTART`            | `true`     | `false` boots the probes without indexing.                                                                           |
+| `MAIN_SPOKE_ADDRESS`           | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
+| `CORE_HUB_ADDRESS`             | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
+| `TOKEN_ENRICHMENT_SWEEP_MS`    | `300000`   | How often enrichment diffs the full token sets. The backstop, not the mechanism.                                     |
+| `TOKEN_ENRICHMENT_CONCURRENCY` | `4`        | Tokens read at once. A public endpoint rate-limits a burst before seventeen calls become slow.                       |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
 the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's
@@ -326,8 +339,12 @@ validation library inside the packages that own the clients.
 failure this validation exists to prevent: an indexer quietly pointed at the wrong chain produces
 plausible, wrong data rather than an error.
 
-A **full node is sufficient** — ingestion reads logs only. Historical _state_ is what would need an
-archive node, and nothing on the read path calls `eth_call` (analysis §8). Provider capability does
+A **full node is sufficient**, and that is the claim worth keeping precise. Ingestion reads logs,
+with one exception: [enrichment](#enrichment) calls `symbol()`, `name()` and `decimals()` on the
+listed ERC-20s. Those are current-state reads at the head, which a full node serves — historical
+_state_ is what would need an archive node. **Nothing on the read path calls `eth_call`** (analysis
+§8), which is the property the two folds exist to buy and enrichment does not spend: it writes to a
+table the API reads rather than reaching for a node while answering. Provider capability does
 vary, though: measured `eth_getLogs` ranges across public endpoints run from 50 blocks to 10,000, and
 some serve no history at all, which is why the provider list is ordered and the range size adapts.
 
@@ -1407,6 +1424,141 @@ the wrong asset, a checkpoint read from the wrong column. That is
 from `AddReserve` at the Spoke's genesis. The premium branch stays synthetic-only
 either way: it has never been non-zero on mainnet (§5.4).
 
+## Enrichment
+
+The first thing here that is **not folded from the event log**. No Aave event
+carries a token symbol (§12.5), so serving one means asking the token — and
+that makes it a different kind of data from everything above: fetched rather
+than derived, immutable rather than per-block, and with no reorg story at all,
+because an address does not fork.
+
+### Postgres, and the benchmark that chose it
+
+One row per `(chain, token)`, seventeen of them, point-looked-up by address and
+replaced whole. The first draft put it in ClickHouse, which needed a
+`ReplacingMergeTree(fetched_at_block)`, a `FINAL` on every read, and three
+paragraphs defending the engine against [this README's own rejection of
+Replacing](#event-ingestion). Ceremony to emulate an upsert was the tell, so
+both were built and measured on the same host at the volumes recorded above:
+
+|                                | ClickHouse              | Postgres                        |
+| ------------------------------ | ----------------------- | ------------------------------- |
+| upsert the 17 rows             | 67.05 ms                | **1.97 ms**                     |
+| read the dimension             | 4.39 ms                 | **0.27 ms**                     |
+| rows at rest after 103 upserts | 51, in 3 parts          | **17**                          |
+| added to a page                | +1.66 ms (a third join) | **−1.44 ms** (read in parallel) |
+
+The third row matters more than the speed. A column store answers "replace this
+row" by writing another and collapsing later, so the parts pile up between
+merges and `EXPLAIN indexes = 1` shows the join reading all three of them.
+Postgres answers it in place.
+
+The fourth is why a second database costs nothing here. Labels are keyed by
+chain alone, so they do not depend on which positions come back and the read
+runs _beside_ the ClickHouse query rather than after it — the difference is
+inside the noise of a 28 ms page. The API was already reading Postgres on every
+request for the indexer's cursor, so this is not a new dependency, pool or
+failure mode.
+
+The same `EXPLAIN` settled the thing that would have changed the design either
+way: with a third join the left side still reports
+`PrimaryKey Keys: chain_id, user, spoke` and `Search Algorithm: binary search`.
+Adding one was viable. It was simply not needed, and `hub_assets_current` is
+already the read's expensive side.
+
+**The merge happens in the service, not in SQL**, which is also the better
+layering: enrichment is a decoration with its own source, cadence and failure
+mode (§11), rather than a column smuggled into the fold's read view. `Position`,
+`PositionAsset` and the ClickHouse store are untouched. Prices land the same way.
+
+### Four ERC-20 hazards, each measured
+
+`symbol()` and `name()` are **OPTIONAL** in EIP-20, so a token that implements
+neither is conformant. Every branch below was reproduced against viem 2.55.10
+rather than recalled:
+
+| hazard                                     | what viem does                  | handling              |
+| ------------------------------------------ | ------------------------------- | --------------------- |
+| the method reverts                         | `ContractFunctionRevertedError` | null, with the reason |
+| returns `0x` — no code, or no such method  | `ContractFunctionZeroDataError` | null, with the reason |
+| a `bytes32` return, the MKR/SAI generation | `IntegerOutOfRangeError`        | retry as `bytes32`    |
+| a short or lying payload                   | `PositionOutOfBoundsError`      | null, with the reason |
+
+Two of those are traps rather than facts. The classification sits at the
+**second** link of viem's cause chain, not the innermost — a revert bottoms out
+at `RpcRequestError`, which is also what a timeout says. And the `bytes32`
+fallback keys on **any** throw, because a _left_-padded `bytes32` — which some
+tokens emit — makes the string decoder read a plausible offset and raise
+`PositionOutOfBoundsError` instead. Keying on the tidy-looking error would
+return null for a token whose symbol reads perfectly.
+
+Anti-spoofing is deliberately not attempted. A token can call itself USDC with a
+Cyrillic С; `underlying` is the identity and the symbol is a label, and the API
+contract says so rather than implying a guarantee the chain does not offer.
+
+### Automatic, in two parts
+
+**A fast path per range.** Each dispatch asks the Hub ledger which tokens an
+`AddAsset` named inside its own range — `hub_events` is
+`ORDER BY (chain_id, block_number, log_index)`, so that is a granule-pruned
+seek and no RPC at all. Measured over 60,000 rows: **1 granule of 4**,
+`Search Algorithm: binary search`, `Ranges: 1`. A new listing is enriched in the
+dispatch that ingests it.
+
+**A sweep behind it**, every `TOKEN_ENRICHMENT_SWEEP_MS`, diffing the full
+listed-versus-stored sets. This is what makes a cold start work at all: every
+`AddAsset` on mainnet fired at block 24,722,784, far behind any live cursor, so
+the fast path alone would discover nothing. It is also what lets the fast path
+stay cheap — it depends on running after the Hub processor, and `dispatch.ts`
+plans to drop that guarantee, so a miss degrades to "one sweep late" rather than
+"silently never". A mutation test deletes the sweep and the bootstrap case turns
+red.
+
+Three rules exist because the obvious version of each is wrong:
+
+- **A row is written even when every field is null.** That is what records that
+  the question was put; without it a conformant token with no optional metadata
+  is re-read on every sweep, forever.
+- **Unless the token never answered.** A timeout stored as a null closes the gap
+  on a label nobody will revisit, so the classified cause has to say the
+  contract responded. An unrecognised error counts as unreachable — a new viem
+  class costs a retry, not a permanently blank label.
+- **Reads are pinned to the chain head, not the range.** During a backfill the
+  range is historical and a full node cannot serve state there; every call would
+  fail, and fail in a way indistinguishable from a token with no symbol.
+
+The processor always returns `ok()`. A third-party token contract must never
+stall Aave ingestion, and swallowing is safe precisely because discovery is
+gap-driven and idempotent: a failure leaves the gap open and the next sweep
+retries it.
+
+### The decimals cross-check, described accurately
+
+The Hub's `AddAsset` carries `decimals` and the token reports its own. It is
+tempting to call a disagreement "every displayed amount wrong by a power of
+ten" — it is not. The Hub's value is what the Hub's arithmetic uses and what a
+position is valued with, so our numbers stay consistent with the protocol either
+way. A disagreement is a **listing audit signal**, and this is the only place it
+becomes visible. It costs nothing, because the token is already being called.
+
+### Verification
+
+**The wiring, end to end, against both real databases**, with only the node
+stubbed: a cold database from `AddAsset` at genesis to a labelled row via the
+sweep, a governance listing picked up by the fast path in its own range, a
+token whose decimals disagree, and a token implementing none of the three
+methods recorded once and never re-read.
+
+**Seventeen mutants across the reader and the processor, sixteen killed.** The
+survivor is `{ size: 32 }` on the `bytes32` decode, which the mutation shows is
+subsumed by the control-character strip — kept for intent and documented as
+such, exactly as `argMaxIf` is.
+
+What none of that covers is mainnet. All seventeen real underlyings, with
+`decimals` cross-checked against `AaveV4Ethereum.ASSETS`, is `enrich:tokens`
+against a real RPC — the same shape as the other reconciliations, and the same
+reason: it needs a node this repository does not ship.
+
 ## Operational shape
 
 The pieces that exist because this is meant to run in Kubernetes, not on a laptop:
@@ -1568,11 +1720,15 @@ Deliberate, in rough order of what comes next.
 - **The price layer**, and therefore USD values and health factors — ~8 Chainlink aggregators plus
   two LST rebase sources (§7.4).
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.
-- **Enrichment**, per the §12 conclusion. The endpoint that serves positions
-  [is here](#the-positions-endpoint); what it cannot yet say about them is not. Token symbol and name
-  appear in no Aave event at all and need a one-time ERC-20 read per reserve — fourteen calls,
-  immutable, cached forever — which makes them the cheapest thing on this list and the only one that
-  is not indexed data.
+- **Independent prices, as §11's oracle-vs-market deviation.** Token metadata is
+  [in](#enrichment), so the enrichment seam exists and prices land the same way: a source with its
+  own cadence and failure mode, merged in the service rather than joined in SQL. Deviation is the
+  signal worth publishing rather than a second USD number — the protocol's own oracle is what drives
+  liquidation, and how far it has drifted from the market is what makes a health factor of 1.05 mean
+  two different things.
+- **Re-reading metadata that has changed.** The sweep closes absent rows and never revisits wrong
+  ones, so a proxy upgrade that renames a token needs `enrich:tokens --force`. Automating it wants a
+  reason to re-read rather than a timer, and nothing on chain announces one.
 - **A single position, by reserve.** `PositionStore` has exactly one method, and the endpoint over it
   is a listing. `GET …/positions/{reserveId}` is a different query against the same view, and worth
   adding when something needs it rather than because the shape suggests it.
