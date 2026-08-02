@@ -228,19 +228,32 @@ export class ClickHousePositionStore implements PositionStore {
             ORDER BY user, spoke, reserve_id
             LIMIT {limit:UInt32}
         ) AS p
-        -- **Joins are right here where they were wrong for the collateral
-        -- flag.** That one was event-grain and unbounded, so the hash build
-        -- meant reading the whole table; these are the registry and the Hub's
-        -- asset list — 14 and 17 rows on mainnet, bounded by how many assets a
-        -- Hub lists rather than by history.
+        -- **A join, not the UNION ALL the collateral flag got.** The two cases
+        -- differ structurally, and EXPLAIN indexes = 1 shows how.
         --
-        -- Not free, and the bound is not the one the argument suggests. 17 rows
-        -- is the *result* of hub_assets_current; producing it collapses and
-        -- argMaxes the whole of hub_asset_state, which grows with UpdateAsset
-        -- volume rather than with the asset count. Measured against a realistic
-        -- Hub history — 29,614 state rows — the joins take a per-wallet page
-        -- from ~9 ms to ~28 ms. Fine now; the README's "Not here yet" says what
-        -- to do when it stops being.
+        -- The left side prunes. Both branches of user_positions_current report
+        -- PrimaryKey Keys: chain_id, user, spoke with the wallet predicate as
+        -- their condition and Search Algorithm: binary search — that is the
+        -- UNION ALL pushdown the flag was shaped for, doing its job.
+        --
+        -- The right sides do not, and cannot. All three read with
+        -- PrimaryKey Condition: true — no predicate pushed in at all. The step
+        -- is JOIN FillRightFirst: the right relation is built before a single
+        -- left row is seen, so there is no key to filter by. A hash join
+        -- materialises its whole right side by construction.
+        --
+        -- **UNION ALL would not change that.** Its advantage is exactly the
+        -- pushdown above, and the Hub dimension has no predicate to push: it is
+        -- keyed (chain, hub, asset_id), neither known until the registry
+        -- resolves. It is not even expressible — UNION ALL needs one grouping
+        -- key every branch shares, and the Hub dependency is transitive rather
+        -- than co-keyed.
+        --
+        -- Reading the right side whole is fine when it *is* 17 rows, which is
+        -- what the join was argued on. What is not fine is that producing those
+        -- 17 reads 8 granules across 5 parts of hub_asset_state — the view
+        -- collapses and argMaxes the lot on every page. Making that dimension a
+        -- table is the fix; the README's "Not here yet" says how.
         --
         -- LEFT, because a position must survive a reserve the registry has not
         -- seen. The nulls that produces are reported as nulls rather than zeros.

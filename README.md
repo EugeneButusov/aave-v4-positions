@@ -1060,15 +1060,24 @@ proportions taken from the two real backfills — because reproducing the real o
 RPC. What that costs is body variety; what it preserves is what the numbers are about, which is how
 much work one inserted row triggers.
 
-**On the read path**, a per-wallet page is **~9 ms for shares alone and ~28 ms with the registry and
-Hub joins**. The joins are the larger half of that, and the reason is worth stating because it is not
-the one the join was argued on:
+**On the read path**, `EXPLAIN indexes = 1` says more than a stopwatch does.
 
-`hub_assets_current` collapses and `argMax`es the whole of `hub_asset_state` — **29,614 event-grain
-rows to produce 17** — and the join gives it no predicate to prune by, because the valuation needs
-the asset dimension whole. So **the read view is O(`UpdateAsset` history), not O(assets)**. That
-distinction was invisible in an earlier benchmark that seeded the state table with 17 rows directly
-and measured the joins at 9 ms; against a real Hub history they cost about 19.
+The left side prunes exactly as designed. Both branches of `user_positions_current` report
+`PrimaryKey Keys: chain_id, user, spoke` with the wallet predicate as their condition and
+`Search Algorithm: binary search` — the pushdown that `UNION ALL` was chosen for, reaching into
+`user_positions` and `user_position_flags` alike.
+
+The three joined right sides report `PrimaryKey Condition: true`. **No predicate is pushed into any
+of them**, and that is not the planner missing a trick: the step is `JOIN FillRightFirst`, so the
+right relation is built before a single left row exists and there is no key to filter by. A hash
+join materialises its whole right side by construction.
+
+That is harmless when the right side really is 17 rows. It is not, quite: producing those 17 reads
+**8 granules across 5 parts of `hub_asset_state`**, because `hub_assets_current` collapses and
+`argMax`es the lot on every page — 29,614 event-grain rows today. So **the read view is
+O(`UpdateAsset` history), not O(assets)**, and the join inherits that. Measured by rows read on a
+per-wallet page: positions alone 5,340; the registry join adds 14; the Hub join adds 29,631, of
+which 17 are the answer.
 
 It is fine now and it does not stay fine: `UpdateAsset` fires 434 times per 10k blocks, so
 `hub_asset_state` grows by roughly 1.5 million rows a year. [Not here yet](#not-here-yet) carries
@@ -1247,14 +1256,16 @@ response reproducible and what lets reconciliation pin both sides to one block.
 The shares are as of whatever the indexer has folded, which is a different clock;
 reporting `valuedAt` keeps the two from being silently conflated.
 
-**Two `LEFT JOIN`s, where the collateral flag got a `UNION ALL`.** That one was
-event-grain and unbounded; these are the registry and the Hub's asset list — 14
-and 17 rows, bounded by listings rather than by history — and that last clause
-turns out to be the interesting one. The 17 rows are the _result_; producing
-them collapses the whole of `hub_asset_state`, which is not bounded at all. See
-[what it costs](#what-it-costs): the joins take a per-wallet page from ~9 ms to
-~28 ms against a real Hub history, where an earlier benchmark that seeded the
-state table directly measured them at half that.
+**Two `LEFT JOIN`s, where the collateral flag got a `UNION ALL`** — and the two
+cases differ structurally rather than by preference. `UNION ALL` earns its place
+by letting one predicate push into every branch, which needs a key they all
+share; the flag had the position's own. The Hub dimension is keyed
+`(chain, hub, asset_id)`, neither known until the registry resolves, so there is
+no shared key to group on and no predicate to push even if there were. Swapping
+the join shape would move the cost, not remove it.
+
+What the join does inherit is [the read view's own](#what-it-costs): 17 rows out,
+29,631 read to produce them.
 
 ### Verification
 
