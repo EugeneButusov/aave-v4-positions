@@ -1,6 +1,7 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import { EVENT_MIGRATIONS_DIR, type DecodedEvent } from '@aave-positions/events';
-import { loadMigrations, migrate } from '@packages/clickhouse';
+import { migrate } from '@packages/clickhouse';
+import { loadMigrations } from '@packages/migrations';
 import type { Address } from '@packages/indexing';
 
 import { POSITION_MIGRATIONS_DIR } from '../store/clickhouse-position-store';

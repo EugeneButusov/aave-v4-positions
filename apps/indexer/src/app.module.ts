@@ -3,17 +3,17 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ClickHouseHealthIndicator } from '@packages/clickhouse';
 import { IndexerHealthIndicator } from '@packages/indexing';
 import { HealthModule, LoggingModule } from '@packages/ops';
+import { PostgresHealthIndicator } from '@packages/postgres';
 
 import { validateEnv, type Env } from './config/env';
 import { indexingSetup } from './indexing.setup';
 
 /**
- * Built once and referenced repeatedly below. Nest identifies a dynamic module
- * by object reference, so a second `indexingSetup()` call would produce a
- * second pair of modules — and with it a second indexing loop racing the same
- * cursor.
+ * Built once and referenced twice below. Nest identifies a dynamic module by
+ * object reference, so a second `indexingSetup()` call would produce a second
+ * pipeline — and with it a second indexing loop racing the same cursor.
  */
-const { spokeEvents, indexing } = indexingSetup();
+const indexing = indexingSetup();
 
 @Module({
   imports: [
@@ -39,11 +39,12 @@ const { spokeEvents, indexing } = indexingSetup();
     }),
     indexing,
     HealthModule.forRoot({
-      // The same module objects referenced above, so this resolves the
-      // indicators already constructed rather than building a second graph.
-      // SpokeEventsModule re-exports ClickHouse, so its probe comes from there.
-      imports: [indexing, spokeEvents],
-      indicators: [IndexerHealthIndicator, ClickHouseHealthIndicator],
+      // The same module object referenced above, so this resolves the indicators
+      // already constructed rather than building a second graph. Both database
+      // probes reach it through that one import: SpokeEventsModule re-exports
+      // ClickHouse, the indexing module re-exports both of them in turn.
+      imports: [indexing],
+      indicators: [IndexerHealthIndicator, ClickHouseHealthIndicator, PostgresHealthIndicator],
     }),
   ],
 })

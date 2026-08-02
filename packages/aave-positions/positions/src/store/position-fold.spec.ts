@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import type { ClickHouseClient } from '@clickhouse/client';
 import { ClickHouseEventStore, type DecodedEvent } from '@aave-positions/events';
-import { splitStatements } from '@packages/clickhouse';
+import { splitStatements } from '@packages/migrations';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore, POSITION_MIGRATIONS_DIR } from './clickhouse-position-store';

@@ -23,6 +23,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@packages/migrations": "workspace:*",
     "@packages/ops": "workspace:*",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",

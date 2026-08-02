@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/migrations','dist/store/migrations',{recursive:true})\"",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/store/clickhouse-migrations','dist/store/clickhouse-migrations',{recursive:true})\"",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@aave-positions/events": "workspace:*",
-    "@nestjs/testing": "catalog:"
+    "@nestjs/testing": "catalog:",
+    "@packages/migrations": "workspace:*"
   }
 }

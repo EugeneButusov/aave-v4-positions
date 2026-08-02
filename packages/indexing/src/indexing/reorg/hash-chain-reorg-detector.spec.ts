@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { FakeChainClient, hashOf } from '../../test-support/fake-chain-client';
 import { ForkingChain } from '../../test-support/forking-chain';
+import { RecordingBlockHeaderStore } from '../../test-support/recording-block-header-store';
 import {
   CHAIN_ID,
+  HEAD,
   blocks,
   commit,
   cursorAt,
@@ -11,8 +13,8 @@ import {
   retained,
 } from '../../test-support/reorg-harness';
 import { ShufflingBlockHeaderStore } from '../../test-support/shuffling-block-header-store';
+import { InMemoryBlockHeaderStore } from '../../test-support/in-memory-block-header-store';
 import { HashChainReorgDetector } from './hash-chain-reorg-detector';
-import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 import type { IndexingOptions } from '../indexing.options';
 
 describe('HashChainReorgDetector — finality', () => {
@@ -366,5 +368,46 @@ describe('HashChainReorgDetector — an owed reorg survives the process', () => 
       lastInvalidBlock: 999,
       lastValidHash: hashOf('a', 996),
     });
+  });
+});
+
+/**
+ * Reachable only once the window is durable: an in-memory `Map` cannot refuse a
+ * write, so until now nothing exercised what the detector does when it is told
+ * no.
+ */
+describe('HashChainReorgDetector — the window refuses a write', () => {
+  it('surfaces a failed append rather than reporting a block it did not retain', async () => {
+    const store = new RecordingBlockHeaderStore().failAppend(1);
+    const h = harness(10, HEAD, store);
+
+    await expect(commit(h, 500)).rejects.toThrow('header store unavailable');
+
+    // The loop commits before it saves the cursor, so a throw here costs one
+    // retried range and nothing else. Swallowing it would advance the cursor
+    // past a block the window has no record of — a window behind its cursor,
+    // which `inspect` classifies as corruption rather than a fork, and which
+    // no restart can repair.
+    expect(await retained(h)).toEqual([]);
+  });
+
+  it('leaves the reorg owed when the rewind cannot be written', async () => {
+    const store = new RecordingBlockHeaderStore();
+    const h = harness(10, HEAD, store);
+    await commit(h, ...blocks(994, 999));
+    h.chain.forkAbove(996, 'b');
+    const reported = await h.detector.inspect(h.chain.headerAt(1_000));
+
+    // The next one, whatever the commits above already spent.
+    store.failTruncate(store.truncatedAt.length + 1);
+
+    await expect(h.detector.rewindTo(996)).rejects.toThrow('header store unavailable');
+
+    // The cursor was saved first, so it already names 996 while the window still
+    // holds the branch that lost. That disagreement is the only record that the
+    // unwind is outstanding, and it has to survive a failed write for the next
+    // bootstrap to re-report the same fork.
+    expect(await retained(h)).toContain(999);
+    await expect(h.detector.bootstrap(cursorAt(996))).resolves.toEqual(reported);
   });
 });

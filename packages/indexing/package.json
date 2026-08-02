@@ -20,7 +20,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json",
+    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/postgres-migrations','dist/postgres-migrations',{recursive:true})\"",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -28,13 +28,16 @@
   },
   "dependencies": {
     "@packages/ops": "workspace:*",
+    "@packages/postgres": "workspace:*",
     "@nestjs/common": "catalog:",
     "@nestjs/core": "catalog:",
+    "postgres": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
     "viem": "catalog:"
   },
   "devDependencies": {
-    "@nestjs/testing": "catalog:"
+    "@nestjs/testing": "catalog:",
+    "@packages/migrations": "workspace:*"
   }
 }

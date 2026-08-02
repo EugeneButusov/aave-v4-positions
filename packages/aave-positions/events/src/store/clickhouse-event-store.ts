@@ -16,11 +16,18 @@ export const EVENTS_VIEW = 'spoke_events_current';
  * and importing this package to use the decoder should not do any. The
  * application passes it to the runner at migration time.
  *
- * The ordinals are unique across every package that contributes migrations, not
- * just within this directory — the runner rejects a clash rather than letting
- * the apply order depend on how the application concatenated the sets.
+ * The ordinals are unique across every package that contributes migrations to
+ * the *same* database, not just within this directory — the runner rejects a
+ * clash rather than letting the apply order depend on how the application
+ * concatenated the sets. Postgres keeps its own ordinal space, so its `001` and
+ * this one are not a collision.
+ *
+ * **The engine is in the directory name**, because nothing else here says it:
+ * both runners take the same `NNN_snake_case.sql` shape, and a set is only valid
+ * against the database it was written for. The ordinal has to lead the
+ * *filename*, so the directory is the only place the label fits.
  */
-export const EVENT_MIGRATIONS_DIR = join(__dirname, 'migrations');
+export const EVENT_MIGRATIONS_DIR = join(__dirname, 'clickhouse-migrations');
 
 /**
  * Every column the retraction has to reproduce, in `001_spoke_events.sql` order.

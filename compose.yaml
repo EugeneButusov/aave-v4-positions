@@ -33,8 +33,39 @@ services:
       retries: 10
       start_period: 10s
 
+  # Where the indexer records where it got to: the cursor and the reorg
+  # detector's header window. Tiny — one row and about 129 more per chain — but
+  # it is the state that decides whether a restart resumes or re-indexes from
+  # INDEXER_START_BLOCK, so it wants a volume of its own.
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aave
+      POSTGRES_USER: aave
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aave}
+    volumes:
+      # NOT /var/lib/postgresql/data, which is what every pre-18 example says.
+      # The 18 image moved PGDATA to a versioned subdirectory so a major upgrade
+      # can use pg_upgrade --link, and mounting the old path leaves the database
+      # writing outside the volume with nothing logged to say so. It presents as
+      # the cursor never surviving a restart — the exact thing this service is
+      # here to prevent.
+      - postgres-data:/var/lib/postgresql
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U aave -d aave']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
   # Runs once and exits. Migrating from the indexer's own boot would have every
   # replica race the same DDL, so the schema is its own step.
+  #
+  # Two databases, applied in sequence and logged separately, so a failure names
+  # which one it was.
   migrate:
     build:
       context: .
@@ -48,8 +79,11 @@ services:
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
     depends_on:
       clickhouse:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   api:
@@ -112,16 +146,20 @@ services:
       CHAIN_ID: '1'
       RPC_URLS: ${RPC_URLS:-https://eth.drpc.org}
       FINALITY_DEPTH: '128'
-      # Main Spoke genesis: the log shows the catch-up walking wide ranges up to
-      # the tip, then switching to one block at a time.
+      # Main Spoke genesis. Only consulted on a cold start: once a cursor row
+      # exists this is never read again, so raising it to skip history means
+      # clearing the stored cursor too.
       INDEXER_START_BLOCK: ${INDEXER_START_BLOCK:-24720899}
       INDEXER_MAX_RANGE_SIZE: '1000'
       CLICKHOUSE_URL: http://clickhouse:8123
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
     depends_on:
       clickhouse:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -142,3 +180,4 @@ services:
 
 volumes:
   clickhouse-data:
+  postgres-data:

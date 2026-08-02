@@ -11,7 +11,9 @@ export default defineConfig({
   // for the same reason the apps do: otherwise a stale dist is what gets tested.
   resolve: {
     alias: {
+      '@packages/migrations': fileURLToPath(new URL('../migrations/src/index.ts', import.meta.url)),
       '@packages/ops': fileURLToPath(new URL('../ops/src/index.ts', import.meta.url)),
+      '@packages/postgres': fileURLToPath(new URL('../postgres/src/index.ts', import.meta.url)),
     },
   },
   test: {
@@ -19,7 +21,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.spec.ts'],
-    env: { NODE_ENV: 'test', LOG_LEVEL: 'silent' },
+    env: {
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'silent',
+      // The two Postgres adapter specs go against a real server — what they
+      // assert is that the SQL means what the port says, the data-modifying CTE
+      // above all. Each takes a schema of its own, so they run beside the rest
+      // of this project's files rather than serialising it.
+      POSTGRES_URL: process.env['POSTGRES_URL'] ?? 'postgres://postgres@localhost:5432/postgres',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],

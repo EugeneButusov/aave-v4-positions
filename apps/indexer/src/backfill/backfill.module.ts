@@ -5,8 +5,8 @@ import { LoggingModule } from '@packages/ops';
 import { validateEnv, type Env } from '../config/env';
 import { indexingSetup } from '../indexing.setup';
 
-/** The events module comes in through `indexing`, which already imports it. */
-const { indexing } = indexingSetup({ autoStart: false });
+/** One module: the event and Postgres modules come in through it. */
+const indexing = indexingSetup({ autoStart: false });
 
 /**
  * The backfill command's root: `AppModule` without the probe server, since

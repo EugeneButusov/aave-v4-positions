@@ -23,6 +23,25 @@ export const clickHouseEnvSchema = z.object(clickHouseEnv);
 export type ClickHouseEnv = z.infer<typeof clickHouseEnvSchema>;
 
 /**
+ * How to reach Postgres, where the indexer keeps its own position.
+ *
+ * Its own fragment for the same reason as ClickHouse's: the migration entry
+ * point applies DDL to both databases and needs nothing else.
+ *
+ * One URL rather than the four discrete variables ClickHouse gets. Every managed
+ * Postgres hands you exactly this string, often carrying `?sslmode=require`, and
+ * postgres.js takes one directly — splitting it into parts means reassembling
+ * it, and the first thing reassembly gets wrong is percent-encoding a password.
+ */
+const postgresEnv = {
+  POSTGRES_URL: z.url().default('postgres://postgres@localhost:5432/postgres'),
+};
+
+export const postgresEnvSchema = z.object(postgresEnv);
+
+export type PostgresEnv = z.infer<typeof postgresEnvSchema>;
+
+/**
  * Environment contract for the indexer process.
  *
  * Parsed once at boot. An invalid value aborts the process instead of
@@ -108,6 +127,7 @@ export const envSchema = z.object({
     .transform((value) => value.toLowerCase()),
 
   ...clickHouseEnv,
+  ...postgresEnv,
 });
 
 export type Env = z.infer<typeof envSchema>;

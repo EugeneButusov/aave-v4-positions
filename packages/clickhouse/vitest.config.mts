@@ -5,6 +5,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
+      '@packages/migrations': fileURLToPath(new URL('../migrations/src/index.ts', import.meta.url)),
       '@packages/ops': fileURLToPath(new URL('../ops/src/index.ts', import.meta.url)),
     },
   },

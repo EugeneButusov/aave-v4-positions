@@ -18,7 +18,7 @@ import {
   type ProcessorOutcome,
 } from './processors/block-processor';
 import { CURSOR_STORE, type CursorStore } from './cursor/cursor-store';
-import { InMemoryCursorStore } from './cursor/in-memory-cursor-store';
+import { RecordingCursorStore } from '../test-support/recording-cursor-store';
 import { IndexerHealthIndicator } from './observability/indexer.health-indicator';
 import { IndexerService } from './indexer.service';
 import { INDEXING_OPTIONS, type IndexingOptions } from './indexing.options';
@@ -123,13 +123,13 @@ function build(settings: Settings = { chainId: 1, rpcUrls: ['https://rpc.example
           DependentProcessor,
           SecondProcessor,
           StubReorgDetector,
-          InMemoryCursorStore,
+          RecordingCursorStore,
         ],
         inject: [SETTINGS],
         useFactory: optionsFrom,
         processors: [DependentProcessor, SecondProcessor],
         reorgDetector: StubReorgDetector,
-        cursorStore: InMemoryCursorStore,
+        cursorStore: RecordingCursorStore,
       }),
     ],
   }).compile();
@@ -162,7 +162,7 @@ describe('IndexingModule', () => {
     // 'injected' comes from Marker, so the processor was constructed by the
     // injector rather than handed over as a bare value.
     expect(processors[0]?.name).toBe('injected');
-    expect((processors[1] as SecondProcessor).store).toBeInstanceOf(InMemoryCursorStore);
+    expect((processors[1] as SecondProcessor).store).toBeInstanceOf(RecordingCursorStore);
   });
 
   it('binds the chain client over the configured providers', async () => {
@@ -210,16 +210,16 @@ describe('IndexingModule', () => {
 
   it('produces a distinct module on every call, which is why callers must reuse one', async () => {
     const first = IndexingModule.forRootAsync({
-      providers: [StubReorgDetector, InMemoryCursorStore],
+      providers: [StubReorgDetector, RecordingCursorStore],
       useFactory: () => optionsFrom({ chainId: 1, rpcUrls: ['https://a.example.com'] }),
       reorgDetector: StubReorgDetector,
-      cursorStore: InMemoryCursorStore,
+      cursorStore: RecordingCursorStore,
     });
     const second = IndexingModule.forRootAsync({
-      providers: [StubReorgDetector, InMemoryCursorStore],
+      providers: [StubReorgDetector, RecordingCursorStore],
       useFactory: () => optionsFrom({ chainId: 1, rpcUrls: ['https://a.example.com'] }),
       reorgDetector: StubReorgDetector,
-      cursorStore: InMemoryCursorStore,
+      cursorStore: RecordingCursorStore,
     });
 
     // Nest keys a dynamic module by object reference. Importing both would give

@@ -34,8 +34,16 @@ export interface BlockHeaderStore {
    * and a fork re-indexes the same height with a different hash — and two
    * answers for one height would make the ancestor walk ambiguous.
    *
-   * Pruning rides along so a database adapter can do both in one statement,
-   * leaving no window where the retained set is unbounded.
+   * Pruning rides along so a database adapter can do both in one statement — a
+   * data-modifying CTE — leaving no window where the retained set is unbounded.
+   *
+   * **`retainFrom <= header.number` is a precondition.** Every caller satisfies
+   * it: the floor is `header.number - finalityDepth`, and the downward refill
+   * walks only while the child sits above it. It matters because the two halves
+   * of a single statement read the same snapshot, so an adapter that combined
+   * them could not also drop the row it just wrote — where an adapter holding an
+   * array would. Outside the precondition the two disagree, and nothing needs
+   * them to agree there.
    */
   append(chainId: number, header: BlockHeader, retainFrom: number): Promise<void>;
 
