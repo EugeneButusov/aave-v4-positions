@@ -26,14 +26,15 @@ header window in Postgres, so a restart resumes instead of re-indexing; the shar
 layer of client, readiness probe and [migration runner](#schema-and-migrations); and
 [event ingestion](#event-ingestion) — the eight Main Spoke events that move a position and the
 thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that will value them,
-decoded against the official ABIs into two append-only ledgers; and
+decoded against the official ABIs into two append-only ledgers;
 [the position fold](#the-position-fold) over the Spoke ledger, with a keyset-paginated store to read
-it.
+it; and [the Hub asset mirror](#the-hub-asset-mirror) over the Hub's, reconciled against the chain's
+own `getAsset`.
 
-**Not yet:** the Hub asset mirror and therefore any valuation, the token address, position _type_ as
-§12.1 defines it, prices, health factors, the positions endpoints, Kubernetes manifests. Balances are
-shares — the Hub events that convert them are now stored, but nothing folds them yet. The API still
-serves one stub endpoint. See [Not here yet](#not-here-yet).
+**Not yet:** the share→asset arithmetic, and therefore any valuation on the read path — position
+_type_ as §12.1 defines it, prices, health factors, the positions endpoints, Kubernetes manifests.
+Balances are still shares: both halves of the conversion are now indexed, and nothing multiplies
+them together yet. The API still serves one stub endpoint. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -261,6 +262,13 @@ Applying the ClickHouse schema is its own command, never something a service doe
 
 ```bash
 pnpm --filter @aave-v4-positions/indexer migrate
+```
+
+Checking the Hub mirror against the chain is its own command too, and it runs against whatever RPC
+you point it at rather than on a schedule — see [the mirror's verification](#verification-1):
+
+```bash
+pnpm --filter @aave-v4-positions/indexer reconcile:hub -- --from X --to Y
 ```
 
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
@@ -1058,6 +1066,80 @@ Three paths that reconciliation cannot cover, because mainnet has never exercise
 triple has never been non-zero, no liquidation has ever set `receiveShares`, and `ReportDeficit` has
 never fired. Those are pinned by synthetic specs and nothing else.
 
+## The Hub asset mirror
+
+The other half of a balance. A position carries shares; turning them into token amounts needs the
+Hub's own asset state, because debt accrues with time through `drawnIndex` and that accrual emits no
+log (§5). This folds the Hub ledger into one row per asset, so nothing on the read path needs an RPC.
+
+It **splits along the same axis as the position fold**, and for the same reason. Seven fields are a
+group under addition — `liquidity`, `addedShares`, `drawnShares`, `swept`, the premium pair and
+`deficitRay` — so retraction propagates for free and they live pre-aggregated in a
+`SummingMergeTree`. Seven are latest-wins — `drawnIndex`, `drawnRate`, `realizedFees`, its timestamp,
+`liquidityFee`, `underlying`, `decimals` — and no engine holds those pre-aggregated under retraction,
+so they stay at event grain in a collapsing table and are `argMax`ed over what the collapse leaves.
+
+### Read from Hub.sol, not from the summary
+
+§5.5 gives a transition table and calls this fold the highest-risk part of the ingestion logic: one
+mishandled transition silently corrupts every supply valuation for that asset, with no error and
+nothing to flag it. Six of the thirteen events have never fired on mainnet, so reconciliation cannot
+catch a mistake in them. Every transition was therefore transcribed from `Hub.sol` at the pinned
+commit `2524fe4`. Four things came out of that which the summary alone would have got wrong:
+
+- **`Restore` credits `drawnAmount + premiumAmount` to liquidity**, not `drawnAmount`. The premium is
+  cash arriving too. §5.5's table lists only the first, and a fold that believed it would leak the
+  premium out of every supplier's redemption value.
+- **`liquidity` is assigned, never incremented** — `asset.liquidity = liquidity.toUint120()`. It is
+  additive anyway, because the local is `asset.liquidity ± delta` at all six call sites, but the
+  `balanceOf` read sitting beside it is a solvency `require` and not the source of the value. Worth
+  knowing before folding a field the contract assigns.
+- **`EliminateDeficit` and `RefreshPremium` are absent from the summary table entirely.** The first
+  does `addedShares -= shares` and `deficitRay -= deficitAmountRay`, falling together so the share
+  price is preserved (§12.3); the second applies the same `_applyPremiumDelta` as `Restore`, which
+  adds both deltas verbatim — and that is precisely what makes the premium pair additive rather than
+  latest-wins.
+- **`MintFeeShares` zeroes `realizedFees`**, which would break latest-wins if the zero were never
+  emitted. It is: **all 14 functions that call `accrue()` also call `updateDrawnRate()`**, so every
+  mutation of `realizedFees` is followed by an `UpdateAsset` in the same transaction carrying the
+  settled value, at a higher `log_index`. That invariant is also what explains the event mix — one
+  `UpdateAsset` per state-changing call, which is why it is 50.1% of all Hub logs.
+
+`TransferShares` stays excluded, now on read evidence rather than on the analysis's word:
+`_transferShares` touches two `SpokeData` records and no `asset.*` field at all.
+
+### Three latest-wins groups, resolved a column at a time
+
+`UpdateAsset`, `UpdateAssetConfig` and `AddAsset` write disjoint columns of the same row and fire at
+wildly different rates — 29,482 against 34 against 17 over all history. The newest row for an asset
+is almost always an `UpdateAsset` whose `underlying` is NULL, so resolving the row as a whole would
+blank the listing fields every twenty seconds. Each column finds its own newest value instead.
+
+The `argMaxIf(col, …, col IS NOT NULL)` is explicitness rather than necessity, and the mutation test
+is what established that: swapping in a plain `argMax` changes no result, because **`argMax` already
+ignores rows whose argument is NULL** — measured, `argMax(v, ord)` over `(100,'usdc'), (200,NULL),
+(300,NULL)` returns `usdc`. The condition stays because it says the intent at the call site and
+survives one of those columns ceasing to be nullable.
+
+### Verification
+
+Every guard is mutation-tested — **ten mechanisms removed one at a time, each turning its spec red**:
+the `sign` multiply, five transition directions including `Restore`'s premium term and
+`EliminateDeficit`'s share burn, the `HAVING` collapse, chain-order-vs-version on the argMax,
+`lower()` on the underlying, and the qualified `ORDER BY` (unqualified it binds the `toString` alias
+and sorts 13 before 3 — the same bug the position store's pagination hit).
+
+**Reconciled against `getAsset` at zero tolerance**, in the delta form §5.5 itself used: seed from
+the chain before the window, replay the window through the mirror, compare against the chain after
+it. One 59-block window at block 25,667,068, **10 field comparisons across the asset that moved,
+zero drift** — exercising `Restore` and the `UpdateAsset` checkpoint.
+
+That window is narrow, and the reason is worth stating rather than hiding: a public endpoint serves
+state for about 127 blocks, which bounds the delta form exactly as it bounded §5.5's own 95-block
+run. The absolute check — all 17 assets, every field, against a mirror holding full history — needs
+an archive RPC and is what `reconcile:hub --absolute` does. Everything the narrow window does not
+reach rests on the source transcription above, 22 integration specs and the ten mutation tests.
+
 ## Operational shape
 
 The pieces that exist because this is meant to run in Kubernetes, not on a laptop:
@@ -1186,22 +1268,19 @@ Deliberate, in rough order of what comes next.
   Spoke's fourteen reserves sit at `CF = 0`, so the flag alone overstates collateral for those. It is
   a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
   highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
-- **The Hub asset mirror**, and so any valuation at all. The thirteen Hub events are now ingested,
-  but nothing folds them: `liquidity`, `addedShares`, `drawnShares`, `swept`, `deficitRay` and the
-  premium pair are additive and want a `SummingMergeTree`; `drawnIndex`, `drawnRate`, `realizedFees`,
-  `liquidityFee`, `underlying` and `decimals` are latest-wins and want the event-grain collapse the
-  collateral flag already uses. §5.5 calls this the highest-risk fold in the design — one mishandled
-  transition silently corrupts every supply valuation for that asset, with no error, just wrong
-  numbers — and the measured zero-count on six of the thirteen events means six transitions can only
-  ever be checked against synthetic fixtures. Reconciled against `getAsset` for all 17 assets at zero
-  tolerance. Its own PR.
-- **Valuation on the read path**, once the mirror exists: the `reserveId → (assetId, hub)` registry
-  that joins a position to Hub state — a projection of `AddReserve`, which the Spoke ledger already
-  stores — and the §5.1/§5.2 arithmetic. Three traps to respect: rounding is _up_ on the debt side
-  and _down_ on the supply side, `premiumRay` is signed so BigInt truncation is not `ceil`, and
-  `getDrawnIndex` short-circuits when both share counts are zero. `unrealizedFees` is the one formula
-  the analysis summarises rather than states, so it gets transcribed from `AssetLogic` at the pinned
-  commit rather than reconstructed.
+- **Valuation on the read path**, which is the last piece before a balance is a number. Both inputs
+  are indexed now: `PositionStore` has the shares and `HubAssetStore` has the index. What is missing
+  is the `reserveId → (assetId, hub)` registry that joins them — a projection of `AddReserve`, which
+  the Spoke ledger already stores — and the §5.1/§5.2 arithmetic. Three traps to respect: rounding is
+  _up_ on the debt side and _down_ on the supply side, `premiumRay` is signed so BigInt truncation is
+  not `ceil`, and `getDrawnIndex` short-circuits when both share counts are zero. `unrealizedFees` is
+  the one formula the analysis summarises rather than states, so it gets transcribed from
+  `AssetLogic` at the pinned commit rather than reconstructed.
+- **The absolute Hub reconciliation.** `reconcile:hub` runs today in its delta form, which a public
+  endpoint's ~127-block state window bounds to one asset or two. `--absolute` compares all 17 across
+  every field but needs an archive RPC to have backfilled the mirror first. It is the check that
+  would catch a mis-folded transition in the six events mainnet has never produced — and it cannot,
+  because it can only compare what the chain has actually done.
 - **A single-writer guarantee.** The cursor is durable now, so two indexers on one `chain_id` write
   the same row instead of each keeping their own — and a rolling deploy creates exactly that overlap
   while the old pod drains. Bounded damage, but the cursor can move backwards and cost a re-index. A

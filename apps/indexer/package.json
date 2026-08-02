@@ -15,7 +15,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
-    "migrate": "node dist/migrate.js"
+    "migrate": "node dist/migrate.js",
+    "reconcile:hub": "node --enable-source-maps dist/reconcile-hub.js"
   },
   "dependencies": {
     "@aave-positions/events": "workspace:*",
@@ -33,6 +34,7 @@
     "postgres": "catalog:",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
+    "viem": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

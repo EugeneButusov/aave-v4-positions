@@ -7,6 +7,10 @@ export {
 } from './store/position-store';
 export { InvalidCursorError, PositionCursorCodec } from './store/position-cursor';
 
+export type { HubAsset } from './store/hub-asset';
+export { HUB_ASSET_STORE, type HubAssetStore } from './store/hub-asset-store';
+export { ClickHouseHubAssetStore } from './store/clickhouse-hub-asset-store';
+
 export {
   ClickHousePositionStore,
   POSITION_MIGRATIONS_DIR,
