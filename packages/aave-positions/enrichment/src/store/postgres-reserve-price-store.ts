@@ -16,6 +16,7 @@ interface Row {
   readonly reserve_id: string;
   readonly price: string;
   readonly priced_at: Date;
+  readonly age_seconds: string | number;
 }
 
 /**
@@ -34,7 +35,20 @@ export class PostgresReservePriceStore implements ReservePriceStore {
     // Keyed by chain and nothing else, so it does not depend on the page and
     // can be issued beside the ClickHouse query rather than after it.
     const rows = await this.sql<Row[]>`
-      SELECT spoke, reserve_id, price, priced_at
+      SELECT
+          spoke,
+          reserve_id,
+          price,
+          priced_at,
+          -- Computed here, not by the reader, for the reason
+          -- \`indexer_cursor\` gives: \`priced_at\` is this server's own now(),
+          -- so a reader subtracting it from its own clock reports skew as
+          -- staleness — and a fast reader would mark a fresh price stale,
+          -- which flags every USD value on the page as suspect.
+          --
+          -- Floored to whole seconds. Six decimal places on a figure compared
+          -- against a threshold in minutes is precision nobody can use.
+          floor(EXTRACT(EPOCH FROM (now() - priced_at)))::bigint AS age_seconds
       FROM reserve_prices
       WHERE chain_id = ${chainId}
     `;
@@ -42,7 +56,7 @@ export class PostgresReservePriceStore implements ReservePriceStore {
     return new Map(
       rows.map((row) => [
         reserveKey(row.spoke, row.reserve_id),
-        { price: row.price, pricedAt: row.priced_at },
+        { price: row.price, pricedAt: row.priced_at, ageSeconds: Number(row.age_seconds) },
       ]),
     );
   }

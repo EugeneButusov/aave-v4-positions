@@ -32,13 +32,14 @@ it; [the Hub asset fold](#the-hub-asset-fold) over the Hub's, reconciled against
 `getAsset`; [balances](#balances) — the §5 arithmetic that turns shares into token amounts, exact
 against `getUserDebt` and `getUserSuppliedAssets`; and
 [the endpoint that serves them](#the-positions-endpoint), block-stamped and paged; and
-[enrichment](#enrichment) — what each token calls itself, read from the ERC-20 because no Aave event
-carries it, and kept current without anyone running anything.
+[enrichment](#enrichment) — what each token calls itself and what Aave prices it at, neither of them
+carried by any Aave event, both kept current without anyone running anything.
 
-**Not yet:** position _type_ as §12.1 defines it, prices, health factors, Kubernetes manifests.
-Balances are token amounts with a symbol beside them now; what is missing above them is USD, and
-what is missing below is the config events that decide whether a supply counts as collateral. See
-[Not here yet](#not-here-yet).
+**Not yet:** position _type_ as §12.1 defines it, portfolio totals, health factors, Kubernetes
+manifests. Balances are token amounts with a symbol and a USD value beside them now; what is missing
+above them is the per-Spoke aggregate, and what is missing below is the config events that decide
+whether a supply counts as collateral. Prices are current-only, so a historical `asOf` query is
+served without them. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -333,9 +334,15 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 **Shared** — `NODE_ENV`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_GRACE_SECONDS`.
 
 **API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`),
-`API_SYNC_STALE_AFTER_SECONDS` (60), and `POSITIONS_CURSOR_SECRET` — _required_, at least 32
-characters, and the same on every replica. It signs pagination cursors, so a default would be a key
-every deployment shares, and a per-process one gives pagination that fails only under load.
+`API_SYNC_STALE_AFTER_SECONDS` (60), `API_PRICE_STALE_AFTER_SECONDS` (300), and
+`POSITIONS_CURSOR_SECRET` — _required_, at least 32 characters, and the same on every replica. It
+signs pagination cursors, so a default would be a key every deployment shares, and a per-process one
+gives pagination that fails only under load.
+
+The two staleness thresholds are separate because the clocks are: the indexer advances every block,
+the oracle is read once a minute. The price one measures how long since **we** last read the oracle,
+never how long since a feed last moved — an hour without an `AnswerUpdated` is ordinary Chainlink
+behaviour (§7.5), and a threshold set from feed cadence would mark healthy feeds stale forever.
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
 
@@ -1355,6 +1362,8 @@ GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
   "sync": { "lastBlock": 25652535, "lastBlockHash": "0x…", "ageSeconds": 7, "stale": false },
   // The instant the amounts below were computed at. A different clock from `sync`.
   "valuedAt": 1785000000,
+  // A third clock: how current the prices are. Null when nothing here is priced.
+  "pricing": { "updatedAt": "2026-08-02T11:04:17.000Z", "ageSeconds": 41, "stale": false },
   "items": [
     {
       "chainId": 1,
@@ -1365,7 +1374,15 @@ GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
       // What reserveId resolves to, once the registry and the Hub are both read.
       "asset": { "assetId": "7", "hub": "0x…", "underlying": "0x…", "decimals": 6 },
       // The shares above in token units, at `valuedAt`. Null together with `asset`.
-      "value": { "suppliedAmount": "1000000000", "totalDebt": "0", "drawnIndex": "1e27…" },
+      // `price` is the Spoke oracle's, 8 dp; the values are §7.1's unit where 1e26 = $1.
+      "value": {
+        "suppliedAmount": "1000000000",
+        "totalDebt": "0",
+        "drawnIndex": "1e27…",
+        "price": "99971505",
+        "suppliedValue": "99971505000000000000000000000",
+        "debtValue": "0",
+      },
     },
   ],
   "nextCursor": null,
@@ -1397,6 +1414,27 @@ return a page of enormous numbers with nothing to say they are wrong.
 registry has not seen, or a Hub asset with no interest checkpoint yet. Null rather than zero, because
 a zero amount cannot be told apart from a real zero balance. The position still appears — its shares
 are real either way.
+
+**Three clocks now, because a price is a third source.** `price`, `suppliedValue` and `debtValue`
+come from the Spoke's own oracle, and `pricing` says how fresh they are — reporting the **oldest**
+price behind the page, since the question a caller has is how far to trust the worst number in front
+of them. Prices are normally written in one upsert and agree; they diverge exactly when the oracle
+refused a reserve and its last good price was left to age, which is the case worth surfacing.
+`stale` measures how long since the indexer last read the oracle, never how long since a feed last
+moved — an hour without an `AnswerUpdated` is ordinary Chainlink behaviour (§7.5).
+
+**The values are in the protocol's unit, where `1e26` is one dollar** (§7.1, `SpokeUtils.toValue`
+against `ORACLE_DECIMALS = 8`). Served that way rather than converted to dollars because it is what
+the contract computes in, so it reconciles against `getUserAccountData` exactly — dividing it here
+would lose digits the chain does not. `debtValue` prices `totalDebt`, the rounded token amount that
+is actually owed; the health factor divides an unrounded ray-scaled debt instead, so when it lands
+the two will differ in the last digits by design.
+
+**An explicit `asOf` is served without prices at all** — `pricing` is null and so are the three
+fields. Amounts are extrapolated to that instant and the stored price is whatever the oracle last
+said, which is now; pricing one against the other is a number that was never true. The read is
+skipped rather than the result discarded. Making a historical query priceable needs a price series
+rather than a dimension, which is [what comes next](#not-here-yet).
 
 **Every payload is block-stamped.** §12.6 — amounts and health factors are per-block quantities, and
 a number with no block behind it cannot be checked against anything. `sync` comes from the indexer's
@@ -1807,8 +1845,13 @@ Deliberate, in rough order of what comes next.
   number this" is answered by re-deriving from `spoke_events` rather than by reading it back. An
   event-grain table slots in as one more materialized-view target if drift investigation (§9.4)
   becomes routine rather than occasional.
-- **The price layer**, and therefore USD values and health factors — ~8 Chainlink aggregators plus
-  two LST rebase sources (§7.4).
+- **A price _history_**, and therefore priceable `asOf` queries and a health factor that can be
+  recomputed for a past block — ~8 Chainlink aggregators plus two LST rebase sources, folded the way
+  every other ledger here is (§7.4). What exists today is the Spoke oracle read at the head on a
+  timer, which answers "what is this worth now" exactly and "what was it worth then" not at all.
+  §7.5 argues for the fold on the grounds that deferring it leaves an `eth_call` on the read path —
+  it does not: the call is in the indexer, writing a table the API reads. What deferring it actually
+  costs is history, which is the honest reason to do it rather than the one that was written down.
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.
 - **Independent prices, as §11's oracle-vs-market deviation.** Token metadata is
   [in](#enrichment), so the enrichment seam exists and prices land the same way: a source with its

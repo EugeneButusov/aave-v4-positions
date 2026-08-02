@@ -160,6 +160,30 @@ describe('PostgresReservePriceStore', () => {
       expect(prices.get(reserveKey(SPOKE, '0'))?.price).toBe('100');
     });
 
+    it('ages a price by the database clock, not the reader’s', async () => {
+      await store.put([row()]);
+
+      const price = (await store.latest(CHAIN_ID)).get(reserveKey(SPOKE, '0'));
+
+      // Computed in SQL against the same `now()` that wrote `priced_at`, for
+      // the reason `indexer_cursor` gives: subtracting it from this process's
+      // clock would report skew as staleness, and a fast reader would mark a
+      // fresh price stale — flagging every USD value on the page as suspect.
+      expect(price?.ageSeconds).toBe(0);
+      expect(Number.isInteger(price?.ageSeconds)).toBe(true);
+    });
+
+    it('reports a price written a while ago as that old', async () => {
+      await store.put([row()]);
+      // Reach past the store to age the row, which is the only way to observe
+      // the floor without waiting real seconds.
+      await sql`UPDATE reserve_prices SET priced_at = now() - interval '90 seconds'`;
+
+      const price = (await store.latest(CHAIN_ID)).get(reserveKey(SPOKE, '0'));
+
+      expect(price?.ageSeconds).toBe(90);
+    });
+
     it('is empty rather than absent when nothing has been priced', async () => {
       // A reserve with no row serves null on the wire. The read path has to be
       // able to tell that from a zero, which would be indistinguishable from a

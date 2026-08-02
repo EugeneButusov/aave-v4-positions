@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import { PostgresModule, type PostgresOptions } from '@packages/postgres';
 
+import { PostgresReservePriceStore } from './store/postgres-reserve-price-store';
 import { PostgresTokenMetadataStore } from './store/postgres-token-metadata-store';
+import { RESERVE_PRICE_STORE } from './store/reserve-price-store';
 import { TOKEN_METADATA_STORE } from './store/token-metadata-store';
 
 const ENRICHMENT_READ_OPTIONS = Symbol('ENRICHMENT_READ_OPTIONS');
@@ -31,11 +33,11 @@ class EnrichmentReadOptionsModule {}
 /**
  * The **read** side of enrichment: the stores, and no writer.
  *
- * Separate from {@link TokenEnrichmentModule} because the two have different
- * consumers and only one of them should ever run. That module owns the
- * processor that fills the table; an API replica must never acquire one by
- * importing the thing it reads, or every replica would fan out over the same
- * ERC-20s and race the same rows.
+ * Separate from {@link TokenEnrichmentModule} and {@link ReservePriceModule}
+ * because the two sides have different consumers and only one of them should
+ * ever run. Those own the workers that fill these tables; an API replica must
+ * never acquire one by importing the thing it reads, or every replica would
+ * fan out over the same ERC-20s and poll the same oracle, racing the same rows.
  *
  * **Postgres and nothing else**, which is the whole reason this package exists.
  * What it holds is fetched rather than folded, small, keyed for point lookups
@@ -74,8 +76,11 @@ export class EnrichmentReadModule {
     return {
       module: EnrichmentReadModule,
       imports: [settings, postgres],
-      providers: [{ provide: TOKEN_METADATA_STORE, useClass: PostgresTokenMetadataStore }],
-      exports: [TOKEN_METADATA_STORE, postgres],
+      providers: [
+        { provide: TOKEN_METADATA_STORE, useClass: PostgresTokenMetadataStore },
+        { provide: RESERVE_PRICE_STORE, useClass: PostgresReservePriceStore },
+      ],
+      exports: [TOKEN_METADATA_STORE, RESERVE_PRICE_STORE, postgres],
     };
   }
 }

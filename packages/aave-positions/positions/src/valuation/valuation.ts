@@ -163,4 +163,37 @@ export function valuePosition(position: PositionShares, asset: AssetState, at: b
   };
 }
 
+/**
+ * One dollar, in the unit {@link toValue} answers in.
+ *
+ * Exported so a caller dividing by it says what it is doing. Not applied here:
+ * the division is lossy and the wire carries the exact integer (§7.5).
+ */
+export const USD = 10n ** 26n;
+
+/**
+ * `SpokeUtils.toValue` — an amount in token units, priced.
+ *
+ * **The unit is the protocol's own and is not dollars.** It is an
+ * 18-decimal-normalised amount times an 8-decimal price, so `1e26` represents
+ * one dollar — `SpokeUtils.toValue:28-40` documents that outright, against
+ * `ORACLE_DECIMALS = 8` (§7.1). Served in that unit rather than converted,
+ * because it is what the contract computes in and therefore the only form that
+ * reconciles against `getUserAccountData`.
+ *
+ * `decimals` is the **Hub's**, from `AddAsset`, and never the token's own
+ * `decimals()`. The two can disagree — which is a listing audit signal, not a
+ * correctness problem — and when they do, the Hub's is what the Hub's
+ * arithmetic uses and so what the position is worth to Aave.
+ */
+export function toValue(amount: bigint, decimals: number, price: bigint): bigint {
+  // The contract writes `10 ** (18 - dec)` and would revert on a token with
+  // more than eighteen decimals, which no listed asset has. Continuing the same
+  // arithmetic by dividing is not a different rule, and it keeps a hypothetical
+  // listing from taking a whole page down with it.
+  return decimals <= 18
+    ? amount * price * 10n ** BigInt(18 - decimals)
+    : (amount * price) / 10n ** BigInt(decimals - 18);
+}
+
 export { RAY };

@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { RAY, VIRTUAL, fromRayUp, percentMulDown, premiumRay, rayMulUp } from './ray';
 import {
+  USD,
   drawnIndexAt,
   suppliedAssets,
   totalAddedAssets,
+  toValue,
   valuePosition,
   type AssetState,
   type PositionShares,
@@ -251,5 +253,62 @@ describe('values past 2^53', () => {
     const state = asset({ checkpointIndex: RAY, drawnShares: 422_166_581_625_087_607_993n });
 
     expect(valuePosition(held, state, T0).drawnDebt).toBe(422_166_581_625_087_607_993n);
+  });
+});
+
+describe('toValue', () => {
+  /** ETH/USD as §7.4.2 records it, 8 decimals. */
+  const ETH_USD = 187_522_000_000n;
+  /** USDC/USD as §7.4.3 records it. */
+  const USDC_USD = 99_971_505n;
+
+  it('puts one dollar at 1e26', () => {
+    // `SpokeUtils.toValue` documents the unit outright: an 18-decimal amount
+    // times an 8-decimal price. One whole USDC at exactly $1 is one dollar.
+    expect(toValue(1_000_000n, 6, 100_000_000n)).toBe(USD);
+  });
+
+  it('normalises the amount to eighteen decimals, not the price', () => {
+    // The same dollar value from two tokens with different decimals. If the
+    // exponent were taken from the wrong side these would differ by 1e12.
+    const oneUsdcWorth = toValue(1_000_000n, 6, 100_000_000n);
+    const oneDaiWorth = toValue(10n ** 18n, 18, 100_000_000n);
+
+    expect(oneUsdcWorth).toBe(oneDaiWorth);
+  });
+
+  it('values a whole-token amount at its price', () => {
+    // 1 WETH at $1875.22.
+    expect(toValue(10n ** 18n, 18, ETH_USD) / USD).toBe(1_875n);
+  });
+
+  it('keeps the digits a division would lose', () => {
+    // 1000 USDC at $0.99971505 is $999.71505, which is not representable as an
+    // integer number of dollars — the point of publishing the raw Value.
+    const value = toValue(1_000_000_000n, 6, USDC_USD);
+
+    expect(value).toBe(99_971_505n * 10n ** 21n);
+    expect(value / USD).toBe(999n);
+  });
+
+  it('is exact past 2^53', () => {
+    // A realistic share-scale amount priced. float64 would round the tail off
+    // both operands long before the product mattered (§7.5).
+    expect(toValue(422_166_581_625_087_607_993n, 18, ETH_USD)).toBe(
+      422_166_581_625_087_607_993n * ETH_USD,
+    );
+  });
+
+  it('divides rather than reverting past eighteen decimals', () => {
+    // The contract writes `10 ** (18 - dec)` and would revert here. No listed
+    // asset has more than eighteen, so this is about not taking a whole page
+    // down with a hypothetical listing — the arithmetic continued, not a
+    // different rule.
+    expect(toValue(10n ** 20n, 20, 100_000_000n)).toBe(USD);
+  });
+
+  it('is zero for a zero amount, and only for one', () => {
+    expect(toValue(0n, 6, ETH_USD)).toBe(0n);
+    expect(toValue(1n, 6, ETH_USD)).toBeGreaterThan(0n);
   });
 });
