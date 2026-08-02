@@ -133,8 +133,18 @@ describe('openapi', () => {
     it('marks the end-of-listing cursor nullable rather than absent', () => {
       const schema = document.components?.schemas?.['PositionPageDto'] as SchemaNode;
 
-      expect(schema.required?.toSorted()).toEqual(['items', 'nextCursor', 'sync', 'valuedAt']);
+      expect(schema.required?.toSorted()).toEqual([
+        'items',
+        'nextCursor',
+        'pricing',
+        'sync',
+        'valuedAt',
+      ]);
       expect(schema.properties?.['nextCursor']).toMatchObject({ nullable: true });
+      // Required *and* nullable, on the same terms: absent would mean the field
+      // might not exist, where null means there is nothing priced behind this
+      // page. A caller branching on one must not have to handle the other.
+      expect(schema.properties?.['pricing']).toMatchObject({ nullable: true });
     });
 
     it('describes the refusals, not just the page', () => {

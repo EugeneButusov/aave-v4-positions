@@ -1,5 +1,7 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { RESERVE_PRICE_STORE, reserveKey } from '@packages/prices';
+import { TOKEN_METADATA_STORE } from '@packages/token-metadata';
 import {
   POSITION_STORE,
   type Position,
@@ -7,7 +9,6 @@ import {
   type PositionQuery,
   type PositionStore,
 } from '@aave-positions/positions';
-import { TOKEN_METADATA_STORE } from '@packages/token-metadata';
 import {
   SYNC_STATUS_STORE,
   type Hash,
@@ -71,11 +72,18 @@ function position(over: Partial<Position> = {}): Position {
  */
 function wirePosition(
   label: { symbol: string | null; name: string | null } | null = null,
+  usd: { price: string; suppliedValue: string; debtValue: string } | null = null,
 ): unknown {
-  const { asset, ...rest } = position();
+  const { asset, value, ...rest } = position();
   return {
     ...rest,
     asset: { ...asset, symbol: label?.symbol ?? null, name: label?.name ?? null },
+    value: {
+      ...value,
+      price: usd?.price ?? null,
+      suppliedValue: usd?.suppliedValue ?? null,
+      debtValue: usd?.debtValue ?? null,
+    },
   };
 }
 
@@ -117,11 +125,21 @@ class FakeTokens {
   }
 }
 
+/** The other Postgres-backed enrichment, stubbed on the same terms. */
+class FakePrices {
+  prices = new Map<string, { price: string; pricedAt: Date; ageSeconds: number }>();
+
+  put(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
 describe('positions (e2e)', () => {
   let app: INestApplication<App>;
   const store = new FakeStore();
   const sync = new FakeSync();
   const tokens = new FakeTokens();
+  const prices = new FakePrices();
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
@@ -131,6 +149,8 @@ describe('positions (e2e)', () => {
       .useValue(sync)
       .overrideProvider(TOKEN_METADATA_STORE)
       .useValue({ labels: () => Promise.resolve(tokens.labels), put: () => Promise.resolve() })
+      .overrideProvider(RESERVE_PRICE_STORE)
+      .useValue({ latest: () => Promise.resolve(prices.prices), put: () => Promise.resolve() })
       .compile();
 
     app = moduleRef.createNestApplication({ logger: false });
@@ -162,6 +182,10 @@ describe('positions (e2e)', () => {
           stale: false,
         },
         valuedAt: VALUED_AT,
+        // Null with nothing priced, and it is a distinct field rather than an
+        // absent one: a caller has to be able to tell "no prices behind this"
+        // from "this deployment does not price".
+        pricing: null,
         items: [wirePosition()],
         nextCursor: null,
       });
@@ -213,6 +237,50 @@ describe('positions (e2e)', () => {
       // it from ClickHouse, and the caller cannot tell.
       expect(res.body.items[0].asset).toMatchObject({ symbol: 'USDC', name: 'USD Coin' });
       tokens.labels.clear();
+    });
+
+    it('values the position once the oracle has been read', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [position()], next: null };
+      prices.prices.set(reserveKey(SPOKE, '7'), {
+        price: '99971505',
+        pricedAt: new Date('2026-08-02T11:04:17.000Z'),
+        ageSeconds: 41,
+      });
+
+      const res = await request(app.getHttpServer()).get(PATH).expect(200);
+
+      // Three reads behind one response now — the fold from ClickHouse, the
+      // label and the price from Postgres — and the caller cannot tell.
+      expect(res.body.items[0].value).toMatchObject({
+        price: '99971505',
+        suppliedValue: '99971505000000000000000000000',
+      });
+      // The third clock, beside `sync` and `valuedAt`.
+      expect(res.body.pricing).toEqual({
+        updatedAt: '2026-08-02T11:04:17.000Z',
+        ageSeconds: 41,
+        stale: false,
+      });
+      prices.prices.clear();
+    });
+
+    it('withholds every price when asOf is set', async () => {
+      store.page = { valuedAt: VALUED_AT, items: [position()], next: null };
+      prices.prices.set(reserveKey(SPOKE, '7'), {
+        price: '99971505',
+        pricedAt: new Date('2026-08-02T11:04:17.000Z'),
+        ageSeconds: 41,
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`${PATH}?asOf=${VALUED_AT - 3600}`)
+        .expect(200);
+
+      // Amounts are extrapolated to that instant; the stored price is current.
+      // A value mixing the two is a number that never existed.
+      expect(res.body.pricing).toBeNull();
+      expect(res.body.items[0].value).toMatchObject({ price: null, suppliedValue: null });
+      prices.prices.clear();
     });
 
     it('reports null rather than zero when the join has nothing to offer', async () => {

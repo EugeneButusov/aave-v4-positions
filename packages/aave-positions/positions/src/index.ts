@@ -18,9 +18,11 @@ export {
 
 export {
   RAY,
+  USD,
   drawnIndexAt,
   suppliedAssets,
   totalAddedAssets,
+  toValue,
   valuePosition,
   type AssetState,
   type PositionShares,
