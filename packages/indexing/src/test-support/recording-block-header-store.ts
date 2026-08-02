@@ -1,5 +1,5 @@
 import type { BlockHeader } from '../chain/chain-client';
-import { InMemoryBlockHeaderStore } from '../indexing/reorg/in-memory-block-header-store';
+import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 
 /**
  * A retention window that records every write and can be made to fail on a

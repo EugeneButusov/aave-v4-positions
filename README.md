@@ -21,15 +21,16 @@ code being told one happened.
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook, the [indexing framework](#indexing) — chain client with provider failover, log reader,
 cursor and processor seams, and hash-chain reorg detection over a retained header window, with a
-detected fork re-reported on the next start until it has actually been applied; the shared ClickHouse
+detected fork re-reported on the next start until it has actually been applied; a durable cursor and
+header window in Postgres, so a restart resumes instead of re-indexing; the shared ClickHouse
 layer of client, readiness probe and [migration runner](#schema-and-migrations); and
 [event ingestion](#event-ingestion) — the eight Main Spoke events that move a position, decoded
 against the official ABI and stored as an append-only ledger; and [the position fold](#the-position-fold)
 over that ledger, with a keyset-paginated store to read it.
 
 **Not yet:** Core Hub events and therefore any valuation, the token address, position _type_ as
-§12.1 defines it, prices, health factors, the positions endpoints, durable cursor persistence,
-Kubernetes manifests. Balances are shares, and the API still serves one stub endpoint. See
+§12.1 defines it, prices, health factors, the positions endpoints, Kubernetes manifests. Balances
+are shares, and the API still serves one stub endpoint. See
 [Not here yet](#not-here-yet).
 
 ## Layout
@@ -43,6 +44,8 @@ Kubernetes manifests. Balances are shares, and the API still serves one stub end
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
 │   ├── clickhouse/          the client, its Nest module, a probe, the migration runner
+│   ├── postgres/            the same four things for the indexer's own state
+│   ├── migrations/          reads and orders .sql files; no client, so both runners share it
 │   ├── indexing/            the chain-agnostic indexing engine
 │   │   └── src/
 │   │       ├── chain/           RPC access — the ChainClient and LogReader ports
@@ -51,7 +54,8 @@ Kubernetes manifests. Balances are shares, and the API still serves one stub end
 │   │       │   ├── reorg/           finality, fork detection, and what outlives the process
 │   │       │   ├── cursor/          durable position
 │   │       │   └── observability/   state machine and health indicator
-│   │       └── test-support/    fakes, exported so consumers test against them
+│   │       ├── postgres-migrations/  the two tables the Postgres adapters own
+│   │       └── test-support/    fakes and port contracts, exported so adapters run them
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
 │   └── aave-positions/      packages that know about Aave
 │       ├── events/          ABI binding, decoder, append-only event store
@@ -82,9 +86,22 @@ readiness probe and the [migration runner](#schema-and-migrations), and nothing 
 stored in it. Repositories live with whatever owns their tables and inject the client from here, so
 this package never becomes a catalogue of every table in the system.
 
+`@packages/postgres` is the same package for the other database, and `@packages/migrations` is what
+fell out when there were two: reading and ordering `.sql` files needs no client, and two copies of the
+ordinal-collision rule would drift silently.
+
 `@packages/indexing` is the [loop](#indexing) and the seams it drives. It knows about block numbers,
 forks and cursors, and nothing about Aave — a processor is something a consumer writes. It had to
 leave `apps/indexer` for that to be true at all: a package cannot import from an app.
+
+Each seam folder holds its port and the adapter behind it side by side — `cursor/` has `CursorStore`
+and `PostgresCursorStore`, `reorg/` the same for the header window. The two tables those adapters own
+ship as `.sql` from `src/postgres-migrations/`, and the application names the directory. There is
+**one** adapter per persistence port, not two: an in-memory cursor under a durable window (or the
+reverse) names a resume point nothing can vet, so the second one would exist only to be wired by
+mistake. The in-memory doubles live in `test-support/` with the other fakes, and they run the same
+contract suites the real adapters do — a fake that quietly disagrees with its port turns every test
+using it into a proof about a fiction.
 
 `@aave-positions/events` is the first package on the other side of that line. It ships
 `SpokeEventsModule`: the ClickHouse client, the event store and the block processor that fills it,
@@ -114,17 +131,21 @@ aliases the workspace packages, one entry each, so tests can never exercise a st
 - **Node 24** — enforced by `engines` with `engine-strict` on, so an older runtime fails at install
   rather than at runtime. It is the only version CI runs, so the declaration and the evidence match.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
-- **Docker**, to run the tests. The event-store specs go against a real ClickHouse rather than a
-  mock: what they assert is that the SQL executes and that the collapsing semantics behave as
-  documented, and neither is something a fake can tell you. CI runs the same image as a service
-  container.
+- **Docker**, to run the tests. The store specs go against real servers rather than mocks: what they
+  assert is that the SQL executes — the collapsing semantics on one side, upsert-and-prune in a single
+  data-modifying CTE on the other — and neither is something a fake can tell you. CI runs the same
+  images as service containers.
 
   ```bash
   docker run -d --rm --name clickhouse -p 8123:8123 -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server:26.3-alpine
   ```
 
-  `CLICKHOUSE_SKIP_USER_SETUP` drops the generated password, so the defaults in the vitest config
-  need no configuration at all.
+  ```bash
+  docker run -d --rm --name postgres -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18-alpine
+  ```
+
+  `CLICKHOUSE_SKIP_USER_SETUP` and `POSTGRES_HOST_AUTH_METHOD` both drop the password, so the
+  defaults in the vitest configs need no configuration at all.
 
 There is no Nest CLI. `pnpm build` is `tsc`, and `pnpm dev:*` is `tsc --watch` plus `node --watch`.
 
@@ -173,10 +194,11 @@ Nothing to install but Docker — no Node, no pnpm:
 docker compose up --build
 ```
 
-Four services: ClickHouse, a one-shot `migrate` that applies the schema and exits, then the API and
-the indexer. `docker compose ps` shows the long-running three as `healthy` once their probes pass.
-Same addresses as above (`:3000`, `:3001`, `/docs`), ClickHouse on `:8123`. Tear down with
-`docker compose down`, or `down -v` to drop the indexed data with it.
+Five services: ClickHouse and Postgres, a one-shot `migrate` that applies both schemas and exits,
+then the API and the indexer. `docker compose ps` shows the long-running four as `healthy` once their
+probes pass. Same addresses as above (`:3000`, `:3001`, `/docs`), ClickHouse on `:8123`, Postgres on
+`:5432`. Tear down with `docker compose down`, or `down -v` to drop the indexed data and the cursor
+with it — after which the next start re-indexes from `INDEXER_START_BLOCK`.
 
 The indexer waits for `migrate` to succeed rather than migrating at boot — replicas would otherwise
 race the same DDL — and then starts indexing against **`https://eth.drpc.org` by default**, so
@@ -259,12 +281,18 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 | `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration.                                           |
 | `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                                                             |
 | `FINALITY_DEPTH`             | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained. |
-| `INDEXER_START_BLOCK`        | `24720899` | Main Spoke genesis; used only when no cursor exists.                                                         |
+| `INDEXER_START_BLOCK`        | `24720899` | Main Spoke genesis. Read on a cold start and never again; see [Resuming](#resuming).                         |
 | `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                                                                       |
 | `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                                                              |
 | `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                                                              |
 | `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                                                            |
 | `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                                                                   |
+
+**Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
+the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's
+own position. One URL rather than four fields, because every managed Postgres hands you exactly that
+string, often carrying `?sslmode=require`, and taking it apart only to reassemble it is how a
+percent-encoded password gets mangled.
 
 `CHAIN_ID` and `RPC_URLS` deliberately have **no defaults**. A default chain id is precisely the
 failure this validation exists to prevent: an indexer quietly pointed at the wrong chain produces
@@ -326,13 +354,33 @@ whole file lands, so a file that fails part-way is retried from its first statem
 every statement in a multi-statement file is written `IF NOT EXISTS`.
 
 Each package owns the migrations for the tables it defines — `spoke_events` and its view belong to
-the events package, the projections over it to the positions package — and the application names the
-directories that deploy together. That cross-directory ordering is load-bearing rather than tidy: the
-projections read a table another package creates, and `010 > 002` is the entire guarantee that they
-are created after it. The runner orders by ordinal _across_ directories rather than
-grouping by package, and rejects a set whose `NNN_` ordinals collide, naming both sides. Without
-that last part two packages could each reach for `002` without either author noticing, and the apply
-order would quietly depend on how the application happened to list the directories.
+the events package, the projections over it to the positions package, the cursor and header window to
+`@packages/indexing` — and the application names the directories that deploy together. That
+cross-directory ordering is load-bearing rather than tidy: the projections read a table another
+package creates, and `010 > 002` is the entire guarantee that they are created after it. The runner
+orders by ordinal _across_ directories rather than grouping by package, and rejects a set whose
+`NNN_` ordinals collide, naming both sides. Without that last part two packages could each reach for
+`002` without either author noticing, and the apply order would quietly depend on how the application
+happened to list the directories.
+
+**Two databases mean two ordinal namespaces**, and `migrate` loads them as two separate sets for
+exactly that reason: the event log's `001_spoke_events` and the cursor's `001_indexer_cursor` are not
+a collision, and merging them to "apply everything at once" would both reintroduce one and try to run
+Postgres DDL against ClickHouse. Each half logs under its own name so a failure says which database
+it was.
+
+**The engine is in the directory name** — `clickhouse-migrations/`, `postgres-migrations/` — because
+nothing else about a migration says which one it is for. Both runners take the same
+`NNN_snake_case.sql` shape, and a set is only valid against the database it was written for. It is
+the directory rather than the filename because the ordinal has to lead the filename, so a prefix
+there would sit in the middle and group nothing; and because the recorded id _is_ the filename, so
+renaming files would make every migration look pending again. The two database packages keep a plain
+`migrations/`: `@packages/clickhouse` and `@packages/postgres` already say it in their own names.
+
+The two runners differ in one way worth knowing. Postgres DDL is transactional, so a failed run there
+leaves _nothing_ — no half-created table to drop by hand before retrying — and it takes a
+`pg_advisory_xact_lock` so two runners started together serialise. ClickHouse can offer neither, so it
+records each migration only after the statement lands and retries from there.
 
 Applying the schema is **its own step, never something a service does at boot** — two replicas
 starting together would race each other through the same DDL. Compose runs `migrate` as a one-shot
@@ -473,7 +521,7 @@ looks identical to following verified links and is worth nothing: once the resum
 reorged out, those headers describe the branch that won, and recording them would erase the only
 evidence of the branch that lost — leaving every fork looking one block deep. That path has whatever
 was durably retained and nothing else, which is why the window sits behind its own port,
-`BlockHeaderStore`; `InMemoryBlockHeaderStore` is the only adapter today.
+`BlockHeaderStore`, and why the adapter that ships behind it is the Postgres one.
 
 **Provider failover is viem's `fallback`**, tried in list order. Two of its defaults are overridden,
 both verified against the 2.55 source rather than the docs: `fallback`'s own `retryCount` goes to 0
@@ -508,9 +556,9 @@ together, so a rate-limit message carrying only the second does not narrow the r
 are pinned by tests built from the literal strings four public endpoints returned.
 
 **What is real and what is not.** The chain client, the log reader, the loop, the cursor seam, the
-outcome protocol, reorg detection and the event processor all work. `InMemoryCursorStore` forgets on
-restart, and the loop's own failure paths are exercised by tests through scripted fakes rather than
-by the running service.
+outcome protocol, reorg detection, the event processor and the durable state stores all work. The
+loop's own failure paths are exercised by tests through scripted fakes rather than by the running
+service.
 
 Three limits are worth stating plainly:
 
@@ -519,12 +567,46 @@ Three limits are worth stating plainly:
   guessing which of them are wrong. That class of corruption is what reconciliation exists to catch.
 - **A head that jumps well ahead re-enters wide ranges** with no ancestry check on the block the
   cursor sits at — the boundary moves above it and it becomes settled by arithmetic alone.
-- **No fork survives a restart with an in-memory window**, whether it was detected first or not.
-  Both cases need the same thing — retained headers to walk — and the rebuild cannot supply them,
-  by construction: the resume point is exactly what was reorged out, so the chain can no longer say
-  what we processed. `bootstrap` holds one hash, finds nothing retained, and answers
-  `unrecoverable`. It costs nothing today, since the cursor is in memory too and there is no resume
-  to get wrong, but it is why the cursor and the window want to become durable in the same change.
+- **Nothing enforces a single writer.** Two indexers on one `chain_id` now share a cursor row and a
+  window rather than each keeping their own, which a rolling deploy produces for as long as the old
+  pod takes to drain. The damage is bounded — processors are idempotent and both write the same
+  canonical headers — but the cursor can move backwards and cost a re-index. See
+  [Not here yet](#not-here-yet).
+
+### Resuming
+
+The cursor and the retained window are two small tables in Postgres — one row, and `FINALITY_DEPTH +
+1` more, per chain. They landed together on purpose: a durable cursor over an in-memory window would
+be **strictly worse than neither**, because the resume point is exactly what a fork reorged out, so
+`bootstrap` would hold one hash, find nothing retained, and answer `unrecoverable` for every
+cross-restart fork.
+
+Nothing wraps the two writes, and nothing needs to. The loop commits the header to the window and
+_then_ saves the cursor, and rewinds only _after_ saving it — so whichever of the two a crash lands
+between, the window is at or ahead of the cursor, which is the state `bootstrap` is built to resolve.
+A window _behind_ its cursor is the one shape the detector calls corruption rather than a fork. What
+that ordering does require is that neither adapter buffers: a write-behind cursor would break it.
+
+There is deliberately **no `withTransaction` seam**, which earlier notes here promised. It would have
+to commit a processor's writes together with the cursor advance, and processors write to ClickHouse
+while the cursor lives in Postgres — so no cursor store anywhere could do it. The at-least-once
+window stays open and idempotence is the whole answer rather than a stopgap.
+
+Two consequences for operators:
+
+- **`INDEXER_START_BLOCK` is consulted on a cold start and never again.** Raising it later to skip
+  history does nothing while a cursor row exists.
+- **Resetting is two deletes**, with the indexer stopped first — a running loop rewrites the row
+  within a poll interval:
+
+  ```sql
+  DELETE FROM indexer_cursor        WHERE chain_id = 1;
+  DELETE FROM indexer_block_headers WHERE chain_id = 1;
+  ```
+
+  Deleting only the cursor is safe: `bootstrap` clears the window itself. Deleting only the window
+  usually is too — it refills from the chain while the cursor still matches — but if that block has
+  since been reorged out, the detector answers `unrecoverable` and wants the pair.
 
 ### Backfilling a range on demand
 
@@ -630,8 +712,7 @@ already been indexed:
 The retraction here is an `INSERT … SELECT` that copies the version of the row it read, so it cannot
 cancel a row it never saw and arrival order stops mattering. That is worth more than free
 idempotence, because three ordinary things invert the order: `Date.now()` is wall-clock and steps
-backwards under NTP, nothing enforces a single writer while the cursor is in memory, and any retry
-can reorder two writes. Under Replacing each of those is silent permanent loss that reads as "no
+backwards under NTP, nothing enforces a single writer, and any retry can reorder two writes. Under Replacing each of those is silent permanent loss that reads as "no
 events in that block"; under Collapsing they are harmless, and the idempotence gap they leave is
 loud, guarded, and pinned by a spec.
 
@@ -809,11 +890,16 @@ is `100`. Recovery is truncate-and-replay, not a retry and not a merge — the s
 paragraph, and a spec pins each step.
 
 **There are no backfill migrations**, for the same reason. A materialized view does not see rows
-written before it existed, so adding a projection to a populated ledger needs a replay. Today a
-replay is a restart, because the in-memory cursor re-indexes from `INDEXER_START_BLOCK` every boot and
-the revert-then-append pass drives every view. The alternative — a duplicate `INSERT … SELECT` beside
-each view — can drift from its twin silently, visible only on a fresh backfill. This becomes a real
-operational step the moment the cursor goes durable.
+written before it existed, so adding a projection to a populated ledger needs a replay. The
+alternative — a duplicate `INSERT … SELECT` beside each view — can drift from its twin silently,
+visible only on a fresh backfill.
+
+**That replay is now an explicit step**, and it used to be free: before the cursor was durable, every
+restart re-indexed from `INDEXER_START_BLOCK` and the revert-then-append pass drove every view along
+the way. A resuming indexer does not, so adding a projection to a populated ledger means running
+[the backfill command](#backfilling-a-range-on-demand) over the range it needs — which re-dispatches
+the same processors, and therefore the same revert-then-append, without touching the cursor. That it
+moves nothing is what makes it safe to do while the indexer is running.
 
 ### Reading it
 
@@ -1023,18 +1109,13 @@ Deliberate, in rough order of what comes next.
   no rate-strategy model. The 11-event Hub asset mirror is the highest-risk fold in the design
   (§5.5): one mishandled transition silently corrupts every supply valuation for that asset, with no
   error, just wrong numbers. Its own PR.
-- **A durable cursor.** `InMemoryCursorStore` is still the only adapter, so **the indexer restarts
-  from `INDEXER_START_BLOCK` every time** rather than resuming. Harmless now that writes are
-  idempotent — a restart re-indexes to the same rows — but it costs the requests again. The natural
-  shape is the same append-only discipline the event log uses: a cursor journal, insert on every
-  advance, read the newest row, no mutation. It will also need a `withTransaction` seam so a
-  processor's writes and the cursor advance commit together — the gap between them is the one
-  at-least-once window the design cannot close on its own. And it should bring a `BlockHeaderStore`
-  adapter with it rather than leaving it to follow: those two are what make an unapplied reorg
-  re-derivable, and a durable cursor over an in-memory window turns every cross-restart fork into
-  `unrecoverable`, which is strictly worse than today. It also ends the free replay the fold leans
-  on: today a projection added to a populated ledger heals on the next restart, and once the cursor
-  survives one, rebuilding a projection becomes an explicit operational step.
+- **A single-writer guarantee.** The cursor is durable now, so two indexers on one `chain_id` write
+  the same row instead of each keeping their own — and a rolling deploy creates exactly that overlap
+  while the old pod drains. Bounded damage, but the cursor can move backwards and cost a re-index. A
+  `pg_advisory_lock` on `chain_id`, taken at bootstrap and held for the process lifetime, turns the
+  second writer into a clean refusal. It is about fifteen lines, and it is its own decision because
+  it changes what happens during a deploy: the new pod would refuse to index until the old one
+  actually exits.
 - **Per-position history.** The fold writes one row per position, not one per event, so "why is this
   number this" is answered by re-deriving from `spoke_events` rather than by reading it back. An
   event-grain table slots in as one more materialized-view target if drift investigation (§9.4)

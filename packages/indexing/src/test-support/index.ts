@@ -20,6 +20,7 @@ export {
 export { describeCursorStoreContract, type CursorStoreContract } from './cursor-store-contract';
 export { FakeChainClient, hashOf, type ChainCall } from './fake-chain-client';
 export { ForkingChain } from './forking-chain';
+export { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 export { RecordingBlockHeaderStore } from './recording-block-header-store';
 export { RecordingCursorStore } from './recording-cursor-store';
 export { RecordingProcessor, type ProcessorCall } from './recording-processor';

@@ -4,6 +4,10 @@ import type { Cursor, CursorStore } from '../indexing/cursor/cursor-store';
  * An in-memory cursor store that records every write and can be made to fail on
  * a chosen save — which is how the "cursor is the commit point" property is
  * proven: if the save throws, the same range must be dispatched again.
+ *
+ * The only cursor store that answers without a database, so it is also what a
+ * consumer drives the loop with in a test. It runs the port's contract suite for
+ * that reason; see `recording-cursor-store.spec.ts`.
  */
 export class RecordingCursorStore implements CursorStore {
   readonly saved: Cursor[] = [];

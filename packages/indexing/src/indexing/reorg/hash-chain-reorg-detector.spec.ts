@@ -13,8 +13,8 @@ import {
   retained,
 } from '../../test-support/reorg-harness';
 import { ShufflingBlockHeaderStore } from '../../test-support/shuffling-block-header-store';
+import { InMemoryBlockHeaderStore } from '../../test-support/in-memory-block-header-store';
 import { HashChainReorgDetector } from './hash-chain-reorg-detector';
-import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 import type { IndexingOptions } from '../indexing.options';
 
 describe('HashChainReorgDetector — finality', () => {

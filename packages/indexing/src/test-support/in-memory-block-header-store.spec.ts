@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeBlockHeaderStoreContract } from '../../test-support/block-header-store-contract';
-import { hashOf } from '../../test-support/fake-chain-client';
-import type { BlockHeader } from '../../chain/chain-client';
+import type { BlockHeader } from '../chain/chain-client';
+import { describeBlockHeaderStoreContract } from './block-header-store-contract';
+import { hashOf } from './fake-chain-client';
 import { InMemoryBlockHeaderStore } from './in-memory-block-header-store';
 
 /** No floor: keeps whatever is already retained. */

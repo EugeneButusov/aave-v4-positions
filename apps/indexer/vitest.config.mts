@@ -30,6 +30,9 @@ export default defineConfig({
         new URL('../../packages/migrations/src/index.ts', import.meta.url),
       ),
       '@packages/ops': fileURLToPath(new URL('../../packages/ops/src/index.ts', import.meta.url)),
+      '@packages/postgres': fileURLToPath(
+        new URL('../../packages/postgres/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {
@@ -47,6 +50,9 @@ export default defineConfig({
       CHAIN_ID: '1',
       RPC_URLS: 'https://rpc.invalid',
       INDEXER_AUTOSTART: 'false',
+      // Never connected to: these specs compile the graph and assert on what it
+      // resolved, and postgres.js opens no socket until the first query.
+      POSTGRES_URL: 'postgres://postgres@localhost:5432/postgres',
     },
     coverage: {
       provider: 'v8',

@@ -19,7 +19,7 @@ const POSITIONS_VIEW = 'user_positions_current';
  * package's own — the ordinals are unique across both, and `010 > 002` is what
  * guarantees these views are created after the table they read.
  */
-export const POSITION_MIGRATIONS_DIR = join(__dirname, 'migrations');
+export const POSITION_MIGRATIONS_DIR = join(__dirname, 'clickhouse-migrations');
 
 /** One row as ClickHouse renders it: every wide integer already a string. */
 interface Row {

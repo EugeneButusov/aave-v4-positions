@@ -19,7 +19,7 @@ export {
 } from './chain/log-reader';
 
 export { CURSOR_STORE, type Cursor, type CursorStore } from './indexing/cursor/cursor-store';
-export { InMemoryCursorStore } from './indexing/cursor/in-memory-cursor-store';
+export { PostgresCursorStore } from './indexing/cursor/postgres-cursor-store';
 
 export {
   BLOCK_PROCESSORS,
@@ -38,7 +38,7 @@ export {
 } from './indexing/reorg/reorg-detector';
 export { HashChainReorgDetector } from './indexing/reorg/hash-chain-reorg-detector';
 export { BLOCK_HEADER_STORE, type BlockHeaderStore } from './indexing/reorg/block-header-store';
-export { InMemoryBlockHeaderStore } from './indexing/reorg/in-memory-block-header-store';
+export { PostgresBlockHeaderStore } from './indexing/reorg/postgres-block-header-store';
 
 export {
   IndexerStatus,
@@ -52,6 +52,8 @@ export {
   type BackfillRequest,
   type BackfillResult,
 } from './backfill/backfill-runner';
+
+export { INDEXING_MIGRATIONS_DIR } from './postgres-migrations';
 
 export { IndexerService, type IterationResult } from './indexing/indexer.service';
 export { INDEXING_OPTIONS, type IndexingOptions } from './indexing/indexing.options';

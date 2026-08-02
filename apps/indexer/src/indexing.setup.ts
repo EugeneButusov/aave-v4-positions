@@ -5,21 +5,12 @@ import {
   BLOCK_HEADER_STORE,
   HashChainReorgDetector,
   IndexingModule,
-  InMemoryBlockHeaderStore,
-  InMemoryCursorStore,
+  PostgresBlockHeaderStore,
+  PostgresCursorStore,
 } from '@packages/indexing';
+import { PostgresModule } from '@packages/postgres';
 
 import type { Env } from './config/env';
-
-export interface IndexingSetup {
-  /**
-   * Held separately because the health probes reference it too, and Nest
-   * identifies a dynamic module by object reference — resolving the ClickHouse
-   * indicator from a second `forRootAsync()` call would build a second graph.
-   */
-  readonly spokeEvents: DynamicModule;
-  readonly indexing: DynamicModule;
-}
 
 /**
  * The indexing pipeline, in one place because two entry points need it
@@ -30,13 +21,19 @@ export interface IndexingSetup {
  * would quietly run fewer processors over the range and report success, which
  * is the worst shape this class of bug can take.
  *
- * **Call this once per process and destructure what it returns.** A second call
- * is a second pair of modules, and with it a second `IndexerService`. The two
- * roots each call it once, and never load together.
+ * Everything the pipeline needs comes back as **one** module. The event and
+ * Postgres modules are built here and re-exported through it, so a caller
+ * cannot hold one without the others or accidentally construct a second client
+ * reaching for a health probe.
+ *
+ * **Call this once per process and use what it returns everywhere.** Nest
+ * identifies a dynamic module by reference, so a second call is a second
+ * pipeline, and with it a second `IndexerService` racing the same cursor. The
+ * two roots each call it once, and never load together.
  */
-export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}): IndexingSetup {
+export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}): DynamicModule {
   /**
-   * Everything Aave-specific: the client, the store and the processor that
+   * Everything Aave-specific: the client, the event log and the processor that
    * fills it. The application names which Spoke to follow and nothing else.
    */
   const spokeEvents = SpokeEventsModule.forRootAsync({
@@ -58,8 +55,25 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     }),
   });
 
-  const indexing = IndexingModule.forRootAsync({
-    imports: [ConfigModule, spokeEvents],
+  /**
+   * Where the indexer keeps its own position, separate from the events it
+   * writes. Not the same database on purpose: the cursor and the header window
+   * are a mutable set of about 130 rows rewritten on every iteration, which is
+   * the one shape an append-only column store is bad at.
+   */
+  const postgres = PostgresModule.forRootAsync({
+    imports: [ConfigModule],
+    inject: [ConfigService],
+    useFactory: (config: ConfigService<Env, true>) => ({
+      url: config.get('POSTGRES_URL', { infer: true }),
+    }),
+  });
+
+  return IndexingModule.forRootAsync({
+    imports: [ConfigModule, spokeEvents, postgres],
+    // Re-exported so the readiness probes both resolve through this module,
+    // against the clients it already built.
+    exports: [spokeEvents, postgres],
     inject: [ConfigService],
     useFactory: (config: ConfigService<Env, true>) => ({
       chainId: config.get('CHAIN_ID', { infer: true }),
@@ -76,16 +90,17 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     }),
     processors: [SPOKE_EVENT_PROCESSOR],
     reorgDetector: HashChainReorgDetector,
-    cursorStore: InMemoryCursorStore,
+    cursorStore: PostgresCursorStore,
     providers: [
       HashChainReorgDetector,
-      // Both in memory, and they want to become durable together: a cursor that
-      // outlives the process while the window does not would name a resume
-      // point nothing can vet. See BlockHeaderStore.
-      { provide: BLOCK_HEADER_STORE, useClass: InMemoryBlockHeaderStore },
-      InMemoryCursorStore,
+      // Durable together, and in one database. The loop commits the header
+      // before it saves the cursor and rewinds only after, so a crash between
+      // the two leaves the window at or ahead of the cursor — the state
+      // `bootstrap` is built to resolve. Making one of these durable without the
+      // other would be worse than neither: a resume point nothing can vet turns
+      // every cross-restart fork into `unrecoverable`.
+      { provide: BLOCK_HEADER_STORE, useClass: PostgresBlockHeaderStore },
+      PostgresCursorStore,
     ],
   });
-
-  return { spokeEvents, indexing };
 }

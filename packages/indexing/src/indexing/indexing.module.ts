@@ -25,7 +25,7 @@ import { REORG_DETECTOR } from './reorg/reorg-detector';
  */
 export interface IndexingAsyncOptions<TDeps extends unknown[] = unknown[]> extends Pick<
   ModuleMetadata,
-  'imports' | 'providers'
+  'imports' | 'providers' | 'exports'
 > {
   /**
    * Injection tokens for the factory, not providers — this binds a factory
@@ -77,7 +77,7 @@ export class IndexingModule {
   static forRootAsync<TDeps extends unknown[]>(
     options: IndexingAsyncOptions<TDeps>,
   ): DynamicModule {
-    const { imports = [], providers = [], processors = [] } = options;
+    const { imports = [], providers = [], processors = [], exports = [] } = options;
 
     return {
       module: IndexingModule,
@@ -130,6 +130,17 @@ export class IndexingModule {
         INDEXING_OPTIONS,
         CHAIN_CLIENT,
         LOG_READER,
+        // Whatever the application also wants reachable through this module,
+        // typically the database modules it built to satisfy the store seams.
+        // Re-exporting them here is what lets the composition stay one object:
+        // `HealthModule` resolves indicators inside its own injector, so a probe
+        // is only reachable through a module this one exports, and passing the
+        // same reference is what stops a second client being constructed.
+        //
+        // This package still knows nothing about what it is re-exporting, which
+        // is the point — the alternative was an application handing three
+        // modules around and remembering which of them go together.
+        ...exports,
       ],
     };
   }

@@ -26,11 +26,19 @@ export interface Cursor {
  * Nothing else in the framework may durably record state the cursor does not
  * imply.
  *
- * The database-backed adapter will need a `withTransaction` seam so that a
- * processor's writes and the cursor advance commit together. Until it exists
- * there is a window — processor committed, cursor not yet advanced — that
- * nothing can close, which is the concrete reason processors must be
- * idempotent.
+ * **There is no `withTransaction` seam, and there will not be one.** It would
+ * have to make a processor's writes and the cursor advance commit together, and
+ * processors write to the event log's database rather than this one — so no
+ * cursor store anywhere can commit atomically with them. The window remains
+ * open: processor committed, cursor not yet advanced, range replayed on the
+ * next start. That is the concrete reason processors must be idempotent, and
+ * idempotence is the whole answer rather than a stopgap.
+ *
+ * What a durable adapter must not do is buffer. The loop commits the header to
+ * the {@link BlockHeaderStore} before saving here, and rewinds only after, so
+ * the window is never behind the cursor whichever of the two a crash lands
+ * between — and that ordering only holds if each write is durable by the time
+ * its promise resolves.
  */
 export interface CursorStore {
   /** `null` when this chain has never been indexed. */

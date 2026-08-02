@@ -1,4 +1,5 @@
 import {
+  Logger,
   Module,
   type DynamicModule,
   type InjectionToken,
@@ -18,6 +19,8 @@ import { POSTGRES_CLIENT, POSTGRES_OPTIONS, type PostgresOptions } from './postg
  * out, which a single connection would guarantee under load.
  */
 const DEFAULT_MAX_CONNECTIONS = 4;
+
+const logger = new Logger('Postgres');
 
 export interface PostgresAsyncOptions<TDeps extends unknown[] = unknown[]> extends Pick<
   ModuleMetadata,
@@ -64,6 +67,14 @@ export class PostgresModule {
           useFactory: (config: PostgresOptions): Sql =>
             postgres(config.url, {
               max: config.maxConnections ?? DEFAULT_MAX_CONNECTIONS,
+              // Left to itself, postgres.js writes server notices straight to
+              // stdout as an inspected object — several lines of it, none of
+              // them JSON. The deployed log contract is one JSON object per
+              // line, so a single notice would break every parser reading the
+              // stream. Debug level because a notice reaching a running indexer
+              // is informational by definition; anything that matters arrives
+              // as an error.
+              onnotice: (notice) => logger.debug(notice['message'] ?? JSON.stringify(notice)),
               // `prepare` is left at its default of `true`, and named here only
               // so the next person does not have to rediscover it: behind
               // PgBouncer in transaction-pooling mode it has to be `false`, or
