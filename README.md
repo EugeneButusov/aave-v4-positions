@@ -18,7 +18,9 @@ append-only ClickHouse table, projected into per-wallet balances that survive a 
 code being told one happened.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
-logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
+logging, liveness/readiness probes, graceful drain, [OpenTelemetry traces, metrics and logs over
+OTLP](#tracing-and-metrics) with a Grafana that `docker compose up` brings up already provisioned,
+OpenAPI docs, Vitest, oxlint + Prettier,
 lefthook, the [indexing framework](#indexing) — chain client with provider failover, log reader,
 cursor and processor seams, and hash-chain reorg detection over a retained header window, with a
 detected fork re-reported on the next start until it has actually been applied; a durable cursor and
@@ -67,9 +69,11 @@ served without them. See [Not here yet](#not-here-yet).
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
 │   ├── token-metadata/      what an ERC-20 calls itself — fetched, not folded
 │   ├── prices/              what a reserve is priced at, read from the Spoke's oracle
+│   ├── telemetry/           the OpenTelemetry SDK, preloaded before anything else
 │   └── aave-positions/      packages that know about Aave
 │       ├── events/          ABI bindings, decoders, two append-only event ledgers
 │       └── positions/       the fold over that log, and the store that reads it
+├── observability/           stack configuration: collector, Grafana, the dashboard
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -222,11 +226,32 @@ Nothing to install but Docker — no Node, no pnpm:
 docker compose up --build
 ```
 
-Five services: ClickHouse and Postgres, a one-shot `migrate` that applies both schemas and exits,
-then the API and the indexer. `docker compose ps` shows the long-running four as `healthy` once their
-probes pass. Same addresses as above (`:3000`, `:3001`, `/docs`), ClickHouse on `:8123`, Postgres on
-`:5432`. Tear down with `docker compose down`, or `down -v` to drop the indexed data and the cursor
-with it — after which the next start re-indexes from `INDEXER_START_BLOCK`.
+Seven services: ClickHouse and Postgres, a one-shot `migrate` that applies both schemas and exits,
+the API and the indexer, and then the two that watch them — `telemetry` and `postgres-exporter`.
+`docker compose ps` shows the long-running five as `healthy` once their probes pass. Same addresses as
+above (`:3000`, `:3001`, `/docs`), ClickHouse on `:8123`, Postgres on `:5432`, and **Grafana on
+[`:3333`](http://localhost:3333)**. Tear down with `docker compose down`, or `down -v` to drop the
+indexed data and the cursor with it — after which the next start re-indexes from
+`INDEXER_START_BLOCK`.
+
+Grafana opens on a provisioned dashboard rather than on "add your first data source", and the
+dashboard is a repo file — [`observability/grafana/dashboards/aave-v4.json`](observability/grafana/dashboards/aave-v4.json)
+— so it survives a `down -v` and shows up in a diff. Traces, metrics **and** logs all arrive over
+OTLP, which is what makes a request findable three ways: the span tree, the log lines carrying its
+`trace_id`, and its effect on the rate and latency graphs. See
+[Tracing and metrics](#tracing-and-metrics) for how that is wired.
+
+**The observability services are up by default, not behind a profile**, because a telemetry stack you
+have to remember to enable is one nobody looks at. The cost, measured rather than guessed: the
+`grafana/otel-lgtm` image is **807 MB** on the first pull, and after that the two extra services add
+**one second** to the time until everything reports healthy — 13s against 14s, and 14s again with the
+SDK switched off, so the difference is the containers rather than the instrumentation. Two ways out,
+both of which leave the rest of the stack untouched:
+
+```bash
+docker compose up clickhouse postgres migrate api indexer   # skip them entirely
+OTEL_SDK_DISABLED=true docker compose up                    # keep them, emit nothing
+```
 
 The indexer waits for `migrate` to succeed rather than migrating at boot — replicas would otherwise
 race the same DDL — and then starts indexing against **`https://eth.drpc.org` by default**, so
@@ -335,6 +360,27 @@ indexing the wrong chain. Deployed environments inject variables directly; the `
 local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **Shared** — `NODE_ENV`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_GRACE_SECONDS`.
+
+**Telemetry** — `OTEL_SDK_DISABLED` (`false`), `OTEL_SERVICE_NAME` (_required when enabled_),
+`OTEL_EXPORTER_OTLP_ENDPOINT` (`http://localhost:4318`), `OTEL_TRACES_SAMPLER`
+(`parentbased_always_on`), `OTEL_TRACES_SAMPLER_ARG`.
+
+These are the one group where the paragraph above is **not quite true**, and it is worth being exact
+rather than tidy. The SDK is preloaded with `node --require`, so it reads these from `process.env`
+itself, before Nest — and therefore before Zod — exists. They are declared in both schemas anyway,
+for the two things that still buys: a malformed endpoint aborts the process rather than being dropped
+by an exporter nobody is watching, and the contract lives in one place with everything else instead
+of only in a `Dockerfile`. Standard `OTEL_*` spellings, no repo-invented `TELEMETRY_ENABLED` — an
+operator who knows OpenTelemetry should not have to learn our names for its variables.
+
+The same ordering is why [`start.ts`](packages/telemetry/src/start.ts) calls `process.loadEnvFile()`
+itself. `@nestjs/config` writes dotenv values into `process.env` only once the module graph is built,
+which is far too late for a preload; without that call, an `OTEL_*` line in a local `.env` would be
+the one variable in the file that silently did nothing.
+
+`OTEL_SERVICE_NAME` is refused rather than defaulted when telemetry is on. Every signal is grouped by
+`service.name`, so an unnamed service produces telemetry that is present, plausible and impossible to
+attribute — noticed for the first time during an incident.
 
 **API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`),
 `API_SYNC_STALE_AFTER_SECONDS` (60), `API_PRICE_STALE_AFTER_SECONDS` (300), and
@@ -1747,6 +1793,79 @@ health check. It is an **alertable signal with no automatic recovery** — somet
 act. A `failed` loop stays failed until the process restarts, which is the same posture the rest of
 the service takes towards bad configuration.
 
+### Tracing and metrics
+
+OpenTelemetry, exported over OTLP, for all three signals. `docker compose up` brings up a Grafana
+that already has them.
+
+**The SDK is preloaded, not imported.** Every entry point runs
+`node --require @packages/telemetry/start …`, so the require hooks the instrumentations install are in
+place before Nest, pino or `http` is first loaded. A first-line `import` in each `main.ts` would in
+fact order correctly here — the build is CommonJS and `tsc` emits `require` calls in source order —
+so the argument for the flag is not "the other way is broken". It is that the flag can be removed
+without rebuilding, which is exactly what the overhead A/B below needs, and that six CLI entry points
+would otherwise each need the same import. Its cost, plainly: someone running `node dist/main.js` by
+hand gets no telemetry and no error, which is why the SDK writes one line at boot naming its
+endpoint.
+
+Not `NODE_OPTIONS`, which would have been tidier. The compose healthchecks are
+`node -e "fetch('…/health/ready')"` on a ten-second interval, and under `NODE_OPTIONS` every one of
+them would boot a full SDK and register instrumentations — six times a minute per container, for a
+process that lives about fifty milliseconds.
+
+**Four instrumentations, named rather than auto-discovered.** Not
+`@opentelemetry/auto-instrumentations-node`: it installs ~40 require hooks to find the handful that
+apply, and the explicit list doubles as a statement of what we believe this process talks to.
+
+|                               | why it is there                                                                                              |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `instrumentation-http`        | the API's server spans — and **ClickHouse**, whose Node client uses `node:http`                              |
+| `instrumentation-undici`      | **viem's RPC calls**, because its transport resolves `fetchFn = options.fetchFn ?? fetch`, i.e. global fetch |
+| `instrumentation-nestjs-core` | turns "the request took 28 ms" into "the controller took 28 ms, of which the store took 27"                  |
+| `instrumentation-pino`        | correlation _and_ log shipping — see below                                                                   |
+
+Those first two are the finding worth keeping: **ClickHouse and the chain client need different
+instrumentations**, because one speaks `node:http` and the other speaks `fetch`. Checking rather than
+assuming is the only way that comes out right, and getting it wrong loses one of them silently.
+
+**Logs go to the same place as the traces.** `instrumentation-pino` does two jobs for one dependency:
+it stamps `trace_id`/`span_id` onto every line, and it attaches a destination that ships records to
+the Logs SDK. So wiring a `LoggerProvider` is the entire cost of being able to click from a span to
+the lines it produced. **stdout is untouched** — one JSON object per line is still what a deployment
+reads, and the OTLP copy is additive rather than a replacement.
+
+`genReqId` now prefers the active trace id over a fresh UUID, so the echoed `x-request-id` names the
+trace. The header stays alongside `traceparent` rather than being replaced by it: it is
+caller-supplied, echoed on the response and stable across a retry, none of which a trace id is. They
+answer different questions and every line carries both.
+
+**Two database seams, and they are not symmetric.** `@clickhouse/client` declares its `tracer` option
+as a structural subset of the OpenTelemetry `Tracer`, so a real tracer is assignable with no adapter
+and no cast — ClickHouse instrumentation is
+[one line](packages/clickhouse/src/clickhouse.module.ts), and the client sets the semantic-convention
+attributes itself, down to `clickhouse.summary.written_rows`. postgres.js gets no such courtesy:
+`instrumentation-pg` patches `pg`, which is a different driver, so
+[`traced-sql.ts`](packages/postgres/src/traced-sql.ts) wraps the client in a `Proxy` at its single
+factory. Both decorate the value behind a token that already existed; no store changed.
+
+The Proxy is the riskiest thing here, so it was probed before it was written, and the probe caught two
+things a reasonable implementation would have got wrong. `sql(values, ...cols)` and `sql('ident')`
+reach the same trap as a tagged template and are called _inside_ one, so it discriminates on
+`Array.isArray(strings.raw)` exactly as postgres.js does internally. And `Query` extends `Promise` but
+is lazy, so `then` is shadowed rather than subscribed to eagerly — the span opens on execution, not on
+construction. `db.query.text` is built from `strings.raw`, which means a parameter can never reach a
+span attribute.
+
+**No `@opentelemetry/sdk-node`.** The convenient all-in-one declares 25 dependencies including the
+OTLP/gRPC exporters, which put `@grpc/grpc-js` — **4.3 MB, measured** — into the runtime image for a
+service that exports over HTTP. The three providers are composed by hand instead, in about sixty
+lines; `pnpm why @grpc/grpc-js` now returns nothing.
+
+What is deliberately still missing: alert rules (they need somewhere to route, and there are no
+Kubernetes manifests yet), exemplars linking a metric bucket to a trace, and a production backend —
+what a deployment points `OTEL_EXPORTER_OTLP_ENDPOINT` at is its own decision, which is the whole
+reason the export is OTLP and not a vendor SDK.
+
 ## Toolchain notes
 
 Choices that are not the default, and why.
@@ -1873,26 +1992,37 @@ Deliberate, in rough order of what comes next.
 - **A single position, by reserve.** `PositionStore` has exactly one method, and the endpoint over it
   is a listing. `GET …/positions/{reserveId}` is a different query against the same view, and worth
   adding when something needs it rather than because the shape suggests it.
-- **Metrics export.** `IndexerStatus` knows the cursor, the head, the lag between them and the
-  consecutive-failure count, but the only way out is `/health/ready`, which answers up or down and
-  puts the detail in an error string. That is a fine alert and a poor time series — you cannot graph
-  indexing lag or alert on it before it crosses the stall threshold. The shape when it lands is a
-  **write-only** observer, optional and multi-provider like the processors, called from the loop's
-  state transition:
+- **What the indexer itself reports.** The pipe is [in](#tracing-and-metrics) — traces, metrics and
+  logs all reach Grafana, and the API, ClickHouse and Postgres are on the dashboard. The indexer is
+  not, and it is the one that most needs to be. `IndexerStatus` still knows the cursor, the head, the
+  lag between them and the consecutive-failure count, and the only way out is still `/health/ready`,
+  which answers up or down and puts the detail in an error string: a fine alert and a poor time
+  series. **You still cannot graph indexing lag, or alert on it before it crosses the stall
+  threshold.** The gauges read `IndexerStatus.snapshot` at collection time rather than being pushed
+  from the state transition — a stalled loop makes no transitions, and a pushed gauge would freeze at
+  its last value exactly when someone is looking at it.
 
-  ```ts
-  interface IndexerObserver {
-    onProgress(snapshot: IndexerSnapshot): void;
-    onRetry(reason: string, snapshot: IndexerSnapshot): void;
-    onFailure(reason: string, snapshot: IndexerSnapshot): void;
-  }
-  ```
+  Beside that, and with no signal at all today: **which RPC provider is actually serving.**
+  `transport.ts` builds `fallback(urls, { rank: false })` because the list is a preference order, and
+  that makes the failure mode silent and specific — when the preferred provider dies, everything is
+  served by the next one and nothing says so. No request is attributed to a URL, no 429 is counted,
+  no failover is logged. viem's own `onFetchRequest` hook is per-transport, so the URL is in hand at
+  the callback; it is also the only place the JSON-RPC method is visible, since every call is
+  `POST /` and the method is in the body.
 
-  Write-only is the whole point. `IndexerStatus` itself is deliberately **not** a port, unlike the
-  processor, reorg and cursor seams: the loop reads back from it — `isFailed` to know it is
-  finished, `observeHead` for the clamped value it indexes against, `consecutiveFailures` to size
-  the backoff — so swapping the implementation would change correctness rather than policy. An
-  observer that nothing reads back from costs a metric when it misbehaves, not a stalled indexer.
+  And enrichment, which already distinguishes three outcomes and throws all of them into log strings:
+  a token reached and answered, a token reached that simply has no `symbol()`, and a token
+  unreachable. The gap between listed underlyings and stored rows is the number that says whether it
+  is done or stuck.
+
+  An earlier draft of this section proposed a write-only `IndexerObserver` port to keep a metrics
+  vendor out of `packages/indexing`. That is no longer the shape: `@opentelemetry/api` **is** a
+  vendor-neutral facade, no-op until an SDK registers, and a port over a facade is the same
+  indirection twice. The decisive part is tracing rather than metrics — a span has to _wrap_ the
+  work, so it cannot be delivered by an observer told what already happened, which means the API is
+  entering that package regardless. `IndexerStatus` stays exactly as it is, still deliberately not a
+  port: the loop reads back from it, so swapping the implementation would change correctness rather
+  than policy.
 
 - **Kubernetes manifests.** The probes, drain sequence and JSON logs are already shaped for them.
   CI covers format, lint, typecheck, test and build on Node 24, but does not yet build the Docker

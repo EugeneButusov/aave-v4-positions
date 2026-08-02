@@ -48,7 +48,7 @@ export function tracedSql(sql: Sql): Sql {
       const first = args[0];
       if (!isTemplateStrings(first)) return result;
 
-      return traceQuery(tracer, result, first.raw.join('?'));
+      return traceQuery(tracer, result, normalise(first.raw.join('?')));
     },
   });
 }
@@ -134,8 +134,30 @@ function traceQuery(tracer: Tracer, query: unknown, statement: string): unknown 
   return query;
 }
 
+/**
+ * Strips comments and collapses whitespace.
+ *
+ * **Comments have to go before anything reads the statement**, and this is not
+ * hypothetical tidying: the queries in this repo are heavily commented, and
+ * `postgres-sync-status-store.ts` explains itself with the words *"subtracting
+ * it from its own clock"*. A table-name pattern run over the raw text matches
+ * `from its` and names the span `SELECT its`. That was found by looking at a
+ * real trace, not by reasoning about it.
+ *
+ * Collapsing whitespace is the same argument one step further: a multi-line
+ * statement makes `db.query.text` unreadable in a span list, and two callers
+ * whose only difference is indentation should group together.
+ */
+function normalise(statement: string): string {
+  return statement
+    .replaceAll(/--[^\n]*/g, ' ')
+    .replaceAll(/\/\*[\s\S]*?\*\//g, ' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+}
+
 function operationOf(statement: string): string {
-  return statement.trimStart().split(/\s/)[0]?.toUpperCase() ?? 'QUERY';
+  return statement.split(/\s/)[0]?.toUpperCase() ?? 'QUERY';
 }
 
 /**

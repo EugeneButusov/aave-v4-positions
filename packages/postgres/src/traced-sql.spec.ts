@@ -73,6 +73,32 @@ describe('tracedSql', () => {
     expect(text).not.toContain('usdc');
   });
 
+  it('does not take a table name out of a comment', async () => {
+    // Not hypothetical, and not invented for the spec: this is the wording in
+    // `postgres-sync-status-store.ts`, and against the raw text the table
+    // pattern matched `from its` and named the span `SELECT its`. Found by
+    // reading a real trace out of Tempo.
+    await sql`
+      SELECT id
+      -- \`updated_at\` is the database's own now(), so a reader subtracting it
+      -- from its own clock reports skew as staleness.
+      FROM labels
+      WHERE id = ${1}
+    `;
+
+    expect(spans()[0]?.name).toBe('SELECT labels');
+  });
+
+  it('collapses a multi-line statement into one readable line', async () => {
+    await sql`
+      SELECT
+          name
+      FROM labels
+    `;
+
+    expect(spans()[0]?.attributes['db.query.text']).toBe('SELECT name FROM labels');
+  });
+
   it('leaves the query lazy: building one starts no span, awaiting it does', async () => {
     const pending = sql`SELECT 1 AS one`;
     expect(spans()).toHaveLength(0);

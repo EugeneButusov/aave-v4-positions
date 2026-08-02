@@ -1,0 +1,96 @@
+# Collector configuration for the local `telemetry` service.
+#
+# This REPLACES the one baked into `grafana/otel-lgtm`, so it starts as a copy
+# of that file and adds one thing: a `prometheus/stack` receiver scraping the
+# two datastores. The image offers no way to append a scrape target, and
+# overriding `prometheus.yaml` instead would drop the bundled scrapes of
+# Grafana, Tempo and Loki themselves — so this is the additive option, and the
+# reason `telemetry`'s image tag is pinned rather than tracking `latest`.
+#
+# Re-diff this against upstream when bumping that tag. The delta is marked.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - http://*
+  prometheus/collector:
+    config:
+      scrape_configs:
+        - job_name: 'opentelemetry-collector'
+          scrape_interval: 1s
+          static_configs:
+            - targets: ['127.0.0.1:8888']
+
+  # ---------------------------------------------------------------- delta ---
+  # The datastores, so "the whole stack" means the whole stack and not only the
+  # two Node processes. Both are dependencies the API and indexer degrade with,
+  # and neither can be seen from an app-side span: a span says how long *our*
+  # query took, these say whether the server was saturated while it ran.
+  #
+  # 15s rather than the 1s above: that one is the collector watching itself
+  # over loopback, these cross a container boundary and feed graphs whose
+  # smallest useful window is a minute.
+  prometheus/stack:
+    config:
+      scrape_configs:
+        - job_name: 'clickhouse'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['clickhouse:9363']
+        - job_name: 'postgres'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['postgres-exporter:9187']
+  # ------------------------------------------------------------ end delta ---
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: '/ready'
+
+processors:
+  batch:
+
+exporters:
+  otlp_http/metrics:
+    endpoint: http://127.0.0.1:9090/api/v1/otlp
+    tls:
+      insecure: true
+  otlp_http/traces:
+    endpoint: http://127.0.0.1:4418
+    tls:
+      insecure: true
+  otlp_http/logs:
+    endpoint: http://127.0.0.1:3100/otlp
+    tls:
+      insecure: true
+  otlp_grpc/profiles:
+    endpoint: http://127.0.0.1:4040
+    tls:
+      insecure: true
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/traces]
+    metrics:
+      # `prometheus/stack` is the delta above.
+      receivers: [otlp, prometheus/collector, prometheus/stack]
+      processors: [batch]
+      exporters: [otlp_http/metrics]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/logs]
+    profiles:
+      receivers: [otlp]
+      exporters: [otlp_grpc/profiles]
