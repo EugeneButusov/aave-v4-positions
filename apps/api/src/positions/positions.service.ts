@@ -15,7 +15,13 @@ import {
 import { SYNC_STATUS_STORE, type SyncStatus, type SyncStatusStore } from '@packages/indexing';
 
 import { PositionCursors, type CursorScope } from './position-cursors';
-import type { PositionPageDto, PositionDto, PricingDto, SyncDto } from './positions.dto';
+import type {
+  PositionPageDto,
+  PositionDto,
+  PricingDto,
+  SpokeTotalsDto,
+  SyncDto,
+} from './positions.dto';
 import type { PositionParams, PositionQueryParams } from './positions.schema';
 
 export const STALE_AFTER_SECONDS = Symbol('STALE_AFTER_SECONDS');
@@ -89,7 +95,14 @@ export class PositionsService {
     // chain alone, so neither depends on which positions come back — which is
     // what lets a second database sit behind one response for free. Measured at
     // 0.27 ms against a 28 ms page, i.e. inside the noise.
-    const [page, labels, prices] = await Promise.all([
+    //
+    // The fourth read is the odd one, and deliberately so: **the totals need
+    // every position, not this page's.** A sum over a page is arithmetic on a
+    // subset and wrong in a way that looks right. For a wallet that fits in one
+    // page it returns the same rows the first read did, and skipping it would
+    // mean learning `next` is null before deciding — which is the sequencing
+    // this whole shape exists to avoid. One extra query, no extra wall clock.
+    const [page, labels, prices, holdings] = await Promise.all([
       this.positions.list({
         chainId: params.chainId,
         user: params.user,
@@ -100,6 +113,13 @@ export class PositionsService {
       }),
       this.tokens.labels(params.chainId),
       wantsPrices ? this.prices.latest(params.chainId) : Promise.resolve(NO_PRICES),
+      wantsPrices
+        ? this.positions.holdings({
+            chainId: params.chainId,
+            user: params.user,
+            ...(query.spoke !== undefined && { spoke: query.spoke }),
+          })
+        : Promise.resolve(null),
     ]);
 
     const used = page.items
@@ -110,6 +130,7 @@ export class PositionsService {
       sync: toSync(sync, this.staleAfterSeconds),
       valuedAt: page.valuedAt,
       pricing: toPricing(used, this.priceStaleAfterSeconds),
+      portfolio: holdings === null ? null : toPortfolio(holdings.items, prices),
       items: page.items.map((position) =>
         toPosition(position, labels, usdFor(position, priceFor(position, prices))),
       ),
@@ -150,6 +171,67 @@ function toPricing(used: readonly ReservePrice[], staleAfterSeconds: number): Pr
     ageSeconds: oldest.ageSeconds,
     stale: oldest.ageSeconds > staleAfterSeconds,
   };
+}
+
+/** Running totals for one Spoke, while they are still being accumulated. */
+interface Running {
+  supplied: bigint;
+  debt: bigint;
+  /** False once a position on this Spoke could not be valued or priced. */
+  whole: boolean;
+}
+
+/**
+ * Everything the wallet holds, totalled **per Spoke**.
+ *
+ * An array rather than one object, and that is structural rather than
+ * stylistic. §12.3: Spokes are isolated margin accounts with their own
+ * collateral factors, oracle and health factor, so a wallet on two of them has
+ * two independent positions and can be liquidated on one while healthy on the
+ * other. A single blended figure hides exactly that, which is why
+ * `PositionStore` refuses to aggregate at all and leaves it here.
+ *
+ * **A Spoke with anything unpriced reports null, not a partial sum.** Leaving a
+ * reserve out understates net worth silently, and a number a caller cannot
+ * tell apart from a real one is the failure this codebase keeps refusing —
+ * the same rule that makes `asset` and `value` null together.
+ */
+function toPortfolio(
+  holdings: readonly Position[],
+  prices: ReadonlyMap<string, ReservePrice>,
+): SpokeTotalsDto[] {
+  const bySpoke = new Map<string, Running>();
+
+  for (const position of holdings) {
+    const running = bySpoke.get(position.spoke) ?? { supplied: 0n, debt: 0n, whole: true };
+    const usd = usdFor(position, priceFor(position, prices));
+
+    if (usd === null) {
+      running.whole = false;
+    } else {
+      running.supplied += BigInt(usd.suppliedValue);
+      running.debt += BigInt(usd.debtValue);
+    }
+
+    bySpoke.set(position.spoke, running);
+  }
+
+  return (
+    [...bySpoke.entries()]
+      // Sorted, so two identical requests produce identical bytes. Map order is
+      // insertion order, which is row order, which the store does not promise
+      // beyond the page key.
+      .toSorted(([left], [right]) => left.localeCompare(right))
+      .map(([spoke, running]) => ({
+        spoke,
+        suppliedValue: running.whole ? running.supplied.toString() : null,
+        debtValue: running.whole ? running.debt.toString() : null,
+        // Signed. A wallet whose debt has outgrown its collateral reports a
+        // negative figure rather than clamping, because that is the situation
+        // worth seeing.
+        netWorth: running.whole ? (running.supplied - running.debt).toString() : null,
+      }))
+  );
 }
 
 /** The price this position would be valued with, if there is one. */

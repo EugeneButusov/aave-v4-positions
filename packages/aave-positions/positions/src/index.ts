@@ -1,6 +1,8 @@
 export type { Position, PositionAsset, PositionValue } from './store/position';
 export {
   POSITION_STORE,
+  type PositionHoldings,
+  type PositionHoldingsQuery,
   type PositionKey,
   type PositionPage,
   type PositionQuery,

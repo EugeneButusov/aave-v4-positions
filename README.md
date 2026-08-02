@@ -35,11 +35,11 @@ against `getUserDebt` and `getUserSuppliedAssets`; and
 [enrichment](#enrichment) — what each token calls itself and what Aave prices it at, neither of them
 carried by any Aave event, both kept current without anyone running anything.
 
-**Not yet:** position _type_ as §12.1 defines it, portfolio totals, health factors, Kubernetes
-manifests. Balances are token amounts with a symbol and a USD value beside them now; what is missing
-above them is the per-Spoke aggregate, and what is missing below is the config events that decide
-whether a supply counts as collateral. Prices are current-only, so a historical `asOf` query is
-served without them. See [Not here yet](#not-here-yet).
+**Not yet:** position _type_ as §12.1 defines it, health factors, Kubernetes manifests. Balances are
+token amounts with a symbol and a USD value beside them, totalled per Spoke; what is missing is the
+config events that decide whether a supply counts as collateral — and with them
+`collateralValue` and the health factor itself. Prices are current-only, so a historical `asOf`
+query is served without them. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -1282,6 +1282,13 @@ liquidation behind unrelated collateral. Listing them together is fine, because 
 Spoke it came from, and the same `reserve_id` on two Spokes stays two positions. Nothing here is
 aggregated, and anything that ever aggregates has to do it per Spoke.
 
+That rule is now load-bearing rather than hypothetical: [`portfolio`](#the-positions-endpoint) totals
+a wallet, and it is an array keyed by Spoke because of this paragraph. The store still refuses to
+aggregate — it grew an unpaged `holdings` read instead, which returns positions and leaves the
+summing to the service. That is deliberate. Totalling needs prices, prices live in the other
+database, and pushing the sum into SQL would put one interpretation of "total" somewhere §12.3 could
+not reach it.
+
 Paging is by **keyset, not `OFFSET`**. With the wallet pinned, the resume point is what the sorting
 key leaves free: `(spoke, reserve_id)`. `OFFSET n` would re-run the aggregation to discard `n` rows,
 and it shifts under concurrent writes: a position crossing a page boundary while the indexer advances
@@ -1343,6 +1350,9 @@ GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
   "valuedAt": 1785000000,
   // A third clock: how current the prices are. Null when nothing here is priced.
   "pricing": { "updatedAt": "2026-08-02T11:04:17.000Z", "ageSeconds": 41, "stale": false },
+  // Totals per Spoke, over every open position — never over the page, and never summed
+  // across entries. One entry per Spoke the wallet is on.
+  "portfolio": [{ "spoke": "0x…", "suppliedValue": "999…", "debtValue": "0", "netWorth": "999…" }],
   "items": [
     {
       "chainId": 1,
@@ -1375,10 +1385,30 @@ response. The same 404 covers the window between an indexer starting and recordi
 which is honest: there is genuinely nothing to serve yet.
 
 **`spoke` is optional**, because a caller asking what a wallet holds should not have to know which
-Spokes exist. It narrows the listing and nothing else — every row names its own Spoke, the same
-`reserve_id` on two of them stays two positions, and there are **no totals in the response at all**.
-That is not an omission to fill in later without thought: §12.3 makes a blended health factor or net
-worth wrong in the one direction that matters, so anything aggregated has to be aggregated per Spoke.
+Spokes exist. It narrows the listing and the totals below it, and nothing else — every row names its
+own Spoke, and the same `reserve_id` on two of them stays two positions.
+
+**`portfolio` is an array, and there is still no portfolio-wide total.** §12.3 makes a blended health
+factor or net worth wrong in the one direction that matters — it hides an imminent liquidation behind
+unrelated collateral — so the response carries one entry per Spoke and never a sum across them. That
+is why `PositionStore` refuses to aggregate at all and hands back positions instead: the rule is
+enforceable at the place that knows the prices, and nowhere else.
+
+The totals are over **every open position the wallet holds**, not over the page in front of the
+caller. A sum over a page is arithmetic on a subset and looks exactly like a whole number, so it is a
+second, unpaged read issued beside the first — one extra query, no extra wall clock. It refuses
+rather than truncates above two thousand positions, because a short read there is a net worth that is
+quietly too small.
+
+A Spoke reports **null rather than a partial sum** when anything on it could not be valued or priced.
+Leaving a reserve out understates the total silently, which is the same failure `asset` and `value`
+are null together to avoid. `netWorth` is signed: a wallet whose debt has outgrown its collateral
+says so rather than clamping to zero.
+
+`collateralValue` is deliberately absent. It counts only reserves flagged as collateral **and**
+carrying a non-zero collateral factor — five of the Main Spoke's fourteen are at zero, so it and
+`suppliedValue` diverge materially and neither substitutes for the other (§12.3). It needs the
+config events, and arrives with the health factor.
 
 **Two clocks, and the response names both.** `sync` says how far the indexer has folded; `valuedAt`
 says when the amounts were computed. Conflating them would be easy and wrong — shares advance when

@@ -6,6 +6,7 @@ import {
   TOKEN_METADATA_STORE,
   reserveKey,
   type Position,
+  type PositionHoldings,
   type PositionPage,
   type PositionQuery,
   type PositionStore,
@@ -101,6 +102,11 @@ class FakeStore implements PositionStore {
     this.queries.push(query);
     return Promise.resolve(this.page);
   }
+
+  /** The same rows unpaged, which is what a wallet fitting in one page holds. */
+  holdings(): Promise<PositionHoldings> {
+    return Promise.resolve({ items: this.page.items, valuedAt: VALUED_AT });
+  }
 }
 
 class FakeSync implements SyncStatusStore {
@@ -187,6 +193,9 @@ describe('positions (e2e)', () => {
         // absent one: a caller has to be able to tell "no prices behind this"
         // from "this deployment does not price".
         pricing: null,
+        // The Spoke is here with nulls rather than absent: the wallet does hold
+        // something on it, and only the value is unknown.
+        portfolio: [{ spoke: SPOKE, suppliedValue: null, debtValue: null, netWorth: null }],
         items: [wirePosition()],
         nextCursor: null,
       });
@@ -262,6 +271,15 @@ describe('positions (e2e)', () => {
         ageSeconds: 41,
         stale: false,
       });
+      // And the totals over the same rows, keyed by Spoke.
+      expect(res.body.portfolio).toEqual([
+        {
+          spoke: SPOKE,
+          suppliedValue: '99971505000000000000000000000',
+          debtValue: '0',
+          netWorth: '99971505000000000000000000000',
+        },
+      ]);
       prices.prices.clear();
     });
 

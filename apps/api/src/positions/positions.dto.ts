@@ -147,6 +147,50 @@ export class PricingDto {
   stale!: boolean;
 }
 
+export class SpokeTotalsDto {
+  @ApiProperty({
+    example: EXAMPLE_SPOKE,
+    description:
+      'The Spoke these totals are for. **Never summed across entries.** Spokes are isolated ' +
+      'margin accounts with their own collateral factors, oracle and health factor, so a ' +
+      'wallet on two of them has two independent positions and can be liquidated on one ' +
+      'while comfortably healthy on the other. Adding these up hides that.',
+  })
+  spoke!: string;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '99971505000000000000000000000',
+    description:
+      'Everything supplied on this Spoke, in the `1e26`-is-one-dollar unit. **Not the same ' +
+      "as the protocol's `totalCollateralValue`**, which counts only reserves flagged as " +
+      'collateral *and* carrying a non-zero collateral factor — five of the Main Spoke’s ' +
+      'fourteen are at zero, so the two diverge materially. That figure arrives with the ' +
+      'health factor.',
+  })
+  suppliedValue!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '0',
+    description: 'Everything owed on this Spoke, in the same unit.',
+  })
+  debtValue!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: '99971505000000000000000000000',
+    description:
+      '`suppliedValue − debtValue`. **Signed**: a wallet whose debt has outgrown its ' +
+      'collateral reports a negative figure rather than clamping to zero, because that is ' +
+      'the situation worth seeing.',
+  })
+  netWorth!: string | null;
+}
+
 export class PositionDto {
   @ApiProperty({ example: 1, description: 'The chain this position was indexed on.' })
   chainId!: number;
@@ -317,6 +361,18 @@ export class PositionPageDto {
       'mixing the two would be a number that never existed.',
   })
   pricing!: PricingDto | null;
+
+  @ApiProperty({
+    type: [SpokeTotalsDto],
+    nullable: true,
+    description:
+      'Totals **per Spoke**, over every open position the wallet holds — not over this page. ' +
+      'An array rather than one object, because there is no such thing as a portfolio-wide ' +
+      'total here: summing across Spokes is wrong in the one direction that matters. ' +
+      'Narrowed by `spoke` when the request names one. Null whenever `asOf` is set, on the ' +
+      'same terms as `pricing`.',
+  })
+  portfolio!: SpokeTotalsDto[] | null;
 
   @ApiProperty({ type: [PositionDto] })
   items!: PositionDto[];
