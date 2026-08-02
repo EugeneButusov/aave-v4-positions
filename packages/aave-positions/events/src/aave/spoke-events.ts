@@ -62,5 +62,21 @@ export function isPositionEvent(name: string): name is SpokePositionEvent {
  */
 export const MAIN_SPOKE_ADDRESS = AaveV4Ethereum.SPOKES.MAIN_SPOKE.toLowerCase();
 
+/**
+ * The oracle that prices the Main Spoke's reserves, and the default for
+ * `MAIN_SPOKE_ORACLE_ADDRESS`.
+ *
+ * **Paired with the Spoke above rather than listed as a chain-level address**,
+ * because that is what it is: `IAaveOracleV4` belongs to one Spoke and indexes
+ * by `reserveId` (§7.4), so a second Spoke brings a second oracle over a
+ * disjoint id space. Reading a reserve id against the wrong one would answer
+ * with a price rather than an error.
+ *
+ * Taken from the address book, and safe to take from there: §7.4 probed
+ * `0x99B2…6127` independently and reached the same value, which is the same
+ * two-derivations-agreeing argument {@link SPOKE_ABI} rests on.
+ */
+export const MAIN_SPOKE_ORACLE_ADDRESS = AaveV4Ethereum.SPOKES.MAIN_SPOKE_ORACLE.toLowerCase();
+
 /** Earliest block emitting Main Spoke logs (§2), and so the backfill floor. */
 export const MAIN_SPOKE_GENESIS_BLOCK = 24_720_899;

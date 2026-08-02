@@ -2,12 +2,12 @@ import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import {
   POSITION_STORE,
-  TOKEN_METADATA_STORE,
   type Position,
   type PositionPage,
   type PositionQuery,
   type PositionStore,
 } from '@aave-positions/positions';
+import { TOKEN_METADATA_STORE } from '@packages/token-metadata';
 import {
   SYNC_STATUS_STORE,
   type Hash,

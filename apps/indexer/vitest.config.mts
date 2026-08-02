@@ -20,6 +20,12 @@ export default defineConfig({
       '@aave-positions/positions': fileURLToPath(
         new URL('../../packages/aave-positions/positions/src/index.ts', import.meta.url),
       ),
+      '@packages/prices': fileURLToPath(
+        new URL('../../packages/prices/src/index.ts', import.meta.url),
+      ),
+      '@packages/token-metadata': fileURLToPath(
+        new URL('../../packages/token-metadata/src/index.ts', import.meta.url),
+      ),
       '@packages/clickhouse': fileURLToPath(
         new URL('../../packages/clickhouse/src/index.ts', import.meta.url),
       ),
@@ -50,6 +56,9 @@ export default defineConfig({
       CHAIN_ID: '1',
       RPC_URLS: 'https://rpc.invalid',
       INDEXER_AUTOSTART: 'false',
+      // Its own switch, because pricing is not the loop: without this the
+      // refresher fires at boot and reaches for rpc.invalid.
+      RESERVE_PRICE_AUTOSTART: 'false',
       // Never connected to: these specs compile the graph and assert on what it
       // resolved, and postgres.js opens no socket until the first query.
       POSTGRES_URL: 'postgres://postgres@localhost:5432/postgres',

@@ -7,6 +7,7 @@ import { PostgresHealthIndicator } from '@packages/postgres';
 
 import { validateEnv, type Env } from './config/env';
 import { indexingSetup } from './indexing.setup';
+import { pricingSetup } from './pricing.setup';
 
 /**
  * Built once and referenced twice below. Nest identifies a dynamic module by
@@ -14,6 +15,16 @@ import { indexingSetup } from './indexing.setup';
  * pipeline — and with it a second indexing loop racing the same cursor.
  */
 const indexing = indexingSetup();
+
+/**
+ * **A peer of the pipeline, not a part of it.** Prices come from an oracle
+ * whose feeds move off chain on their own schedule, so the refresh is driven by
+ * wall-clock time rather than by a block dispatch — see `ReservePriceRefresher`
+ * for what a `BlockProcessor` got wrong. Registered here rather than inside
+ * `indexingSetup()` so a backfill, which is a one-shot over historical blocks,
+ * does not acquire a background poller along with it.
+ */
+const pricing = pricingSetup();
 
 @Module({
   imports: [
@@ -38,6 +49,7 @@ const indexing = indexingSetup();
       }),
     }),
     indexing,
+    pricing,
     HealthModule.forRoot({
       // The same module object referenced above, so this resolves the indicators
       // already constructed rather than building a second graph. Both database

@@ -3,7 +3,7 @@ import { migrate } from '@packages/postgres';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { POSITION_POSTGRES_MIGRATIONS_DIR } from '../postgres-migrations';
+import { TOKEN_METADATA_MIGRATIONS_DIR } from '../migrations';
 import { PostgresTokenMetadataStore } from './postgres-token-metadata-store';
 import type { TokenMetadataRow } from './token-metadata';
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
     await admin.end();
   }
 
-  await migrate(sql, await loadMigrations([POSITION_POSTGRES_MIGRATIONS_DIR]));
+  await migrate(sql, await loadMigrations([TOKEN_METADATA_MIGRATIONS_DIR]));
 });
 
 afterAll(async () => {

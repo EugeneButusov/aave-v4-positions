@@ -2,6 +2,7 @@ import {
   CORE_HUB_ADDRESS,
   CORE_HUB_GENESIS_BLOCK,
   MAIN_SPOKE_ADDRESS,
+  MAIN_SPOKE_ORACLE_ADDRESS,
 } from '@aave-positions/events';
 import { LOG_LEVELS } from '@packages/ops';
 import { z } from 'zod';
@@ -141,6 +142,20 @@ export const envSchema = z.object({
     .transform((value) => value.toLowerCase()),
 
   /**
+   * The oracle that prices that Spoke's reserves.
+   *
+   * **Paired with the Spoke, not with the chain.** `IAaveOracleV4` belongs to
+   * one Spoke and is keyed by `reserveId` (§7.4), so the two move together: a
+   * second Spoke brings a second oracle over a disjoint id space, and asking
+   * the wrong one about a reserve id gets a price back rather than an error.
+   */
+  MAIN_SPOKE_ORACLE_ADDRESS: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/, 'must be a 20-byte hex address')
+    .default(MAIN_SPOKE_ORACLE_ADDRESS)
+    .transform((value) => value.toLowerCase()),
+
+  /**
    * Which Hub to follow, for the asset state that turns shares into balances
    * (§5). All 14 Main Spoke reserves point at the Core Hub, so this pair needs
    * no cross-hub read — but it is configuration for the same reason the Spoke
@@ -171,6 +186,45 @@ export const envSchema = z.object({
    * sweep.
    */
   TOKEN_ENRICHMENT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+
+  /**
+   * How long a successful price read stays good before the next one.
+   *
+   * **Unlike enrichment's delay, this one applies after success.** A token read
+   * once is never read again, so that timer only exists to pace retries; a price
+   * is never finished, so this is the cadence itself. One `eth_call` covers the
+   * whole Spoke, which makes the bound politeness towards the provider rather
+   * than cost — and a minute is already far more often than the feeds move,
+   * measured at roughly one `AnswerUpdated` an hour per aggregate (§7.4).
+   */
+  RESERVE_PRICE_REFRESH_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(60_000),
+
+  /**
+   * How long to wait after a read that left a price stale.
+   *
+   * Shorter than the refresh, deliberately. A price standing still while its
+   * neighbours moved is worse than one uniformly a minute old, because §7.1
+   * weighs collateral against debt and only the *ratio* is wrong.
+   */
+  RESERVE_PRICE_RETRY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(15_000),
+
+  /**
+   * Whether to poll the oracle at all.
+   *
+   * **Deliberately separate from `INDEXER_AUTOSTART`.** That one decides
+   * whether to walk the chain; this decides whether to read an oracle, and the
+   * whole reason pricing is not a block processor is that those are different
+   * questions with different failure modes. A pod serving probes while the
+   * indexer is stopped should still serve prices that move — and a provider
+   * that cannot serve a wide `eth_getLogs` may serve `eth_call` perfectly well.
+   *
+   * `false` is for a process that wants the ports without the poller: the
+   * one-shot command, and hermetic tests.
+   */
+  RESERVE_PRICE_AUTOSTART: z
+    .enum(['true', 'false', '1', '0'])
+    .default('true')
+    .transform((value) => value === 'true' || value === '1'),
 
   ...clickHouseEnv,
   ...postgresEnv,

@@ -4,7 +4,7 @@ import {
   TOKEN_METADATA_STORE,
   type TokenListings,
   type TokenMetadataStore,
-} from '@aave-positions/positions';
+} from '@packages/token-metadata';
 import {
   CHAIN_CLIENT,
   ERC20_METADATA_READER,

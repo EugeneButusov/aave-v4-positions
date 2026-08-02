@@ -1,21 +1,22 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { PendingTokens, TokenEnrichmentModule } from '@packages/token-metadata';
+import { ReservePriceModule } from '@packages/prices';
 import { LoggingModule } from '@packages/ops';
 
 import { validateEnv, type Env } from '../config/env';
-import { TokenEnricher } from './token-enricher';
+import { ReservePricer } from './reserve-pricer';
 
 /**
- * The one-shot enrichment command's graph.
+ * The one-shot pricing command's graph.
  *
  * Deliberately **not** `indexingSetup()`. That builds the cursor store, the
  * reorg detector and an `IndexerService` that would have to be remembered to
  * disable; this job needs a chain client and two databases, which is what
- * `TokenEnrichmentModule` already assembles for the processor.
+ * `ReservePriceModule` already assembles for the processor.
  *
- * The retry delay is zero here: a command run by hand is always due, and the
- * operator watching it is the backoff.
+ * The two delays are zero here: a command run by hand is always due, and the
+ * operator watching it is the backoff. The processor in this graph is
+ * constructed but never dispatched to, because nothing drives a loop.
  */
 @Module({
   imports: [
@@ -29,21 +30,24 @@ import { TokenEnricher } from './token-enricher';
     LoggingModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
-        service: 'indexer-enrich',
+        service: 'indexer-price',
         level: config.get('LOG_LEVEL', { infer: true }),
         pretty: config.get('LOG_PRETTY', { infer: true }),
       }),
     }),
-    TokenEnrichmentModule.forRootAsync({
+    ReservePriceModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
         chainId: config.get('CHAIN_ID', { infer: true }),
-        // Its own, and always empty: nothing ingests during a one-shot run, so
-        // the command works from the full listing set every time.
-        pending: new PendingTokens(),
-        retryDelayMs: 0,
-        concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
+        spoke: config.get('MAIN_SPOKE_ADDRESS', { infer: true }),
+        oracle: config.get('MAIN_SPOKE_ORACLE_ADDRESS', { infer: true }),
+        refreshMs: 0,
+        retryMs: 0,
+        // The command reads once and exits. Starting the module's timer would
+        // give it a background poller it never asked for, and a process that
+        // will not settle.
+        autoStart: false,
         rpc: {
           rpcUrls: config.get('RPC_URLS', { infer: true }),
           rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),
@@ -58,6 +62,6 @@ import { TokenEnricher } from './token-enricher';
       }),
     }),
   ],
-  providers: [TokenEnricher],
+  providers: [ReservePricer],
 })
-export class EnrichModule {}
+export class PriceModule {}
