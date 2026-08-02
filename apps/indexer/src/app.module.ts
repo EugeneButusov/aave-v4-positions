@@ -5,8 +5,11 @@ import { IndexerHealthIndicator } from '@packages/indexing';
 import { HealthModule, LoggingModule } from '@packages/ops';
 import { PostgresHealthIndicator } from '@packages/postgres';
 
+import { PendingTokens } from '@aave-positions/enrichment';
+
 import { validateEnv, type Env } from './config/env';
 import { indexingSetup } from './indexing.setup';
+import { metadataSetup } from './metadata.setup';
 import { pricingSetup } from './pricing.setup';
 
 /**
@@ -14,7 +17,26 @@ import { pricingSetup } from './pricing.setup';
  * object reference, so a second `indexingSetup()` call would produce a second
  * pipeline — and with it a second indexing loop racing the same cursor.
  */
-const indexing = indexingSetup();
+/**
+ * The handoff from ingestion to the metadata filler.
+ *
+ * Owned here because the two ends are in sibling modules and neither can reach
+ * the other: dynamic-module exports flow outward to importers, not sideways.
+ * The composition root is the only place that holds both, so it holds the thing
+ * between them.
+ */
+const listedTokens = new PendingTokens();
+
+const indexing = indexingSetup(listedTokens);
+
+/**
+ * **A peer of the pipeline, not a part of it.** Reading a third-party ERC-20
+ * has no more to do with a block range than reading an oracle does — see
+ * `TokenMetadataFiller` for the three things a block dispatch was silently
+ * gating. Discovery still comes from the `AddAsset` the Hub processor decodes,
+ * through the buffer above.
+ */
+const metadata = metadataSetup(listedTokens);
 
 /**
  * **A peer of the pipeline, not a part of it.** Prices come from an oracle
@@ -49,6 +71,7 @@ const pricing = pricingSetup();
       }),
     }),
     indexing,
+    metadata,
     pricing,
     HealthModule.forRoot({
       // The same module object referenced above, so this resolves the indicators

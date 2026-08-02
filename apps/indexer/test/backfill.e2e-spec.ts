@@ -27,14 +27,15 @@ describe('backfill wiring (e2e)', () => {
     // Order matters and is asserted: enrichment's fast path reads what the Hub
     // processor wrote earlier in the same dispatch.
     //
+    // Pricing is deliberately absent. It is not a processor at all: an oracle's
+    // feeds move off chain on their own schedule, so it runs on a timer beside
+    // the pipeline rather than inside it — and a backfill, which replays
+    // historical blocks and exits, has nothing to ask a current-value source.
+    //
     // Matched loosely: the event processors name themselves after the contract
     // they follow, so pinning the whole string would tie this to one address.
     const processors = moduleRef.get<BlockProcessor[]>(BLOCK_PROCESSORS, { strict: false });
-    expect(processors.map((p) => p.name.replace(/\(.*/, ''))).toEqual([
-      'aave-spoke',
-      'aave-hub',
-      'token-enrichment',
-    ]);
+    expect(processors.map((p) => p.name.replace(/\(.*/, ''))).toEqual(['aave-spoke', 'aave-hub']);
 
     await moduleRef.close();
   });

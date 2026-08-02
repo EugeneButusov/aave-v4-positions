@@ -6,11 +6,7 @@ import {
   SPOKE_EVENT_PROCESSOR,
   SpokeEventsModule,
 } from '@aave-positions/events';
-import {
-  PendingTokens,
-  TOKEN_ENRICHMENT_PROCESSOR,
-  TokenEnrichmentModule,
-} from '@aave-positions/enrichment';
+import type { PendingTokens } from '@aave-positions/enrichment';
 import {
   BLOCK_HEADER_STORE,
   HashChainReorgDetector,
@@ -41,16 +37,10 @@ import type { Env } from './config/env';
  * pipeline, and with it a second `IndexerService` racing the same cursor. The
  * two roots each call it once, and never load together.
  */
-export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}): DynamicModule {
-  /**
-   * The handoff from ingestion to enrichment.
-   *
-   * Owned here because neither module can reach the other: dynamic-module
-   * exports flow outward to importers, and these are siblings. The composition
-   * root is the only place that holds both, so it holds the thing between them.
-   */
-  const listedTokens = new PendingTokens();
-
+export function indexingSetup(
+  listedTokens: PendingTokens,
+  overrides: { readonly autoStart?: boolean } = {},
+): DynamicModule {
   /**
    * Everything Aave-specific: the client, the event log and the processor that
    * fills it. The application names which Spoke to follow and nothing else.
@@ -118,37 +108,8 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
     }),
   });
 
-  /**
-   * Token metadata, filled in automatically.
-   *
-   * Registered last, but nothing depends on that: it starts its work in the
-   * background and returns before doing any of it, so no ledger ever waits on
-   * an ERC-20 read.
-   */
-  const enrichment = TokenEnrichmentModule.forRootAsync({
-    imports: [ConfigModule],
-    inject: [ConfigService],
-    useFactory: (config: ConfigService<Env, true>) => ({
-      chainId: config.get('CHAIN_ID', { infer: true }),
-      pending: listedTokens,
-      retryDelayMs: config.get('TOKEN_ENRICHMENT_RETRY_MS', { infer: true }),
-      concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
-      rpc: {
-        rpcUrls: config.get('RPC_URLS', { infer: true }),
-        rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),
-      },
-      clickhouse: {
-        url: config.get('CLICKHOUSE_URL', { infer: true }),
-        database: config.get('CLICKHOUSE_DATABASE', { infer: true }),
-        username: config.get('CLICKHOUSE_USER', { infer: true }),
-        password: config.get('CLICKHOUSE_PASSWORD', { infer: true }),
-      },
-      postgres: { url: config.get('POSTGRES_URL', { infer: true }) },
-    }),
-  });
-
   return IndexingModule.forRootAsync({
-    imports: [ConfigModule, spokeEvents, hubEvents, enrichment, postgres],
+    imports: [ConfigModule, spokeEvents, hubEvents, postgres],
     // Re-exported so the readiness probes both resolve through this module,
     // against the clients it already built. Only one of the two event modules
     // can be re-exported: both export ClickHouseHealthIndicator, and two
@@ -169,7 +130,7 @@ export function indexingSetup(overrides: { readonly autoStart?: boolean } = {}):
       // where it is how a pod boots its probes without indexing.
       autoStart: overrides.autoStart ?? config.get('INDEXER_AUTOSTART', { infer: true }),
     }),
-    processors: [SPOKE_EVENT_PROCESSOR, HUB_EVENT_PROCESSOR, TOKEN_ENRICHMENT_PROCESSOR],
+    processors: [SPOKE_EVENT_PROCESSOR, HUB_EVENT_PROCESSOR],
     reorgDetector: HashChainReorgDetector,
     cursorStore: PostgresCursorStore,
     providers: [

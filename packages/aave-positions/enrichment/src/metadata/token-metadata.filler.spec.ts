@@ -11,7 +11,7 @@ import type { TokenListings } from '../store/token-listing-source';
 import { PendingTokens } from './pending-tokens';
 import type { TokenLabel, TokenMetadataRow } from '../store/token-metadata';
 import type { TokenMetadataStore } from '../store/token-metadata-store';
-import { TokenEnrichmentProcessor } from './token-enrichment.processor';
+import { TokenMetadataFiller } from './token-metadata.filler';
 
 const CHAIN_ID = 1;
 const RETRY_MS = 60_000;
@@ -19,8 +19,7 @@ const HEAD = 25_652_782;
 
 const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
 const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
-
-const NEVER_ABORTED = new AbortController().signal;
+const DAI = '0x6b175474e89094c44da98b954eedeac495271d0f';
 
 function metadata(over: Partial<TokenMetadata> = {}): TokenMetadata {
   return { symbol: 'USDC', name: 'USD Coin', decimals: 6, failures: [], ...over };
@@ -29,7 +28,7 @@ function metadata(over: Partial<TokenMetadata> = {}): TokenMetadata {
 /**
  * Drains the microtask queue.
  *
- * The whole point of this processor is that nothing hands the caller a promise
+ * The whole point of this filler is that nothing hands the caller a promise
  * to await, so a test cannot wait on the work the way production does not
  * either — it has to let the queue run down instead. `setImmediate` yields past
  * every pending microtask chain in one go.
@@ -103,11 +102,11 @@ let pending: PendingTokens;
 let store: FakeStore;
 let reader: FakeReader;
 let chain: FakeChain;
-let processor: TokenEnrichmentProcessor;
+let filler: TokenMetadataFiller;
 
-function build(concurrency = 4): TokenEnrichmentProcessor {
-  return new TokenEnrichmentProcessor(
-    { chainId: CHAIN_ID, retryDelayMs: RETRY_MS, concurrency },
+function build(concurrency = 4, autoStart = true): TokenMetadataFiller {
+  return new TokenMetadataFiller(
+    { chainId: CHAIN_ID, retryDelayMs: RETRY_MS, concurrency, autoStart },
     listings,
     pending,
     store,
@@ -116,58 +115,46 @@ function build(concurrency = 4): TokenEnrichmentProcessor {
   );
 }
 
-describe('TokenEnrichmentProcessor', () => {
+describe('TokenMetadataFiller', () => {
   beforeEach(() => {
-    // Only `Date`, and always restored. Two tests move the clock to step over
-    // the back-off; left unscoped that shift leaks into whatever else is
-    // running in this process, and a sibling suite asserting on `Date.now()`
-    // fails somewhere else entirely. `setImmediate` stays real because
-    // `settle` depends on it.
-    vi.useFakeTimers({ toFake: ['Date'] });
+    // `setTimeout` as well as `Date`, because the back-off is now a timer this
+    // class owns rather than a gate on the next dispatch. `setImmediate` stays
+    // real: `settle` depends on it, and faking it would deadlock every test.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     listings = new FakeListings();
     pending = new PendingTokens();
     store = new FakeStore();
     reader = new FakeReader();
     chain = new FakeChain();
-    processor = build();
+    filler = build();
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  describe('what it does to the loop', () => {
-    it('hands the loop an outcome, not a promise to wait on', () => {
+  describe('what starts it', () => {
+    it('returns from bootstrap before doing any of the work', () => {
       listings.listed = [USDC];
 
-      const outcome = processor.onBlockRange(100, 200, NEVER_ABORTED);
+      const outcome = filler.onApplicationBootstrap();
 
-      // `BlockProcessor` allows either, and returning the value rather than a
-      // promise is what makes it impossible to add an `await` in here without
-      // noticing. The indexer staying in step with the chain is the job; a
-      // token symbol is not, and must never be ahead of it in the queue.
-      expect(outcome).toEqual({ status: 'ok' });
-      expect(outcome).not.toBeInstanceOf(Promise);
+      // Not `async`, and nothing awaited: `add()` is called from the ingestion
+      // path, and a listing must never wait on seventeen ERC-20 reads to
+      // finish being recorded.
+      expect(outcome).toBeUndefined();
       expect(store.rows.size).toBe(0);
     });
 
-    it('returns while an ERC-20 read is still outstanding', async () => {
+    it('reads without any block ever being dispatched', async () => {
+      // **The property the class exists for.** There is no loop in this test.
+      // As a `BlockProcessor` the first full check waited for a dispatch, so a
+      // pod booted with `INDEXER_AUTOSTART=false` read nothing at all.
       listings.listed = [USDC];
-      let release!: () => void;
-      reader.gate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
-      // The read is in flight and the dispatch is long since over. Awaiting it
-      // would hold the Spoke and Hub ledgers behind a third-party contract.
-      expect(reader.seen).toHaveLength(1);
-      expect(store.rows.size).toBe(0);
-
-      release();
-      await settle();
       expect(store.rows.has(USDC)).toBe(true);
     });
 
@@ -178,47 +165,83 @@ describe('TokenEnrichmentProcessor', () => {
         release = resolve;
       });
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
-      processor.onBlockRange(300, 400, NEVER_ABORTED);
+      pending.add([WETH]);
+      pending.add([DAI]);
       await settle();
 
-      // At head a dispatch lands every few seconds; without this each one would
-      // pile another fan-out onto the same provider.
+      // Two listings in one block would otherwise pile two more fan-outs onto
+      // the same provider while the first is still outstanding.
       expect(listings.calls).toBe(1);
 
       release();
       await settle();
     });
 
-    it('returns ok when the reader throws', async () => {
+    it('survives a reader that throws', async () => {
       listings.listed = [USDC];
       reader.throws = new Error('provider exploded');
 
-      expect(processor.onBlockRange(100, 200, NEVER_ABORTED)).toEqual({ status: 'ok' });
+      filler.onApplicationBootstrap();
       await settle();
+
       expect(store.rows.size).toBe(0);
     });
 
-    it('returns ok when the chain head cannot be read', async () => {
+    it('survives a chain head that cannot be read', async () => {
       listings.listed = [USDC];
       chain.throws = new Error('no providers');
 
-      expect(processor.onBlockRange(100, 200, NEVER_ABORTED)).toEqual({ status: 'ok' });
+      filler.onApplicationBootstrap();
       await settle();
+
+      expect(store.rows.size).toBe(0);
     });
 
-    it('starts nothing once shutdown has been signalled', () => {
+    it('does nothing at all when it was told not to start', async () => {
       listings.listed = [USDC];
+      const idle = build(4, false);
 
-      processor.onBlockRange(100, 200, AbortSignal.abort());
+      idle.onApplicationBootstrap();
+      pending.add([WETH]);
+      await settle();
 
+      // How `enrich:tokens` and every hermetic test decline the worker.
       expect(listings.calls).toBe(0);
+      expect(reader.seen).toEqual([]);
     });
 
-    it('does nothing on a reorg, because a fork does not unmint an ERC-20', () => {
-      expect(processor.onReorg()).toEqual({ status: 'ok' });
+    it('stops on shutdown, and a later listing does not restart it', async () => {
+      listings.listed = [USDC];
+      filler.onApplicationBootstrap();
+      await settle();
+
+      await filler.onApplicationShutdown();
+      pending.add([WETH]);
+      await settle();
+
+      expect(store.rows.has(WETH)).toBe(false);
+    });
+
+    it('lets a read already in flight store what it paid for', async () => {
+      listings.listed = [USDC];
+      let release!: () => void;
+      reader.gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      filler.onApplicationBootstrap();
+      await settle();
+      expect(store.rows.size).toBe(0);
+
+      const draining = filler.onApplicationShutdown();
+      release();
+      await draining;
+
+      // The `eth_call`s are already spent; abandoning the answers means making
+      // them again on the next start.
+      expect(store.rows.has(USDC)).toBe(true);
     });
   });
 
@@ -226,7 +249,7 @@ describe('TokenEnrichmentProcessor', () => {
     it('asks for the whole listing set the first time, because nothing has been checked', async () => {
       listings.listed = [USDC];
 
-      processor.onBlockRange(25_000_000, 25_001_000, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       // Every `AddAsset` on mainnet fired at block 24,722,784, far behind any
@@ -237,33 +260,17 @@ describe('TokenEnrichmentProcessor', () => {
       expect(store.rows.has(USDC)).toBe(true);
     });
 
-    it('starts no run at all when nothing was listed', async () => {
+    it('sleeps once it has caught up, with no timer left running', async () => {
       listings.listed = [USDC];
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
-      await settle();
-
-      const drain = vi.spyOn(pending, 'drain');
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
-      await settle();
-
-      // Not "runs and finds nothing" — does not run. The buffer is the whole
-      // question an idle dispatch asks, and `Set.size` is the whole answer.
-      expect(drain).not.toHaveBeenCalled();
-    });
-
-    it('does nothing at all once it has caught up and nothing was listed', async () => {
-      listings.listed = [USDC];
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
       const queriesAfterCatchUp = listings.calls;
       const labelsAfterCatchUp = store.labelCalls;
 
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
-      processor.onBlockRange(300, 400, NEVER_ABORTED);
-      await settle();
+      // Hours of wall clock, and nothing listed. A clean run arms no timer at
+      // all — the buffer is what wakes it, so there is nothing to poll.
+      await vi.advanceTimersByTimeAsync(RETRY_MS * 100);
 
-      // The point of the whole arrangement, and every dispatch after genesis
-      // is this one. Not a cheaper query — no query: a `Set.size` check.
       expect(listings.calls).toBe(queriesAfterCatchUp);
       expect(store.labelCalls).toBe(labelsAfterCatchUp);
       expect(reader.seen).toHaveLength(1);
@@ -271,45 +278,57 @@ describe('TokenEnrichmentProcessor', () => {
 
     it('enriches a token the moment ingestion pushes it', async () => {
       listings.listed = [USDC];
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
       const queriesAfterCatchUp = listings.calls;
 
-      // What the Hub processor does as it writes the `AddAsset`.
+      // What the Hub filler does as it writes the `AddAsset`. The buffer
+      // wakes the filler directly — no dispatch, no timer, no query.
       pending.add([WETH]);
-      processor.onBlockRange(25_500_000, 25_501_000, NEVER_ABORTED);
       await settle();
 
       expect(store.rows.has(WETH)).toBe(true);
-      // Straight from the buffer: it never had to ask what was listed.
       expect(listings.calls).toBe(queriesAfterCatchUp);
+    });
+
+    it('ignores a push of something it already holds', async () => {
+      listings.listed = [USDC];
+      filler.onApplicationBootstrap();
+      await settle();
+      const reads = reader.seen.length;
+
+      // `add` only wakes on an address the set did not already have, so a range
+      // re-dispatched after a retry does not become a second fan-out.
+      pending.add([USDC]);
+      pending.add([USDC]);
+      await settle();
+
+      expect(reader.seen).toHaveLength(reads);
     });
 
     it('drains the buffer even when it is doing a full check', async () => {
       listings.listed = [USDC];
       pending.add([USDC]);
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
-      // Left buffered, USDC would wake the next dispatch for work this one has
-      // already done — a poll again, just a slower one.
+      // Left buffered, USDC would wake it again for work this run has already
+      // done — a poll again, just a slower one.
       expect(pending.size).toBe(0);
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
-      await settle();
       expect(listings.calls).toBe(1);
     });
 
     it('still enriches a token whose push was lost to a restart', async () => {
       // The buffer is in memory, so a crash between the push and the run drops
       // it. That is safe because the buffer is never the only record: the Hub
-      // processor committed the `AddAsset` to the ledger *before* pushing, so
+      // filler committed the `AddAsset` to the ledger *before* pushing, so
       // the listing survives, and a fresh instance owes a full check that
       // finds the gap between the ledger and the store.
       pending.add([WETH]);
 
-      const afterRestart = new TokenEnrichmentProcessor(
-        { chainId: CHAIN_ID, retryDelayMs: RETRY_MS, concurrency: 4 },
+      const afterRestart = new TokenMetadataFiller(
+        { chainId: CHAIN_ID, retryDelayMs: RETRY_MS, concurrency: 4, autoStart: true },
         listings,
         new PendingTokens(),
         store,
@@ -318,7 +337,7 @@ describe('TokenEnrichmentProcessor', () => {
       );
       listings.listed = [WETH];
 
-      afterRestart.onBlockRange(100, 200, NEVER_ABORTED);
+      afterRestart.onApplicationBootstrap();
       await settle();
 
       expect(store.rows.has(WETH)).toBe(true);
@@ -329,29 +348,27 @@ describe('TokenEnrichmentProcessor', () => {
       // the two apart: on a cold start the flag is already set, so a mutation
       // that never sets it would still look correct there.
       listings.listed = [USDC];
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
       expect(listings.calls).toBe(1);
 
       // A listing lands, and the token cannot be reached.
-      pending.add([WETH]);
       reader.answers.set(WETH, {
         symbol: null,
         name: null,
         decimals: null,
         failures: ['symbol: HttpRequestError'],
       });
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      pending.add([WETH]);
       await settle();
       expect(listings.calls).toBe(1);
       expect(store.rows.has(WETH)).toBe(false);
 
       // The retry cannot use the buffer — WETH was drained out of it — so it
       // has to re-derive the set or the gap never closes.
-      vi.setSystemTime(Date.now() + RETRY_MS);
       listings.listed = [USDC, WETH];
       reader.answers.delete(WETH);
-      processor.onBlockRange(300, 400, NEVER_ABORTED);
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
       await settle();
 
       expect(listings.calls).toBe(2);
@@ -360,18 +377,20 @@ describe('TokenEnrichmentProcessor', () => {
   });
 
   describe('backing off', () => {
-    it('waits before trying again after a gap is left open', async () => {
+    it('is not woken out of a back-off by a new listing', async () => {
       listings.listed = [USDC];
       chain.throws = new Error('no providers');
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
       expect(listings.calls).toBe(1);
 
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      pending.add([WETH]);
       await settle();
 
-      // A dead provider is retried on a timer rather than on every block.
+      // A dead provider is retried on the schedule, not once per `AddAsset`.
+      // Nothing is lost by ignoring the push: the armed retry re-derives the
+      // whole set, so it covers the new token too.
       expect(listings.calls).toBe(1);
     });
 
@@ -379,12 +398,12 @@ describe('TokenEnrichmentProcessor', () => {
       listings.listed = [USDC];
       chain.throws = new Error('no providers');
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
-      vi.setSystemTime(Date.now() + RETRY_MS);
       chain.throws = null;
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      // Its own timer, so nothing outside has to happen for the retry to fire.
+      await vi.advanceTimersByTimeAsync(RETRY_MS);
       await settle();
 
       expect(store.rows.has(USDC)).toBe(true);
@@ -392,11 +411,11 @@ describe('TokenEnrichmentProcessor', () => {
 
     it('does not back off when there was simply nothing to do', async () => {
       listings.listed = [USDC];
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       pending.add([WETH]);
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       // A successful run imposes no delay, so a new listing is picked up on the
@@ -409,7 +428,7 @@ describe('TokenEnrichmentProcessor', () => {
     it('enriches every listed token the store does not have', async () => {
       listings.listed = [USDC, WETH];
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       expect([...store.rows.keys()].toSorted()).toEqual([USDC, WETH].toSorted());
@@ -419,17 +438,17 @@ describe('TokenEnrichmentProcessor', () => {
     it('skips a token it already has', async () => {
       listings.listed = [USDC];
       pending.add([USDC]);
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
-      processor.onBlockRange(200, 300, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       expect(reader.seen).toHaveLength(1);
     });
 
     it('asks the store nothing when the Hub has listed nothing', async () => {
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       expect(store.labelCalls).toBe(0);
@@ -448,7 +467,7 @@ describe('TokenEnrichmentProcessor', () => {
         ],
       });
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       // The row existing is what records that the question was put. Without it
@@ -465,7 +484,7 @@ describe('TokenEnrichmentProcessor', () => {
         failures: ['symbol: HttpRequestError', 'name: HttpRequestError', 'decimals: TimeoutError'],
       });
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       // The other half of the rule above, and the trap it exists to avoid: a
@@ -480,7 +499,7 @@ describe('TokenEnrichmentProcessor', () => {
         metadata({ decimals: null, failures: ['decimals: out of range (999)'] }),
       );
 
-      processor.onBlockRange(100, 200, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       expect(store.rows.get(USDC)).toMatchObject({ symbol: 'USDC', tokenDecimals: null });
@@ -489,7 +508,7 @@ describe('TokenEnrichmentProcessor', () => {
     it('reads at the chain head, not at the range it was handed', async () => {
       listings.listed = [USDC];
 
-      processor.onBlockRange(24_000_000, 24_001_000, NEVER_ABORTED);
+      filler.onApplicationBootstrap();
       await settle();
 
       // During a backfill the range is historical and a full node cannot serve
@@ -506,7 +525,7 @@ describe('TokenEnrichmentProcessor', () => {
         release = resolve;
       });
 
-      processor.onBlockRange(100, 200, shutdown.signal);
+      filler.onApplicationBootstrap();
       await settle();
       shutdown.abort();
       release();
@@ -536,7 +555,7 @@ describe('TokenEnrichmentProcessor', () => {
         });
       };
 
-      build(4).onBlockRange(100, 200, NEVER_ABORTED);
+      build(4).onApplicationBootstrap();
       await settle();
 
       // A public endpoint rate-limits a burst long before it becomes slow, and

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { PendingTokens, TokenEnrichmentModule } from '@aave-positions/enrichment';
+import { PendingTokens, TokenMetadataModule } from '@aave-positions/enrichment';
 import { LoggingModule } from '@packages/ops';
 
 import { validateEnv, type Env } from '../config/env';
@@ -12,7 +12,7 @@ import { TokenEnricher } from './token-enricher';
  * Deliberately **not** `indexingSetup()`. That builds the cursor store, the
  * reorg detector and an `IndexerService` that would have to be remembered to
  * disable; this job needs a chain client and two databases, which is what
- * `TokenEnrichmentModule` already assembles for the processor.
+ * `TokenMetadataModule` already assembles for the filler.
  *
  * The retry delay is zero here: a command run by hand is always due, and the
  * operator watching it is the backoff.
@@ -34,7 +34,7 @@ import { TokenEnricher } from './token-enricher';
         pretty: config.get('LOG_PRETTY', { infer: true }),
       }),
     }),
-    TokenEnrichmentModule.forRootAsync({
+    TokenMetadataModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService<Env, true>) => ({
@@ -43,7 +43,10 @@ import { TokenEnricher } from './token-enricher';
         // the command works from the full listing set every time.
         pending: new PendingTokens(),
         retryDelayMs: 0,
-        concurrency: config.get('TOKEN_ENRICHMENT_CONCURRENCY', { infer: true }),
+        // Read once and exit. Starting the module's filler would give the
+        // command a background worker it never asked for.
+        autoStart: false,
+        concurrency: config.get('TOKEN_METADATA_CONCURRENCY', { infer: true }),
         rpc: {
           rpcUrls: config.get('RPC_URLS', { infer: true }),
           rpcTimeoutMs: config.get('INDEXER_RPC_TIMEOUT_MS', { infer: true }),

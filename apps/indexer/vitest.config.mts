@@ -56,6 +56,7 @@ export default defineConfig({
       // Its own switch, because pricing is not the loop: without this the
       // refresher fires at boot and reaches for rpc.invalid.
       RESERVE_PRICE_AUTOSTART: 'false',
+      TOKEN_METADATA_AUTOSTART: 'false',
       // Never connected to: these specs compile the graph and assert on what it
       // resolved, and postgres.js opens no socket until the first query.
       POSTGRES_URL: 'postgres://postgres@localhost:5432/postgres',

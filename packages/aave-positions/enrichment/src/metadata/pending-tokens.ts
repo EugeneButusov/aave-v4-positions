@@ -18,13 +18,39 @@ import type { Address } from '@packages/indexing';
  *
  * Not a queue: a *set*. The same token listed twice, or a range re-dispatched
  * after a retry, must not become two reads.
+ *
+ * **It notifies rather than being polled**, which is what lets the consumer
+ * live outside the indexing loop. Buffering an address and then waiting for a
+ * block dispatch to notice it would put the loop back in the path — and the
+ * loop does not dispatch when it is caught up, stalled, or not started.
  */
 export class PendingTokens {
   private readonly tokens = new Set<Address>();
 
-  /** Called from the ingestion path. Must not throw, and does not. */
+  /** One consumer, so one listener. A second would be two readers of one set. */
+  private listener: (() => void) | null = null;
+
+  /**
+   * Called from the ingestion path. **Must not throw, and does not** — a
+   * listener that fails cannot be allowed to fail the write that decoded the
+   * event, so the notification is fire-and-forget and errors stop here.
+   */
   add(tokens: readonly Address[]): void {
+    const before = this.tokens.size;
     for (const token of tokens) this.tokens.add(token.toLowerCase());
+    if (this.tokens.size === before) return;
+
+    try {
+      this.listener?.();
+    } catch {
+      // Swallowed on purpose. The consumer owes a full check on its own
+      // schedule, so a missed wake-up costs a delay rather than a token.
+    }
+  }
+
+  /** Wakes `listener` whenever an address is added that was not already here. */
+  notify(listener: () => void): void {
+    this.listener = listener;
   }
 
   /** Whether a consumer has anything to do. Cheap enough to ask every dispatch. */

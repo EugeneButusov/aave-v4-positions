@@ -11,16 +11,15 @@ export {
 
 export { PendingTokens } from './metadata/pending-tokens';
 export {
-  TOKEN_ENRICHMENT_OPTIONS,
-  TokenEnrichmentProcessor,
-  type TokenEnrichmentOptions,
-} from './metadata/token-enrichment.processor';
+  TOKEN_METADATA_OPTIONS,
+  TokenMetadataFiller,
+  type TokenMetadataOptions,
+} from './metadata/token-metadata.filler';
 export {
-  TOKEN_ENRICHMENT_PROCESSOR,
-  TokenEnrichmentModule,
-  type EnrichmentAsyncOptions,
-  type EnrichmentOptions,
-} from './metadata/token-enrichment.module';
+  TokenMetadataModule,
+  type MetadataAsyncOptions,
+  type MetadataOptions,
+} from './metadata/token-metadata.module';
 
 export type { ReservePrice, ReservePriceRow } from './store/reserve-price';
 export {

@@ -1,13 +1,16 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  type OnApplicationBootstrap,
+  type OnApplicationShutdown,
+} from '@nestjs/common';
 import {
   CHAIN_CLIENT,
   ERC20_METADATA_READER,
-  ok,
   type Address,
-  type BlockProcessor,
   type ChainClient,
   type Erc20MetadataReader,
-  type ProcessorOutcome,
   type TokenMetadata,
 } from '@packages/indexing';
 
@@ -16,14 +19,21 @@ import { PendingTokens } from './pending-tokens';
 import type { TokenMetadataRow } from '../store/token-metadata';
 import { TOKEN_METADATA_STORE, type TokenMetadataStore } from '../store/token-metadata-store';
 
-export interface TokenEnrichmentOptions {
+export interface TokenMetadataOptions {
   readonly chainId: number;
   /** How long to wait before trying again after a run left a gap open. */
   readonly retryDelayMs: number;
   readonly concurrency: number;
+  /**
+   * Whether to do anything at all.
+   *
+   * False for the one-shot command, which builds this graph to reach the ports
+   * and must not also acquire a background filler, and for hermetic tests.
+   */
+  readonly autoStart: boolean;
 }
 
-export const TOKEN_ENRICHMENT_OPTIONS = Symbol('TOKEN_ENRICHMENT_OPTIONS');
+export const TOKEN_METADATA_OPTIONS = Symbol('TOKEN_METADATA_OPTIONS');
 
 /**
  * Failures that mean **the token answered** — so a null is its final answer and
@@ -85,33 +95,28 @@ async function mapLimit<T, R>(
 /**
  * Fills in what tokens call themselves, automatically.
  *
- * **`onBlockRange` awaits nothing and never blocks the loop.** That is the
- * whole shape of this class, and it is not a detail. Enrichment reads
- * third-party token contracts — seventeen of them, three calls each, against a
- * provider that may be slow, rate-limiting or down — and `dispatchToProcessors`
- * runs processors one after another. Awaiting that work here would hold up the
- * Spoke and Hub ledgers behind an ERC-20, which inverts what matters: the
- * indexer staying in step with the chain is the job, and a token symbol is a
- * nice-to-have that can be minutes late without anyone noticing.
+ * **Driven by the listing, not by the loop.** `AddAsset` is the only event that
+ * can change which tokens are listed — the Hub has no delisting event at all,
+ * and `Remove` is a liquidity withdrawal (§4.5) — and the Hub processor decodes
+ * it, address and all, as it writes it. That address goes straight into
+ * {@link PendingTokens}, which *wakes this*: no query, no Postgres, no chain,
+ * and no schedule anybody had to tune. Going back to a database every range to
+ * rediscover a token the process already had in hand was the thing to remove.
  *
- * So a dispatch **triggers** a run and returns immediately. At most one runs at
- * a time, and a run that leaves a gap open backs off before the next attempt,
- * so a dead provider is retried on a timer rather than on every block.
+ * **But it is not a `BlockProcessor`, and that part is deliberate.** It used to
+ * be, and the trigger was a dispatch — which put the indexing loop in the path
+ * of three things that have nothing to do with it:
  *
- * That works because discovery is gap-driven and idempotent: what to do next is
- * derived from the difference between two tables, never from what this dispatch
- * happened to see. A run that is skipped, interrupted mid-flight by a shutdown,
- * or lost to a crash costs nothing — the gap is still there, and the next run
- * finds it.
+ * - the **initial full check** waited for the first dispatch, so a pod booted
+ *   with `INDEXER_AUTOSTART=false` never read a single token;
+ * - a **retry** waited for one too, so a provider outage that outlasted the
+ *   chain's next block left a token unlabelled until the indexer moved again —
+ *   and if the indexer had stalled or failed, forever;
+ * - a **push** sat in the buffer until something unrelated happened.
  *
- * **It is pushed, not polled.** `AddAsset` is the only event that can change
- * which tokens are listed — the Hub has no delisting event at all, and `Remove`
- * is a liquidity withdrawal (§4.5) — and the Hub processor decodes it, address
- * and all, as it writes it. That address goes straight into
- * {@link PendingTokens}, so the usual dispatch is a `Set.size` check and
- * nothing else: **no query, no Postgres, no chain.** Going back to a database
- * every range to rediscover a token the process already had in hand was the
- * thing to remove.
+ * None of that is what the loop is for, and an ERC-20 read has no more to do
+ * with a block range than an oracle read does. So the wake-up comes from the
+ * buffer and the retry comes from a timer this class owns.
  *
  * Two cases still need the whole listing set, and both are *states* rather
  * than a schedule:
@@ -124,20 +129,25 @@ async function mapLimit<T, R>(
  * - **the last run left a gap open.** The addresses it failed on have been
  *   drained and will not be pushed again, so the retry has to re-derive them.
  *
- * One flag covers both, and it means a full check happens exactly when it is
- * needed instead of on a timer nobody tuned.
+ * One flag covers both. A clean run arms **no timer at all** — it sleeps until
+ * something is listed, which is the property the push was introduced for.
+ *
+ * The work is safe to skip, interrupt or lose because it is gap-driven and
+ * idempotent: what to do next comes from the difference between two tables, so
+ * a run lost to a crash costs nothing.
  */
 @Injectable()
-export class TokenEnrichmentProcessor implements BlockProcessor {
-  readonly name = 'token-enrichment';
+export class TokenMetadataFiller implements OnApplicationBootstrap, OnApplicationShutdown {
+  private readonly logger = new Logger(TokenMetadataFiller.name);
 
-  private readonly logger = new Logger(TokenEnrichmentProcessor.name);
+  /** Fires on shutdown, so a read in flight stops rather than racing `close()`. */
+  private readonly abort = new AbortController();
 
   /** The run in flight, if any. Its only job is to stop a second one starting. */
   private running: Promise<void> | null = null;
 
-  /** Epoch ms before which not to try again, after a run left a gap open. */
-  private retryAfter = 0;
+  /** Armed only after a run that left a gap. A clean run schedules nothing. */
+  private retry: NodeJS.Timeout | null = null;
 
   /**
    * Whether the next run has to ask for the whole listing set.
@@ -150,7 +160,7 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
   private needsFullCheck = true;
 
   constructor(
-    @Inject(TOKEN_ENRICHMENT_OPTIONS) private readonly options: TokenEnrichmentOptions,
+    @Inject(TOKEN_METADATA_OPTIONS) private readonly options: TokenMetadataOptions,
     @Inject(TOKEN_LISTINGS) private readonly listings: TokenListings,
     private readonly pending: PendingTokens,
     @Inject(TOKEN_METADATA_STORE) private readonly store: TokenMetadataStore,
@@ -158,35 +168,49 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
     @Inject(CHAIN_CLIENT) private readonly chain: ChainClient,
   ) {}
 
-  /**
-   * Synchronous, and returns before any of the work it starts.
-   *
-   * Not `async`: the signature allows either, and a plain return makes it
-   * impossible to add an `await` here without noticing what that would mean.
-   */
-  onBlockRange(_from: number, _to: number, signal: AbortSignal): ProcessorOutcome {
-    // The whole cost of an ordinary dispatch: nothing was listed, nothing is
-    // owed, so there is nothing to schedule.
-    const woken = this.pending.size > 0 || this.needsFullCheck;
+  onApplicationBootstrap(): void {
+    if (!this.options.autoStart) return;
 
-    if (woken && this.running === null && !signal.aborted && Date.now() >= this.retryAfter) {
-      // Errors are handled inside `run`; the `void` is the point rather than an
-      // oversight, and `finally` is what guarantees the guard is released even
-      // if something escapes.
-      this.running = this.run(signal).finally(() => {
-        this.running = null;
-      });
+    // Subscribed before the first run, so a listing that lands mid-check is a
+    // wake-up rather than a token nobody comes back for.
+    this.pending.notify(() => {
+      this.wake();
+    });
+    this.wake();
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    this.abort.abort();
+    if (this.retry !== null) {
+      clearTimeout(this.retry);
+      this.retry = null;
     }
-
-    return ok();
+    // Awaited rather than abandoned: reads already paid for should be stored.
+    await this.running;
   }
 
   /**
-   * Nothing to undo. A fork does not unmint an ERC-20, and a listing that is
-   * rolled back leaves a metadata row nothing joins to — orphaned, not wrong.
+   * Starts a run unless one is already going.
+   *
+   * Returns before any of the work — a listing must never wait on seventeen
+   * ERC-20 reads to finish being recorded, and `add()` is called from the
+   * ingestion path.
    */
-  onReorg(): ProcessorOutcome {
-    return ok();
+  private wake(): void {
+    if (this.running !== null || this.abort.signal.aborted) return;
+
+    // **A listing does not cut short a back-off.** The armed retry re-derives
+    // the whole set, so it already covers whatever was just pushed — and
+    // without this, a provider that is down would be hit again by every
+    // `AddAsset` rather than on the schedule the back-off exists to impose.
+    if (this.retry !== null) return;
+
+    // Errors are handled inside `run`; the `void` is the point rather than an
+    // oversight, and `finally` is what guarantees the guard is released even
+    // if something escapes.
+    this.running = this.run(this.abort.signal).finally(() => {
+      this.running = null;
+    });
   }
 
   /** Never rejects. A failure is logged and left for the next run to retry. */
@@ -213,13 +237,20 @@ export class TokenEnrichmentProcessor implements BlockProcessor {
   }
 
   private backOff(reason: string): void {
-    // The addresses this run failed on will not appear in a range handed to a
-    // later one, so the retry has to go back to the whole set to find them.
+    // The addresses this run failed on have been drained and will not be pushed
+    // again, so the retry has to go back to the whole set to find them.
     this.needsFullCheck = true;
-    this.retryAfter = Date.now() + this.options.retryDelayMs;
     this.logger.warn(
       `enrichment incomplete (${reason}); retrying in ${this.options.retryDelayMs}ms`,
     );
+
+    if (this.abort.signal.aborted) return;
+    this.retry = setTimeout(() => {
+      this.retry = null;
+      this.wake();
+    }, this.options.retryDelayMs);
+    // Never a reason for the process to stay alive.
+    this.retry.unref();
   }
 
   /**

@@ -175,7 +175,7 @@ export const envSchema = z.object({
    * out a timer it did not earn. This is the backstop against a dead provider
    * being re-asked on every block.
    */
-  TOKEN_ENRICHMENT_RETRY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(60_000),
+  TOKEN_METADATA_RETRY_MS: z.coerce.number().int().min(1_000).max(86_400_000).default(60_000),
 
   /**
    * How many tokens are read from the chain at once.
@@ -185,7 +185,23 @@ export const envSchema = z.object({
    * `retryCount: 0`, so one 429 under an unbounded fan-out fails the whole
    * sweep.
    */
-  TOKEN_ENRICHMENT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+  TOKEN_METADATA_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
+
+  /**
+   * Whether to fill token metadata in at all.
+   *
+   * **Deliberately separate from `INDEXER_AUTOSTART`.** That one decides
+   * whether to walk the chain; this decides whether to read third-party
+   * ERC-20s, and the whole reason the filler is no longer a block processor is
+   * that those are different questions with different failure modes.
+   *
+   * `false` is for a process that wants the ports without the worker: the
+   * one-shot `enrich:tokens`, and hermetic tests.
+   */
+  TOKEN_METADATA_AUTOSTART: z
+    .enum(['true', 'false', '1', '0'])
+    .default('true')
+    .transform((value) => value === 'true' || value === '1'),
 
   /**
    * How long a successful price read stays good before the next one.

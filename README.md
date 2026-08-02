@@ -68,7 +68,7 @@ query is served without them. See [Not here yet](#not-here-yet).
 │   └── aave-positions/      packages that know about Aave
 │       ├── events/          ABI bindings, decoders, two append-only event ledgers
 │       ├── positions/       the fold over that log, and the store that reads it
-│       └── enrichment/      what no Aave event carries, fetched and kept beside it
+│       └── enrichment/      what no Aave event carries: token labels, oracle prices
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -123,14 +123,13 @@ package, and the asymmetry is the design — ingestion is code, so that package 
 write path, while this one owns a query, because the database maintains the projection. There is
 nothing here to start and nothing to keep in step with the indexer.
 
-`@aave-positions/enrichment` is everything the protocol does not put in an event. Today that is what
-each token calls itself; anything else fetched rather than folded lands beside it. It is a third
-package rather than a folder in the fold because it is a different _kind_ of data and says so at
-every level — fetched rather than derived, Postgres rather than ClickHouse, replaced in place rather
-than collapsed, and filled by a worker rather than by a view. It also has a shape neither neighbour
-has: it both writes and is read, so it ships a write-side module the indexer registers and a
-read-side module the API imports, and an API replica cannot acquire a worker by importing the thing
-it reads.
+`@aave-positions/enrichment` is everything the protocol does not put in an event: what each token
+calls itself, and what the Spoke's oracle prices its reserves at. It is a third package rather than a
+folder in the fold because it is a different _kind_ of data and says so at every level — fetched
+rather than folded, Postgres rather than ClickHouse, replaced in place rather than collapsed, and
+filled by a worker rather than by a view. It also has a shape neither neighbour has: it both writes
+and is read, so it ships two write-side modules the indexer registers and one read-side module the
+API imports, and an API replica cannot acquire a worker by importing the thing it reads.
 
 `apps/indexer` is left with about 310 lines: `main.ts`, `AppModule`, env validation and the
 migration entry point. Everything it _does_ comes from the packages it wires together, which is what
@@ -346,25 +345,26 @@ behaviour (§7.5), and a threshold set from feed cadence would mark healthy feed
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
 
-| variable                       | default    |                                                                                                                      |
-| ------------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------- |
-| `CHAIN_ID`                     | _required_ | Checked against what the providers report, on the first iteration.                                                   |
-| `RPC_URLS`                     | _required_ | Comma-separated, tried in order.                                                                                     |
-| `FINALITY_DEPTH`               | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained.         |
-| `INDEXER_START_BLOCK`          | `24720891` | Core Hub genesis, the earlier of the two contracts. Read on a cold start and never again; see [Resuming](#resuming). |
-| `INDEXER_MAX_RANGE_SIZE`       | `1000`     | Blocks per dispatch while catching up.                                                                               |
-| `INDEXER_POLL_INTERVAL_MS`     | `4000`     |                                                                                                                      |
-| `INDEXER_RPC_TIMEOUT_MS`       | `10000`    |                                                                                                                      |
-| `INDEXER_STALL_THRESHOLD_MS`   | `300000`   | How long without progress before readiness fails.                                                                    |
-| `INDEXER_AUTOSTART`            | `true`     | `false` boots the probes without indexing.                                                                           |
-| `MAIN_SPOKE_ADDRESS`           | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
-| `MAIN_SPOKE_ORACLE_ADDRESS`    | its oracle | Which oracle prices that Spoke's reserves. Per-Spoke and keyed by `reserveId`, so it travels with the Spoke.         |
-| `CORE_HUB_ADDRESS`             | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
-| `TOKEN_ENRICHMENT_RETRY_MS`    | `60000`    | How long enrichment waits after a run left a gap open. A successful run waits not at all.                            |
-| `TOKEN_ENRICHMENT_CONCURRENCY` | `4`        | Tokens read at once. A public endpoint rate-limits a burst before seventeen calls become slow.                       |
-| `RESERVE_PRICE_REFRESH_MS`     | `60000`    | How long a price stays good. A wall-clock timer, not a block tick — see below.                                       |
-| `RESERVE_PRICE_RETRY_MS`       | `15000`    | After a read that left a price stale. Shorter: §7.1 weighs collateral against debt, so only the ratio is wrong.      |
-| `RESERVE_PRICE_AUTOSTART`      | `true`     | Whether to poll the oracle. Its own switch: reading an oracle and walking the chain fail independently.              |
+| variable                     | default    |                                                                                                                        |
+| ---------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration.                                                     |
+| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                                                                       |
+| `FINALITY_DEPTH`             | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained.           |
+| `INDEXER_START_BLOCK`        | `24720891` | Core Hub genesis, the earlier of the two contracts. Read on a cold start and never again; see [Resuming](#resuming).   |
+| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                                                                                 |
+| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                                                                        |
+| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                                                                        |
+| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                                                                      |
+| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                                                                             |
+| `MAIN_SPOKE_ADDRESS`         | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                           |
+| `MAIN_SPOKE_ORACLE_ADDRESS`  | its oracle | Which oracle prices that Spoke's reserves. Per-Spoke and keyed by `reserveId`, so it travels with the Spoke.           |
+| `CORE_HUB_ADDRESS`           | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                              |
+| `TOKEN_METADATA_RETRY_MS`    | `60000`    | How long the filler waits after a run left a gap open. A clean run arms no timer and sleeps until something is listed. |
+| `TOKEN_METADATA_CONCURRENCY` | `4`        | Tokens read at once. A public endpoint rate-limits a burst before seventeen calls become slow.                         |
+| `TOKEN_METADATA_AUTOSTART`   | `true`     | Whether to fill metadata. Its own switch: reading ERC-20s and walking the chain fail independently.                    |
+| `RESERVE_PRICE_REFRESH_MS`   | `60000`    | How long a price stays good. A wall-clock timer, not a block tick — see below.                                         |
+| `RESERVE_PRICE_RETRY_MS`     | `15000`    | After a read that left a price stale. Shorter: §7.1 weighs collateral against debt, so only the ratio is wrong.        |
+| `RESERVE_PRICE_AUTOSTART`    | `true`     | Whether to poll the oracle. Its own switch: reading an oracle and walking the chain fail independently.                |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
 the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's
@@ -1600,27 +1600,32 @@ contract says so rather than implying a guarantee the chain does not offer.
 
 ### Automatic, and off the critical path
 
-**`onBlockRange` awaits nothing.** It triggers a run and returns the outcome
-synchronously — not a promise, so an `await` cannot be added here without
-noticing what it would mean. Enrichment reads third-party token contracts,
-seventeen of them at three calls each, against a provider that may be slow,
-rate-limiting or down; `dispatchToProcessors` runs processors one after another,
-so awaiting that work would hold the Spoke and Hub ledgers behind an ERC-20.
-That inverts what matters. Staying in step with the chain is the job; a token
-symbol can be minutes late without anyone noticing.
-
-At most one run is in flight, and a run that leaves a gap open waits
-`TOKEN_ENRICHMENT_RETRY_MS` before the next attempt — so a dead provider is
-retried on a timer rather than on every block. A run that resolved everything
-imposes no delay, so a newly listed token is picked up on the next dispatch.
-
 **It is pushed, not polled.** `AddAsset` is the only event that can change
 which tokens are listed — the Hub has no delisting event at all, and `Remove` is
 a liquidity withdrawal (§4.5) — and the Hub processor decodes it, address and
 all, as it writes it. That address goes straight into a small in-memory buffer,
-so an ordinary dispatch is a `Set.size` check and nothing else: **no query, no
-Postgres, no chain.** Going back to a database every range to rediscover a token
-the process already had in hand was the thing worth removing.
+which **wakes the filler directly**: no query, no Postgres, no chain, and no
+schedule anybody had to tune. Going back to a database every range to rediscover
+a token the process already had in hand was the thing worth removing.
+
+**And it is not a block processor**, which it was until the buffer learned to
+wake it. The trigger used to be a dispatch, and that put the indexing loop in
+the path of three things with nothing to do with it: the initial full check
+waited for one, so a pod booted with `INDEXER_AUTOSTART=false` read no tokens at
+all; a retry waited for one, so a provider outage that outlasted the chain's
+next block left a token unlabelled until the indexer moved again — and if the
+indexer had stalled, forever; and a push sat in the buffer until something
+unrelated happened. Reading a third-party ERC-20 has no more to do with a block
+range than reading an oracle does, so the filler runs beside the pipeline on its
+own switch, exactly as [pricing](#the-positions-endpoint) does.
+
+The work never blocks ingestion either way: a push returns before any of it, so
+a listing is never held behind seventeen ERC-20 reads. At most one run is in
+flight, and a run that leaves a gap open waits `TOKEN_METADATA_RETRY_MS` before
+the next attempt — and **is not woken out of that back-off by a new listing**,
+because the armed retry re-derives the whole set and already covers it. A run
+that resolved everything arms no timer at all: it sleeps until something is
+listed.
 
 The handoff is a **write-only listener on the event source**, called after the
 append and never awaited: a listener reacts to what landed, and must not be able

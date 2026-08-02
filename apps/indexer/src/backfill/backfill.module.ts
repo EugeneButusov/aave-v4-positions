@@ -3,10 +3,15 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggingModule } from '@packages/ops';
 
 import { validateEnv, type Env } from '../config/env';
+import { PendingTokens } from '@aave-positions/enrichment';
+
 import { indexingSetup } from '../indexing.setup';
 
 /** One module: the event and Postgres modules come in through it. */
-const indexing = indexingSetup({ autoStart: false });
+// A buffer nothing drains: the metadata filler is not in this graph, because a
+// backfill replays historical blocks and exits. Tokens it lists are recovered
+// by the full check the daemon owes on its next start.
+const indexing = indexingSetup(new PendingTokens(), { autoStart: false });
 
 /**
  * The backfill command's root: `AppModule` without the probe server, since
