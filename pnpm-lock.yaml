@@ -95,6 +95,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@aave-positions/positions':
+        specifier: workspace:*
+        version: link:../../packages/aave-positions/positions
       '@nestjs/common':
         specifier: 'catalog:'
         version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -110,9 +113,18 @@ importers:
       '@nestjs/swagger':
         specifier: 'catalog:'
         version: 11.4.6(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(reflect-metadata@0.2.2)
+      '@packages/clickhouse':
+        specifier: workspace:*
+        version: link:../../packages/clickhouse
+      '@packages/indexing':
+        specifier: workspace:*
+        version: link:../../packages/indexing
       '@packages/ops':
         specifier: workspace:*
         version: link:../../packages/ops
+      '@packages/postgres':
+        specifier: workspace:*
+        version: link:../../packages/postgres
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2

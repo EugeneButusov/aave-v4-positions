@@ -6,6 +6,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import type { Env } from './config/env';
 import { Logger, installGracefulShutdown } from '@packages/ops';
+import { httpSetup } from './http.setup';
 import { setupOpenApi } from './openapi/openapi';
 
 async function bootstrap(): Promise<void> {
@@ -18,12 +19,11 @@ async function bootstrap(): Promise<void> {
 
   const config = app.get<ConfigService<Env, true>>(ConfigService);
 
-  app.setGlobalPrefix(config.get('API_GLOBAL_PREFIX', { infer: true }), {
-    exclude: ['health/live', 'health/ready'],
-  });
+  httpSetup(app, { globalPrefix: config.get('API_GLOBAL_PREFIX', { infer: true }) });
 
-  // Registered after the global prefix so the document reports the paths the
-  // service actually serves, and before listen() so the UI is up with the port.
+  // Registered after the routes are mounted so the document reports the paths
+  // the service actually serves, and before listen() so the UI is up with the
+  // port.
   const docsPath = config.get('API_DOCS_PATH', { infer: true });
   setupOpenApi(app, { path: docsPath });
 

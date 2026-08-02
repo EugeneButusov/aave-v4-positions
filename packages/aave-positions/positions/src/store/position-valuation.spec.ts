@@ -7,7 +7,6 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore } from './clickhouse-position-store';
-import { PositionCursorCodec } from './position-cursor';
 import { RAY } from '../valuation/valuation';
 import {
   HUB,
@@ -69,10 +68,7 @@ describe('valuing a position', () => {
     client = await migratedDatabase(DATABASE);
     spokeEvents = new ClickHouseSpokeEventStore(client);
     hubEvents = new ClickHouseHubEventStore(client);
-    store = new ClickHousePositionStore(
-      client,
-      new PositionCursorCodec('spec-cursor-secret'.padEnd(32, '.')),
-    );
+    store = new ClickHousePositionStore(client);
   });
 
   afterAll(async () => {

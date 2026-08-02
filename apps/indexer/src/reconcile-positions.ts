@@ -2,7 +2,7 @@ import 'reflect-metadata';
 
 import { createClient } from '@clickhouse/client';
 import { SPOKE_ABI } from '@aave-positions/events';
-import { ClickHousePositionStore, PositionCursorCodec } from '@aave-positions/positions';
+import { ClickHousePositionStore } from '@aave-positions/positions';
 import { createPublicClient, http } from 'viem';
 import { mainnet } from 'viem/chains';
 
@@ -71,10 +71,7 @@ async function main(): Promise<void> {
     username: ch.CLICKHOUSE_USER,
     password: ch.CLICKHOUSE_PASSWORD,
   });
-  // The cursor secret is irrelevant here — this reads one page per wallet and
-  // never hands a cursor back — but the store requires one, so it gets a
-  // throwaway rather than a special construction path.
-  const store = new ClickHousePositionStore(client, new PositionCursorCodec('reconcile'.repeat(4)));
+  const store = new ClickHousePositionStore(client);
 
   const head = Number(await chain.getBlockNumber());
   const blockNumber = BigInt(atArg ?? head - 20);

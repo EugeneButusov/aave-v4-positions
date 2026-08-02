@@ -10,20 +10,12 @@ import { ClickHouseModule, type ClickHouseOptions } from '@packages/clickhouse';
 import { ClickHouseHubAssetStore } from './store/clickhouse-hub-asset-store';
 import { ClickHousePositionStore } from './store/clickhouse-position-store';
 import { HUB_ASSET_STORE } from './store/hub-asset-store';
-import { PositionCursorCodec } from './store/position-cursor';
 import { POSITION_STORE } from './store/position-store';
 
 const POSITIONS_OPTIONS = Symbol('POSITIONS_OPTIONS');
 
 export interface PositionsOptions {
   readonly clickhouse: ClickHouseOptions;
-  /**
-   * Signs pagination cursors, so one cannot be altered or carried to a
-   * different listing. **Must be identical across replicas** — a per-process
-   * secret means a cursor issued by one pod is rejected by the next, which
-   * shows up as pagination that fails only under load.
-   */
-  readonly cursorSecret: string;
 }
 
 export interface PositionsAsyncOptions<TDeps extends unknown[] = unknown[]> extends Pick<
@@ -55,6 +47,11 @@ class PositionsOptionsModule {}
  * });
  * ```
  *
+ * **No cursor signing is wired here, and none is exported.** The store deals in
+ * `PositionKey`; turning one into an opaque token is the job of whatever
+ * publishes the wire format, and the secret that does it is that service's
+ * configuration rather than this module's.
+ *
  * Re-exports the ClickHouse module, so an importer can register
  * `ClickHouseHealthIndicator` without constructing a second client.
  */
@@ -82,12 +79,6 @@ export class PositionsModule {
       module: PositionsModule,
       imports: [settings, clickhouse],
       providers: [
-        {
-          provide: PositionCursorCodec,
-          useFactory: (resolved: PositionsOptions) =>
-            new PositionCursorCodec(resolved.cursorSecret),
-          inject: [POSITIONS_OPTIONS],
-        },
         { provide: POSITION_STORE, useClass: ClickHousePositionStore },
         // The other half of a balance. Same client, same module: nothing values
         // a position without both, so handing out one without the other only

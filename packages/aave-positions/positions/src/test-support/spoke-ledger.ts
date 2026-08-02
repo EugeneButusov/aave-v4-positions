@@ -8,6 +8,12 @@ import { POSITION_MIGRATIONS_DIR } from '../store/clickhouse-position-store';
 
 export const CHAIN_ID = 1;
 export const SPOKE: Address = '0x94e7a5dcbe816e498b89ab752661904e2f56c485';
+/**
+ * The Bluechip Spoke — a second isolated margin account for the same wallet.
+ * Sorts *after* {@link SPOKE} as a string (`0x94…` < `0x97…`), which is what
+ * makes a cross-Spoke page order assertable rather than incidental.
+ */
+export const SECOND_SPOKE: Address = '0x973a023a77420ba610f06b3858ad991df6d85a08';
 /** Checksummed, as viem hands them back. Lower-casing them is the fold's job. */
 export const ALICE = '0x82D16fF1C724ab72F218A3f7f6DD3E5385ee87E8';
 export const BOB = '0xB8516f75DCf450b5b455b5114F5a92F6abD37dCa';
@@ -19,13 +25,15 @@ export const HUGE = '422166581625087607993';
 export interface At {
   readonly block: number;
   readonly log?: number;
+  /** Which Spoke emitted it. Defaults to {@link SPOKE}. */
+  readonly spoke?: Address;
 }
 
 /** A decoded log, shaped as the decoder would hand it over. */
 export function event(name: string, at: At, body: Record<string, unknown>): DecodedEvent {
   return {
     chainId: CHAIN_ID,
-    address: SPOKE,
+    address: at.spoke ?? SPOKE,
     blockNumber: at.block,
     blockHash: `0x${'aa'.repeat(32)}`,
     blockTimestamp: 1_785_000_000,

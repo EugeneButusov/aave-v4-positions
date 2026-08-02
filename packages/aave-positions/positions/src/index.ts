@@ -1,11 +1,11 @@
 export type { Position, PositionAsset, PositionValue } from './store/position';
 export {
   POSITION_STORE,
+  type PositionKey,
   type PositionPage,
   type PositionQuery,
   type PositionStore,
 } from './store/position-store';
-export { InvalidCursorError, PositionCursorCodec } from './store/position-cursor';
 
 export type { HubAsset } from './store/hub-asset';
 export { HUB_ASSET_STORE, type HubAssetStore } from './store/hub-asset-store';

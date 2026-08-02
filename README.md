@@ -29,13 +29,14 @@ thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that wi
 decoded against the official ABIs into two append-only ledgers;
 [the position fold](#the-position-fold) over the Spoke ledger, with a keyset-paginated store to read
 it; [the Hub asset fold](#the-hub-asset-fold) over the Hub's, reconciled against the chain's own
-`getAsset`; and [balances](#balances) — the §5 arithmetic that turns shares into token amounts,
-exact against `getUserDebt` and `getUserSuppliedAssets`.
+`getAsset`; [balances](#balances) — the §5 arithmetic that turns shares into token amounts, exact
+against `getUserDebt` and `getUserSuppliedAssets`; and
+[the endpoint that serves them](#the-positions-endpoint), block-stamped and paged.
 
-**Not yet:** the positions endpoints, position _type_ as §12.1 defines it, prices, health factors,
-Kubernetes manifests. Balances are token amounts now; what is missing above them is USD, and what is
-missing below is the config events that decide whether a supply counts as collateral. The API still
-serves one stub endpoint. See [Not here yet](#not-here-yet).
+**Not yet:** position _type_ as §12.1 defines it, prices, health factors, Kubernetes manifests.
+Balances are token amounts now; what is missing above them is USD, and what is missing below is the
+config events that decide whether a supply counts as collateral. See
+[Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -123,6 +124,12 @@ migration entry point. Everything it _does_ comes from the packages it wires tog
 makes the engine reusable and the Aave half independently testable. It is also the composition point
 for schema: each package owns the migrations for its own tables, and the application declares which
 sets ship together — the same reason it is the application that names which processors to run.
+
+`apps/api` is the same shape on the read side: a controller, a service that maps the domain type onto
+a wire contract, and the request schemas. It owns two things the packages deliberately do not — the
+cursor's wire format, because the key that signs it is this service's configuration, and the decision
+that an unindexed chain is a 404. Everything else it serves comes from `@aave-positions/positions`
+and, for the block a response is true as of, `@packages/indexing`. It writes to neither database.
 
 `pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
 no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config
@@ -284,7 +291,10 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **Shared** — `NODE_ENV`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_GRACE_SECONDS`.
 
-**API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`).
+**API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`),
+`API_SYNC_STALE_AFTER_SECONDS` (60), and `POSITIONS_CURSOR_SECRET` — _required_, at least 32
+characters, and the same on every replica. It signs pagination cursors, so a default would be a key
+every deployment shares, and a per-process one gives pagination that fails only under load.
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
 
@@ -306,7 +316,11 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's
 own position. One URL rather than four fields, because every managed Postgres hands you exactly that
 string, often carrying `?sslmode=require`, and taking it apart only to reassemble it is how a
-percent-encoded password gets mangled.
+percent-encoded password gets mangled. **Both services read both**, and must be pointed at the same
+pair: the API serves the fold from ClickHouse and stamps every response with the indexer's cursor
+from Postgres. It writes to neither. The schema fragments are declared per service rather than
+shared, so each owns its own contract — the cost is four duplicated lines, and the alternative is a
+validation library inside the packages that own the clients.
 
 `CHAIN_ID` and `RPC_URLS` deliberately have **no defaults**. A default chain id is precisely the
 failure this validation exists to prevent: an indexer quietly pointed at the wrong chain produces
@@ -342,10 +356,23 @@ describing what the service returns, and nothing else fails.
 [`openapi.e2e-spec.ts`](apps/api/test/openapi.e2e-spec.ts) walks every operation and fails if any
 lacks a typed success response.
 
-**Request validation is still an open choice.** There are no request DTOs yet. Configuration uses
-Zod, so `nestjs-zod` (one schema driving both validation and the OpenAPI document) is the coherent
-option; `class-validator` with `@ApiProperty` is the more conventional one. Worth deciding with the
-first real endpoint rather than now.
+**Requests validate with Zod**, through a
+[twelve-line pipe](apps/api/src/common/zod-validation.pipe.ts) over a schema per request part. The
+choice was left open until there was a real endpoint to decide it against; `class-validator` is the
+more conventional answer, but configuration and CLI arguments already validate with Zod, and one
+idiom beats two for the sake of convention. A malformed query parameter is formatted by the same
+`z.prettifyError` that reports a bad environment variable, so it reads the same way. Request shapes
+are documented with `@ApiQuery`/`@ApiParam` rather than derived from the schemas — generating both
+from one source is a real improvement to make, and not while there is one endpoint.
+
+**Routes are versioned in the URI, and probes are not.** `/api/v1/…`, via
+[`httpSetup`](apps/api/src/http.setup.ts), which is also the only place the global prefix is applied
+— `main.ts` and the e2e specs all call it, because tests never run `main.ts` and a hand-copied
+mounting drifts silently. It carries one trap worth repeating: **do not pass `defaultVersion`.**
+Nest falls back to it for every controller, and the global-prefix exclude list strips the prefix but
+never a version segment, so setting one moves the probes to `/v1/health/live` and takes the compose
+healthcheck and every deployment manifest with it. Versioned routes opt in with `@Version`, and one
+that forgets is caught by the hard-coded path list in the OpenAPI spec.
 
 ## Schema and migrations
 
@@ -997,40 +1024,6 @@ the way. A resuming indexer does not, so adding a projection to a populated ledg
 the same processors, and therefore the same revert-then-append, without touching the cursor. That it
 moves nothing is what makes it safe to do while the indexer is running.
 
-### Reading it
-
-`PositionStore.list` answers one question: **one wallet's positions on one Spoke.** `user` and `spoke`
-are required, not optional filters. Both earn it — together with `chain_id` they are the entire
-sorting-key prefix above `reserve_id`, so a page is a seek into contiguous rows rather than a filter
-over everyone's; and a Spoke is an isolated margin account with its own collateral factors, oracle and
-health factor (§12.3), so two of them are not one list. Cross-wallet questions are analytics over the
-same view, not a mode of this port.
-
-Paging is by **keyset, not `OFFSET`**. With the wallet and Spoke pinned, the resume point is a single
-`reserve_id`. `OFFSET n` would re-run the aggregation to discard `n` rows, and it shifts under
-concurrent writes: a position crossing a page boundary while the indexer advances would be returned
-twice or skipped.
-
-**Cursors are HMAC-signed, with the listing mixed into the signature.** Position data is public, so
-this is neither confidentiality nor access control — a caller can already ask for any wallet. It buys
-two things: the cursor becomes a genuinely opaque contract, so its encoding can change without
-breaking anyone who hand-rolled one; and a resume point cannot be carried between listings. That
-second one is the real defect a bare signature would leave: unsigned, Alice's cursor is a well-formed
-reserve id in Bob's listing, and his first page would silently start past it. Signing
-`(chainId, user, spoke)` alongside the reserve id makes switching listings fail the same check as
-tampering, and keeps the cursor one field long. HMAC rather than a JWT, which would add a header,
-algorithm negotiation and the `alg: none` footgun to protect a single integer. The key is
-configuration and **must be identical across replicas** — a per-process secret gives pagination that
-fails only under load.
-
-Only open positions come back — §12.1: a position exists while its shares are non-zero. The filter is
-`!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
-§9 to catch instead of vanishing behind the filter that hides closed positions.
-
-**Balances are shares.** Converting them to assets needs the Hub's interest index and no Hub event is
-ingested yet, so `netSuppliedAmount` is the only figure in asset units — and it is a _flow_, not a
-balance, because between events the index accrues and emits nothing (§5).
-
 ### What it costs
 
 Counted on a full mainnet backfill, genesis to head 25,666,105 — 25,775 ledger rows folding into
@@ -1240,6 +1233,38 @@ spec and each mutation-tested:
 
 ### Reading it
 
+`PositionStore.list` answers one question: **one wallet's positions**, on one Spoke or on all of them.
+`user` is required, not an optional filter — together with `chain_id` it is the leading pair of the
+sorting key, so a page is a seek into contiguous rows rather than a filter over everyone's.
+Cross-wallet questions are analytics over the same view, not a mode of this port.
+
+`spoke` is optional, and **what it narrows is the listing, never the arithmetic.** A Spoke is an
+isolated margin account with its own collateral factors, oracle and health factor (§12.3), so
+_summing_ across two of them is wrong in the one direction that matters — it hides an imminent
+liquidation behind unrelated collateral. Listing them together is fine, because every row names the
+Spoke it came from, and the same `reserve_id` on two Spokes stays two positions. Nothing here is
+aggregated, and anything that ever aggregates has to do it per Spoke.
+
+Paging is by **keyset, not `OFFSET`**. With the wallet pinned, the resume point is what the sorting
+key leaves free: `(spoke, reserve_id)`. `OFFSET n` would re-run the aggregation to discard `n` rows,
+and it shifts under concurrent writes: a position crossing a page boundary while the indexer advances
+would be returned twice or skipped. The pair is compared as a pair even when `spoke` is pinned and its
+half is therefore constant — one comparison rather than two branches, because a `reserve_id`-only
+special case would read a resume point from one Spoke against another's rows if the two ever
+disagreed.
+
+**Signing the resume point is the publisher's job, not the store's.** `PositionStore` takes and
+returns a `PositionKey`; keyset paging is how the database resumes a scan, and it is the same page key
+whether a CLI reconciliation asks for it or an HTTP request does. Making that key opaque and
+unforgeable is a property of _publishing_ it — it exists because a service hands the key to someone it
+does not trust and takes it back again — so it belongs with the service that does, not with the
+package that reads rows. Nothing under `packages/` holds a signing key or knows what a cursor looks
+like.
+
+Only open positions come back — §12.1: a position exists while its shares are non-zero. The filter is
+`!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
+§9 to catch instead of vanishing behind the filter that hides closed positions.
+
 `Position` keeps its shares and gains `asset` and `value`. Both are **null
 together**, and only when the join has nothing to offer — a reserve the registry
 has not seen, or a Hub asset with no checkpoint yet. A zero there would be
@@ -1266,6 +1291,100 @@ the join shape would move the cost, not remove it.
 
 What the join does inherit is [the read view's own](#what-it-costs): 17 rows out,
 29,631 read to produce them.
+
+### The positions endpoint
+
+```
+GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
+```
+
+```jsonc
+{
+  // How far the indexer has got, and how long ago it got there.
+  "sync": { "lastBlock": 25652535, "lastBlockHash": "0x…", "ageSeconds": 7, "stale": false },
+  // The instant the amounts below were computed at. A different clock from `sync`.
+  "valuedAt": 1785000000,
+  "items": [
+    {
+      "chainId": 1,
+      "user": "0x…",
+      "spoke": "0x…",
+      "reserveId": "7",
+      "suppliedShares": "422166581625087607993", // stored truth
+      // What reserveId resolves to, once the registry and the Hub are both read.
+      "asset": { "assetId": "7", "hub": "0x…", "underlying": "0x…", "decimals": 6 },
+      // The shares above in token units, at `valuedAt`. Null together with `asset`.
+      "value": { "suppliedAmount": "1000000000", "totalDebt": "0", "drawnIndex": "1e27…" },
+    },
+  ],
+  "nextCursor": null,
+}
+```
+
+**`chainId` is required and never defaulted.** The service will not answer for a deployment the
+caller did not name, and a chain it has no cursor row for is a **404** rather than an empty list —
+otherwise "this indexer does not follow Polygon" and "this wallet holds nothing" are the same
+response. The same 404 covers the window between an indexer starting and recording its first block,
+which is honest: there is genuinely nothing to serve yet.
+
+**`spoke` is optional**, because a caller asking what a wallet holds should not have to know which
+Spokes exist. It narrows the listing and nothing else — every row names its own Spoke, the same
+`reserve_id` on two of them stays two positions, and there are **no totals in the response at all**.
+That is not an omission to fill in later without thought: §12.3 makes a blended health factor or net
+worth wrong in the one direction that matters, so anything aggregated has to be aggregated per Spoke.
+
+**Two clocks, and the response names both.** `sync` says how far the indexer has folded; `valuedAt`
+says when the amounts were computed. Conflating them would be easy and wrong — shares advance when
+events land, amounts advance every second whether or not anything happened. `asOf` sets the second
+one and defaults to now, which is the same choice the chain makes; passing it explicitly is what
+makes two identical requests return identical numbers. It is bounded at both ends as a **units
+check**: below the Spoke's genesis nothing exists to value, and above 2100 the caller sent
+milliseconds — unbounded, that would extrapolate the interest index tens of thousands of years and
+return a page of enormous numbers with nothing to say they are wrong.
+
+**`asset` and `value` are null together**, and only when the join has nothing to offer: a reserve the
+registry has not seen, or a Hub asset with no interest checkpoint yet. Null rather than zero, because
+a zero amount cannot be told apart from a real zero balance. The position still appears — its shares
+are real either way.
+
+**Every payload is block-stamped.** §12.6 — amounts and health factors are per-block quantities, and
+a number with no block behind it cannot be checked against anything. `sync` comes from the indexer's
+own cursor row through [`SyncStatusStore`](packages/indexing/src/indexing/cursor/sync-status-store.ts),
+read-only; the API writes nothing to that database. It rides on every page rather than the first,
+because a page whose `sync` differs from the previous one is the honest signal that the indexer
+advanced mid-walk. `ageSeconds` is computed by the database that wrote the timestamp, so clock skew
+between hosts cannot report a healthy indexer as stale. `stale` is that age against
+`API_SYNC_STALE_AFTER_SECONDS` — deliberately not the indexer's `INDEXER_STALL_THRESHOLD_MS`, which
+answers a different question: one decides whether to drain traffic from a pod, the other tells a
+reader their numbers are a minute old.
+
+**Cursors are HMAC-signed, with the listing mixed into the signature.** Position data is public, so
+this is neither confidentiality nor access control — a caller can already ask for any wallet. It buys
+two things: the cursor becomes a genuinely opaque contract, so its encoding can change without
+breaking anyone who hand-rolled one; and a resume point cannot be carried between listings. That
+second one is the real defect a bare signature would leave: unsigned, Alice's page key is a
+well-formed page key in Bob's listing, and his first page would silently start past it. The scope
+signed is `(chainId, user, spoke-filter)` — the **filter**, not the Spoke, tagged `*` when absent,
+because an all-Spokes resume point is otherwise well-formed inside a narrowed listing and skips
+everything below it. `POSITIONS_CURSOR_SECRET` is required with no default, because a default is a
+key every deployment shares, and it **must be identical across replicas** — a per-process secret
+gives pagination that fails only under load.
+
+The signed string joins every field with one separator, which is safe only while no field can contain
+it: `a|b|c` would otherwise read as both `(a|b, c)` and `(a, b|c)`, and a tag issued for one listing
+would verify against another with the boundary moved. That invariant is not re-checked where the
+signing happens — it is met by the request schema, which parses the wallet and Spoke as anchored
+lower-case addresses before either reaches a signature. Validated once, where it enters.
+
+`limit` defaults to 50 and caps at 200, as constants rather than configuration: a wallet holds at
+most one position per reserve and the Main Spoke has fourteen, so paging here is a contract formality
+rather than a load concern. An unrecognised query parameter is a 400 — `?limt=200` silently serving
+50 is a caller who believes they set a page size and reads one they did not.
+
+**Integer amounts are strings, and the OpenAPI schema says so.** float64 has 53 bits of mantissa and
+share balances run far past it; the failure mode is a few wei of drift that reads as a rounding bug
+rather than the parse error it is. A spec assertion walks `PositionDto` and fails if any share or
+amount is typed `number`.
 
 ### Verification
 
@@ -1449,9 +1568,14 @@ Deliberate, in rough order of what comes next.
 - **The price layer**, and therefore USD values and health factors — ~8 Chainlink aggregators plus
   two LST rebase sources (§7.4).
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.
-- **Enrichment** and the positions endpoints, per the §12 conclusion. Note that `uint256` amounts
-  must be serialised as JSON strings — float64 has 53 bits of mantissa and share balances are far
-  past it. The failure mode is a few wei of drift that reads as a rounding bug.
+- **Enrichment**, per the §12 conclusion. The endpoint that serves positions
+  [is here](#the-positions-endpoint); what it cannot yet say about them is not. Token symbol and name
+  appear in no Aave event at all and need a one-time ERC-20 read per reserve — fourteen calls,
+  immutable, cached forever — which makes them the cheapest thing on this list and the only one that
+  is not indexed data.
+- **A single position, by reserve.** `PositionStore` has exactly one method, and the endpoint over it
+  is a listing. `GET …/positions/{reserveId}` is a different query against the same view, and worth
+  adding when something needs it rather than because the shape suggests it.
 - **Metrics export.** `IndexerStatus` knows the cursor, the head, the lag between them and the
   consecutive-failure count, but the only way out is `/health/ready`, which answers up or down and
   puts the detail in an error string. That is a fine alert and a poor time series — you cannot graph

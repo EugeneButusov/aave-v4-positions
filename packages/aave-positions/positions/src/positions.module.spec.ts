@@ -24,7 +24,6 @@ const positions = () =>
     inject: [Settings],
     useFactory: (settings: Settings) => ({
       clickhouse: { url: settings.url, database: 'aave', username: 'aave', password: '' },
-      cursorSecret: 'spec-cursor-secret'.padEnd(32, '.'),
     }),
   });
 
@@ -68,33 +67,12 @@ describe('PositionsModule', () => {
               username: 'aave',
               password: '',
             },
-            cursorSecret: 'spec-cursor-secret'.padEnd(32, '.'),
           }),
         }),
       ],
     }).compile();
 
     expect(moduleRef.get<PositionStore>(POSITION_STORE)).toBeInstanceOf(ClickHousePositionStore);
-  });
-
-  it('rejects a cursor secret short enough to guess', async () => {
-    await expect(
-      Test.createTestingModule({
-        imports: [
-          PositionsModule.forRootAsync({
-            useFactory: () => ({
-              clickhouse: {
-                url: 'http://clickhouse.invalid',
-                database: 'aave',
-                username: 'aave',
-                password: '',
-              },
-              cursorSecret: 'too-short',
-            }),
-          }),
-        ],
-      }).compile(),
-    ).rejects.toThrow(/at least 32/);
   });
 
   it('reaches the database not at all while building', async () => {

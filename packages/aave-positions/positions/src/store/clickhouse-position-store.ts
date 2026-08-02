@@ -6,7 +6,6 @@ import { CLICKHOUSE_CLIENT } from '@packages/clickhouse';
 
 import type { Position, PositionAsset, PositionValue } from './position';
 import { valuePosition, type AssetState } from '../valuation/valuation';
-import { PositionCursorCodec, type CursorScope } from './position-cursor';
 import type { PositionPage, PositionQuery, PositionStore } from './position-store';
 
 const POSITIONS_VIEW = 'user_positions_current';
@@ -136,11 +135,19 @@ function toPosition(row: Row, at: bigint): Position {
 /**
  * Reads the folded positions out of ClickHouse.
  *
- * Two shapes worth explaining, because both are deliberate:
+ * Three shapes worth explaining, because all three are deliberate:
  *
- * **`chain_id`, `user` and `spoke` are all required and all bound**, which is
- * the whole sorting-key prefix above `reserve_id`. That is what makes a page a
- * seek into one wallet's contiguous rows rather than a filter over everyone's.
+ * **`chain_id` and `user` are required and bound**, which is the leading pair of
+ * the sorting key. That is what makes a page a seek into one wallet's contiguous
+ * rows rather than a filter over everyone's. `spoke` narrows further when it is
+ * given, and its absence costs nothing: the prefix that does the seeking is
+ * already pinned without it.
+ *
+ * **The resume point is the whole of what the prefix leaves free** — `(spoke,
+ * reserve_id)`, compared as a pair even when `spoke` is pinned and the first
+ * half is therefore constant. One comparison rather than two branches: a
+ * `reserve_id`-only special case would silently read a resume point from one
+ * Spoke against another's rows if the two ever disagreed.
  *
  * **Every wide integer is `toString`-ed in SQL.** Not left to the JSON encoder's
  * defaults: a share balance past 2^53 that arrives as a number has already lost
@@ -148,34 +155,22 @@ function toPosition(row: Row, at: bigint): Position {
  */
 @Injectable()
 export class ClickHousePositionStore implements PositionStore {
-  constructor(
-    @Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient,
-    private readonly cursors: PositionCursorCodec,
-  ) {}
+  constructor(@Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient) {}
 
   async list(query: PositionQuery): Promise<PositionPage> {
-    // The listing this page belongs to. Signed alongside the resume point, so a
-    // cursor cannot be carried across to another wallet, Spoke or chain.
-    const scope: CursorScope = {
+    const params: Record<string, unknown> = {
       chainId: query.chainId,
       user: query.user.toLowerCase(),
-      spoke: query.spoke.toLowerCase(),
-    };
-    const params: Record<string, unknown> = {
-      chainId: scope.chainId,
-      user: scope.user,
-      spoke: scope.spoke,
       // Fetch one more than asked. Its presence is what says there is a next
       // page; counting the whole result set to find out would defeat the point
       // of keyset paging.
       limit: query.limit + 1,
     };
     const filters = [
-      // The full sorting-key prefix, so the scan starts at this wallet's rows
-      // rather than filtering its way to them.
+      // The leading pair of the sorting key, so the scan starts at this wallet's
+      // rows rather than filtering its way to them.
       `chain_id = {chainId:UInt32}`,
       `user = {user:String}`,
-      `spoke = {spoke:String}`,
       // Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go negative
       // on chain, so a negative fold is drift — and it should surface as a
       // visibly wrong number for §9 to catch, not vanish behind the filter that
@@ -183,11 +178,15 @@ export class ClickHousePositionStore implements PositionStore {
       `(supplied_shares != 0 OR drawn_shares != 0)`,
     ];
 
-    if (query.cursor !== undefined) {
-      // Everything above `reserve_id` in the sorting key is already pinned by the
-      // scope, so the resume point is one comparison on what is left.
-      filters.push(`reserve_id > {afterReserve:UInt256}`);
-      params['afterReserve'] = this.cursors.decode(query.cursor, scope);
+    if (query.spoke !== undefined) {
+      filters.push(`spoke = {spoke:String}`);
+      params['spoke'] = query.spoke.toLowerCase();
+    }
+
+    if (query.after !== undefined) {
+      filters.push(`(spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256})`);
+      params['afterSpoke'] = query.after.spoke;
+      params['afterReserve'] = query.after.reserveId;
     }
 
     const result = await this.client.query({
@@ -263,8 +262,8 @@ export class ClickHousePositionStore implements PositionStore {
                ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
         -- Qualified, and it has to be. Unqualified, \`reserve_id\` binds to the
         -- toString alias above and sorts the decimal digits as text, putting 13
-        -- before 3 — which then hands the next page a cursor from the wrong row.
-        ORDER BY p.reserve_id`,
+        -- before 3 — which then hands the next page a key from the wrong row.
+        ORDER BY p.spoke, p.reserve_id`,
       query_params: params,
       format: 'JSONEachRow',
     });
@@ -280,9 +279,9 @@ export class ClickHousePositionStore implements PositionStore {
     return {
       items,
       valuedAt: Number(valuedAt),
-      nextCursor:
+      next:
         rows.length > query.limit && last !== undefined
-          ? this.cursors.encode(scope, last.reserveId)
+          ? { spoke: last.spoke, reserveId: last.reserveId }
           : null,
     };
   }

@@ -20,6 +20,12 @@ export {
 
 export { CURSOR_STORE, type Cursor, type CursorStore } from './indexing/cursor/cursor-store';
 export { PostgresCursorStore } from './indexing/cursor/postgres-cursor-store';
+export {
+  SYNC_STATUS_STORE,
+  type SyncStatus,
+  type SyncStatusStore,
+} from './indexing/cursor/sync-status-store';
+export { PostgresSyncStatusStore } from './indexing/cursor/postgres-sync-status-store';
 
 export {
   BLOCK_PROCESSORS,

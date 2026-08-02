@@ -6,6 +6,7 @@ import type { App } from 'supertest/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
+import { httpSetup } from '../src/http.setup';
 import { API_CONTRACT_VERSION, buildOpenApiDocument, setupOpenApi } from '../src/openapi/openapi';
 
 const DOCS_PATH = 'docs';
@@ -31,7 +32,7 @@ describe('openapi', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
 
     app = moduleRef.createNestApplication({ logger: false });
-    app.setGlobalPrefix('api', { exclude: ['health/live', 'health/ready'] });
+    httpSetup(app, { globalPrefix: 'api' });
     setupOpenApi(app, { path: DOCS_PATH });
     await app.init();
 
@@ -50,7 +51,7 @@ describe('openapi', () => {
 
     it('exposes exactly the routes we expect', () => {
       expect(Object.keys(document.paths).toSorted()).toEqual([
-        '/api/hello',
+        '/api/v1/chains/{chainId}/users/{user}/positions',
         '/health/live',
         '/health/ready',
       ]);
@@ -83,7 +84,9 @@ describe('openapi', () => {
       const paths = Object.keys(document.paths);
 
       expect(paths.filter((p) => p.startsWith('/health/'))).toHaveLength(2);
-      expect(paths.filter((p) => p.startsWith('/api/'))).toEqual(['/api/hello']);
+      expect(paths.filter((p) => p.startsWith('/api/'))).toEqual([
+        '/api/v1/chains/{chainId}/users/{user}/positions',
+      ]);
     });
 
     it('describes both readiness outcomes, not just the happy path', () => {
@@ -105,6 +108,42 @@ describe('openapi', () => {
 
       expect(schema.required?.toSorted()).toEqual(['name', 'status']);
       expect(schema.properties?.['error']).toBeDefined();
+    });
+
+    it('types every share and amount as a string, not a number', () => {
+      const schema = document.components?.schemas?.['PositionDto'] as SchemaNode;
+
+      // The contract the description commits to. float64 has 53 bits of
+      // mantissa and share balances run far past it, so a schema saying
+      // `number` would have generated clients parsing away the tail — a few wei
+      // of drift that reads as a rounding bug rather than a type error.
+      for (const field of [
+        'suppliedShares',
+        'drawnShares',
+        'premiumShares',
+        'premiumOffsetRay',
+        'netSuppliedAmount',
+        'netBorrowedAmount',
+        'reserveId',
+      ]) {
+        expect(schema.properties?.[field]).toMatchObject({ type: 'string' });
+      }
+    });
+
+    it('marks the end-of-listing cursor nullable rather than absent', () => {
+      const schema = document.components?.schemas?.['PositionPageDto'] as SchemaNode;
+
+      expect(schema.required?.toSorted()).toEqual(['items', 'nextCursor', 'sync', 'valuedAt']);
+      expect(schema.properties?.['nextCursor']).toMatchObject({ nullable: true });
+    });
+
+    it('describes the refusals, not just the page', () => {
+      const responses =
+        document.paths['/api/v1/chains/{chainId}/users/{user}/positions']?.get?.responses ?? {};
+
+      // A 404 here means "this deployment does not index that chain", which a
+      // caller cannot distinguish from an empty result unless it is documented.
+      expect(Object.keys(responses).toSorted()).toEqual(['200', '400', '404']);
     });
   });
 

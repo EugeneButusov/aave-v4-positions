@@ -3,13 +3,14 @@ import { ClickHouseSpokeEventStore, type DecodedEvent } from '@aave-positions/ev
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore } from './clickhouse-position-store';
-import { PositionCursorCodec } from './position-cursor';
+import type { PositionKey } from './position-store';
 import {
   ALICE,
   BOB,
   CHAIN_ID,
   HUGE,
   ROUTER,
+  SECOND_SPOKE,
   SPOKE,
   TABLES,
   borrow,
@@ -38,10 +39,9 @@ describe('ClickHousePositionStore', () => {
   beforeAll(async () => {
     client = await migratedDatabase(DATABASE);
     events = new ClickHouseSpokeEventStore(client);
-    store = new ClickHousePositionStore(
-      client,
-      new PositionCursorCodec('spec-cursor-secret'.padEnd(32, '.')),
-    );
+    // No cursor codec: the store deals in page keys, and signing one into an
+    // opaque token belongs to whatever publishes the wire format.
+    store = new ClickHousePositionStore(client);
   });
 
   afterAll(async () => {
@@ -61,9 +61,9 @@ describe('ClickHousePositionStore', () => {
         supply({ block: 100, log: 1 }, BOB, '7', '900'),
       ]);
 
-      // `user` and `spoke` are required rather than optional filters: with
-      // `chain_id` they are the whole sorting-key prefix above `reserve_id`, so
-      // a page is a seek into contiguous rows rather than a scan.
+      // `user` is required rather than an optional filter: with `chain_id` it is
+      // the leading pair of the sorting key, so a page is a seek into contiguous
+      // rows rather than a scan.
       expect((await page()).items).toEqual([
         expect.objectContaining({ user: ALICE.toLowerCase(), suppliedShares: '500' }),
       ]);
@@ -91,6 +91,50 @@ describe('ClickHousePositionStore', () => {
       // position managers.
       expect((await page()).items).toHaveLength(1);
       expect((await page({ user: ROUTER })).items).toEqual([]);
+    });
+  });
+
+  describe('across Spokes', () => {
+    const seedBoth = () =>
+      index(100, 100, [
+        supply({ block: 100, log: 0 }, ALICE, '7', '500'),
+        supply({ block: 100, log: 1, spoke: SECOND_SPOKE }, ALICE, '7', '900'),
+      ]);
+
+    it('lists every Spoke when none is named, each row saying which', async () => {
+      await seedBoth();
+
+      // The same `reserveId` on two Spokes is two positions, not one — reserve
+      // ids are Spoke-scoped, so nothing here may be merged on them. Every row
+      // carries its own Spoke precisely so a caller can group rather than guess.
+      expect((await page({ spoke: undefined })).items).toEqual([
+        expect.objectContaining({ spoke: SPOKE, reserveId: '7', suppliedShares: '500' }),
+        expect.objectContaining({ spoke: SECOND_SPOKE, reserveId: '7', suppliedShares: '900' }),
+      ]);
+    });
+
+    it('narrows to one when it is named', async () => {
+      await seedBoth();
+
+      expect((await page({ spoke: SECOND_SPOKE })).items).toEqual([
+        expect.objectContaining({ spoke: SECOND_SPOKE, suppliedShares: '900' }),
+      ]);
+    });
+
+    it('walks a page boundary that falls between two Spokes', async () => {
+      await seedBoth();
+
+      // The half of the resume point that only exists once `spoke` is unpinned.
+      // A `reserve_id`-only key would resume at "> 7" and lose the second
+      // Spoke's reserve 7 entirely, because it sorts after the first Spoke's.
+      const first = await page({ spoke: undefined, limit: 1 });
+      expect(first.next).toEqual({ spoke: SPOKE, reserveId: '7' });
+
+      const second = await page({ spoke: undefined, limit: 1, after: first.next ?? undefined });
+      expect(second.items).toEqual([
+        expect.objectContaining({ spoke: SECOND_SPOKE, reserveId: '7' }),
+      ]);
+      expect(second.next).toBeNull();
     });
   });
 
@@ -158,14 +202,14 @@ describe('ClickHousePositionStore', () => {
       await seed();
 
       const seen: string[] = [];
-      let cursor: string | undefined;
+      let after: PositionKey | undefined;
       do {
-        // Sequential by definition — each page's cursor comes from the last one.
+        // Sequential by definition — each page's key comes from the last one.
         // oxlint-disable-next-line no-await-in-loop
-        const next = await page({ limit: 2, ...(cursor && { cursor }) });
+        const next = await page({ limit: 2, after });
         seen.push(...next.items.map((p) => p.reserveId));
-        cursor = next.nextCursor ?? undefined;
-      } while (cursor !== undefined);
+        after = next.next ?? undefined;
+      } while (after !== undefined);
 
       // Keyset, so the boundary is a key rather than a row count: nothing is
       // returned twice or skipped even though the indexer is free to write
@@ -174,46 +218,21 @@ describe('ClickHousePositionStore', () => {
       expect(seen).toEqual(RESERVES);
     });
 
-    it('reports no next cursor when the page is not full', async () => {
+    it('reports no next key when the page is not full', async () => {
       await seed();
 
-      expect(await page({ limit: 5 })).toMatchObject({ nextCursor: null });
-      expect(await page({ limit: 4 })).toMatchObject({ nextCursor: expect.any(String) });
+      expect(await page({ limit: 5 })).toMatchObject({ next: null });
+      expect(await page({ limit: 4 })).toMatchObject({ next: { spoke: SPOKE, reserveId: '21' } });
     });
 
-    it('resumes after the row the cursor names, not before it', async () => {
+    it('resumes after the row the key names, not before it', async () => {
       await seed();
 
       const first = await page({ limit: 2 });
-      const second = await page({ limit: 2, cursor: first.nextCursor ?? '' });
+      const second = await page({ limit: 2, after: first.next ?? undefined });
 
       expect(first.items.map((p) => p.reserveId)).toEqual(['3', '7']);
       expect(second.items.map((p) => p.reserveId)).toEqual(['13', '21']);
-    });
-
-    it("refuses one wallet's cursor replayed against another's listing", async () => {
-      await index(100, 100, [
-        supply({ block: 100, log: 0 }, ALICE, '7', '500'),
-        supply({ block: 100, log: 1 }, ALICE, '13', '500'),
-        supply({ block: 100, log: 2 }, BOB, '7', '500'),
-        supply({ block: 100, log: 3 }, BOB, '13', '500'),
-      ]);
-      const alice = await page({ limit: 1 });
-
-      // The signature covers the listing, not just the resume point. Unsigned,
-      // this is a well-formed reserve id and Bob's first page would silently
-      // start past it.
-      await expect(page({ user: BOB, limit: 1, cursor: alice.nextCursor ?? '' })).rejects.toThrow(
-        /does not match this listing/,
-      );
-    });
-
-    it('refuses a cursor it never issued', async () => {
-      await seed();
-
-      await expect(page({ limit: 2, cursor: 'not-one-of-ours' })).rejects.toThrow(
-        /invalid page cursor/,
-      );
     });
   });
 });
