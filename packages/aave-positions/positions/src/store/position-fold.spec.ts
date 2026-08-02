@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { ClickHouseClient } from '@clickhouse/client';
-import { ClickHouseEventStore, type DecodedEvent } from '@aave-positions/events';
+import { ClickHouseSpokeEventStore, type DecodedEvent } from '@aave-positions/events';
 import { splitStatements } from '@packages/migrations';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -34,7 +34,7 @@ import {
 const DATABASE = 'spec_position_fold';
 
 let client: ClickHouseClient;
-let events: ClickHouseEventStore;
+let events: ClickHouseSpokeEventStore;
 let store: ClickHousePositionStore;
 
 /** What the processor does with a dispatched range: cancel, then write. */
@@ -69,7 +69,7 @@ async function scalar(query: string): Promise<string> {
 /**
  * Writes a ledger row with a version this test chose.
  *
- * The only place that bypasses {@link ClickHouseEventStore}, and only because
+ * The only place that bypasses {@link ClickHouseSpokeEventStore}, and only because
  * the store stamps `Date.now()` — two dispatches inside one millisecond would
  * share a version and the ordering under test would not exist.
  */
@@ -103,7 +103,7 @@ async function ledgerRow(at: At, version: number, sign: 1 | -1, on: boolean): Pr
 describe('the position fold', () => {
   beforeAll(async () => {
     client = await migratedDatabase(DATABASE);
-    events = new ClickHouseEventStore(client);
+    events = new ClickHouseSpokeEventStore(client);
     store = new ClickHousePositionStore(
       client,
       new PositionCursorCodec('spec-cursor-secret'.padEnd(32, '.')),

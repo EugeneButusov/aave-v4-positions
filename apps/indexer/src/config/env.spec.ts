@@ -18,7 +18,9 @@ describe('validateEnv', () => {
     expect(parsed.INDEXER_HOST).toBe('0.0.0.0');
     expect(parsed.LOG_PRETTY).toBe(false);
     expect(parsed.FINALITY_DEPTH).toBe(128);
-    expect(parsed.INDEXER_START_BLOCK).toBe(24_720_899);
+    // Core Hub genesis, not the Main Spoke's: the floor is the earliest of
+    // the contracts followed, or the earlier one starts mid-history.
+    expect(parsed.INDEXER_START_BLOCK).toBe(24_720_891);
     expect(parsed.INDEXER_MAX_RANGE_SIZE).toBe(1_000);
     expect(parsed.INDEXER_AUTOSTART).toBe(true);
   });

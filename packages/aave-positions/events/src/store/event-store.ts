@@ -36,4 +36,11 @@ export interface EventStore {
   append(events: readonly DecodedEvent[]): Promise<void>;
 }
 
-export const EVENT_STORE = Symbol('EVENT_STORE');
+/**
+ * One token per ledger, not one shared `EVENT_STORE`.
+ *
+ * Both modules export into the same importer, and two modules exporting one
+ * token collide there — the same reason the processor token is per-contract.
+ */
+export const SPOKE_EVENT_STORE = Symbol('SPOKE_EVENT_STORE');
+export const HUB_EVENT_STORE = Symbol('HUB_EVENT_STORE');

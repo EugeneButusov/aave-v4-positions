@@ -1,6 +1,7 @@
 import type { Address, RawLog } from '@packages/indexing';
-import { decodeEventLog } from 'viem';
+import { decodeEventLog, type Abi } from 'viem';
 
+import { HUB_ABI, isHubStateEvent } from '../aave/hub-events';
 import { SPOKE_ABI, isPositionEvent } from '../aave/spoke-events';
 import type { DecodedEvent } from './decoded-event';
 
@@ -34,43 +35,54 @@ function jsonSafe(value: unknown): unknown {
 }
 
 /**
- * Turns Spoke logs into rows.
+ * Turns one contract's logs into rows.
  *
  * **Scoped to one emitting address**, which §4.5 makes a requirement rather
  * than a nicety: `ReportDeficit` exists on both the Spoke and the Hub with
  * different signatures and different topic0s, and `Add`, `Remove`, `Draw` and
  * `Withdraw` are generic enough to collide across contracts. Decoding a merged
  * stream by topic0 alone is how a Hub event silently becomes a wrong Spoke row.
- * Only the Spoke is in scope today; the decoder is keyed by address anyway, so
- * adding the Hub cannot introduce that bug later.
  *
- * Nothing is skipped. The caller asked the provider for exactly these eight
- * topics, so a log that arrives and will not decode is a contradiction — a
- * changed ABI, or a filter that did not do what it claimed — and it throws
- * rather than quietly shrinking the result.
+ * The address check is what makes that structural rather than a convention —
+ * a subclass cannot opt out of it, and a log from the wrong contract is
+ * rejected before its ABI is ever consulted.
+ *
+ * Nothing is skipped. The caller asked the provider for exactly these topics,
+ * so a log that arrives and will not decode is a contradiction — a changed ABI,
+ * or a filter that did not do what it claimed — and it throws rather than
+ * quietly shrinking the result.
  */
-export class SpokeEventDecoder {
-  private readonly spoke: Address;
+export abstract class ContractLogDecoder {
+  private readonly contract: Address;
 
   constructor(
     private readonly chainId: number,
-    spoke: Address,
+    contract: Address,
   ) {
     // Normalised here rather than trusted: a checksummed address from a caller
     // would match no log and the decoder would reject every one of them.
-    this.spoke = spoke.toLowerCase();
+    this.contract = contract.toLowerCase();
   }
+
+  /** The ABI every log is decoded against — the emitting contract's, and only its. */
+  protected abstract readonly abi: Abi;
+
+  /** Which decoded events this decoder was asked for. */
+  protected abstract wanted(eventName: string): boolean;
+
+  /** What this contract is called, so a rejection names it. */
+  protected abstract readonly role: string;
 
   decode(logs: readonly RawLog[]): DecodedEvent[] {
     return logs.map((log) => this.decodeOne(log));
   }
 
   private decodeOne(log: RawLog): DecodedEvent {
-    if (log.address.toLowerCase() !== this.spoke) {
+    if (log.address.toLowerCase() !== this.contract) {
       throw new UndecodableLogError(
         log.blockNumber,
         log.logIndex,
-        `emitted by ${log.address}, not the configured spoke ${this.spoke}`,
+        `emitted by ${log.address}, not the configured ${this.role} ${this.contract}`,
       );
     }
 
@@ -79,11 +91,13 @@ export class SpokeEventDecoder {
       throw new UndecodableLogError(log.blockNumber, log.logIndex, 'anonymous event, no topic0');
     }
 
-    let eventName: string;
+    // Typed as optional because the ABI is widened to `Abi` here rather than
+    // held as a const — viem can no longer prove a name comes back.
+    let eventName: string | undefined;
     let rawArgs: unknown;
     try {
       ({ eventName, args: rawArgs } = decodeEventLog({
-        abi: SPOKE_ABI,
+        abi: this.abi,
         data: log.data,
         topics: [signature, ...rest],
       }));
@@ -92,23 +106,22 @@ export class SpokeEventDecoder {
       throw new UndecodableLogError(log.blockNumber, log.logIndex, reason);
     }
 
-    if (!isPositionEvent(eventName)) {
+    if (eventName === undefined || !this.wanted(eventName)) {
       throw new UndecodableLogError(
         log.blockNumber,
         log.logIndex,
-        `${eventName} is not one of the position events that were requested`,
+        `${eventName ?? '<unnamed>'} is not one of the ${this.role} events that were requested`,
       );
     }
 
     // topic0 is the signature hash, which `event_name` already says. What is
-    // left is the indexed parameters, in ABI order — so topic1 is the reserve
-    // id on every one of the eight, while topic2 and topic3 mean different
-    // things per event and are read through a per-event view.
+    // left is the indexed parameters, in ABI order — so their meaning is
+    // per-event, and per-contract, and is read through a per-event view.
     const [topic1, topic2, topic3] = rest;
 
     return {
       chainId: this.chainId,
-      address: this.spoke,
+      address: this.contract,
       blockNumber: log.blockNumber,
       blockHash: log.blockHash,
       blockTimestamp: log.blockTimestamp,
@@ -122,5 +135,36 @@ export class SpokeEventDecoder {
       body: toRecord(jsonSafe(toRecord(rawArgs))),
       data: log.data,
     };
+  }
+}
+
+/**
+ * The eight position events of one Spoke.
+ *
+ * `topic1` is the reserve id on every one of them; `topic2` and `topic3` mean
+ * different things per event.
+ */
+export class SpokeEventDecoder extends ContractLogDecoder {
+  protected readonly abi: Abi = SPOKE_ABI;
+  protected readonly role = 'spoke';
+
+  protected wanted(eventName: string): boolean {
+    return isPositionEvent(eventName);
+  }
+}
+
+/**
+ * The thirteen asset-state events of one Hub.
+ *
+ * `topic1` is the **asset id** here, not a reserve id — the same column in a
+ * different ledger means a different thing, which is half of why the Hub gets
+ * its own table.
+ */
+export class HubEventDecoder extends ContractLogDecoder {
+  protected readonly abi: Abi = HUB_ABI;
+  protected readonly role = 'hub';
+
+  protected wanted(eventName: string): boolean {
+    return isHubStateEvent(eventName);
   }
 }

@@ -7,7 +7,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { SPOKE_POSITION_TOPICS } from './aave/spoke-events';
-import { AaveEventProcessor } from './aave-event-processor';
+import { AaveEventProcessor, spokeEventSource } from './aave-event-processor';
 import type { DecodedEvent } from './decode/decoded-event';
 import type { EventStore } from './store/event-store';
 import fixture from './decode/spoke-logs.fixture.json';
@@ -49,7 +49,7 @@ class StubReader implements LogReader {
 }
 
 function build(reader: LogReader, store: EventStore = new RecordingStore()) {
-  return new AaveEventProcessor({ chainId: CHAIN_ID, spoke: SPOKE }, reader, store);
+  return new AaveEventProcessor(spokeEventSource(CHAIN_ID, SPOKE), reader, store);
 }
 
 const running = new AbortController().signal;
@@ -158,7 +158,7 @@ describe('AaveEventProcessor', () => {
 
   it('names the spoke it follows, so two of them are distinguishable', () => {
     const other = new AaveEventProcessor(
-      { chainId: CHAIN_ID, spoke: `0x${'22'.repeat(20)}` },
+      spokeEventSource(CHAIN_ID, `0x${'22'.repeat(20)}`),
       new StubReader([]),
       new RecordingStore(),
     );

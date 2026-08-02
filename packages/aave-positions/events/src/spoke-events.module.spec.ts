@@ -5,7 +5,7 @@ import { Test } from '@nestjs/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AaveEventProcessor } from './aave-event-processor';
-import { EVENT_STORE, type EventStore } from './store/event-store';
+import { SPOKE_EVENT_STORE, type EventStore } from './store/event-store';
 import { SPOKE_EVENT_PROCESSOR, SpokeEventsModule } from './spoke-events.module';
 
 const SPOKE = '0x94e7a5dcbe816e498b89ab752661904e2f56c485';
@@ -61,7 +61,7 @@ describe('SpokeEventsModule', () => {
     // module provides — exports flow outward, not inward — so this one binds
     // its own. Without that the processor could not live here at all.
     expect(moduleRef.get<LogReader>(LOG_READER)).toBeDefined();
-    expect(moduleRef.get<EventStore>(EVENT_STORE)).toBeDefined();
+    expect(moduleRef.get<EventStore>(SPOKE_EVENT_STORE)).toBeDefined();
   });
 
   it('re-exports ClickHouse, so a probe needs no second client', async () => {

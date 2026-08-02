@@ -24,14 +24,16 @@ cursor and processor seams, and hash-chain reorg detection over a retained heade
 detected fork re-reported on the next start until it has actually been applied; a durable cursor and
 header window in Postgres, so a restart resumes instead of re-indexing; the shared ClickHouse
 layer of client, readiness probe and [migration runner](#schema-and-migrations); and
-[event ingestion](#event-ingestion) — the eight Main Spoke events that move a position, decoded
-against the official ABI and stored as an append-only ledger; and [the position fold](#the-position-fold)
-over that ledger, with a keyset-paginated store to read it.
+[event ingestion](#event-ingestion) — the eight Main Spoke events that move a position and the
+thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that will value them,
+decoded against the official ABIs into two append-only ledgers; and
+[the position fold](#the-position-fold) over the Spoke ledger, with a keyset-paginated store to read
+it.
 
-**Not yet:** Core Hub events and therefore any valuation, the token address, position _type_ as
-§12.1 defines it, prices, health factors, the positions endpoints, Kubernetes manifests. Balances
-are shares, and the API still serves one stub endpoint. See
-[Not here yet](#not-here-yet).
+**Not yet:** the Hub asset mirror and therefore any valuation, the token address, position _type_ as
+§12.1 defines it, prices, health factors, the positions endpoints, Kubernetes manifests. Balances are
+shares — the Hub events that convert them are now stored, but nothing folds them yet. The API still
+serves one stub endpoint. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -58,7 +60,7 @@ are shares, and the API still serves one stub endpoint. See
 │   │       └── test-support/    fakes and port contracts, exported so adapters run them
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
 │   └── aave-positions/      packages that know about Aave
-│       ├── events/          ABI binding, decoder, append-only event store
+│       ├── events/          ABI bindings, decoders, two append-only event ledgers
 │       └── positions/       the fold over that log, and the store that reads it
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
@@ -276,17 +278,19 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 
 **Indexer** — `INDEXER_HOST`, `INDEXER_PORT` (3001), plus the chain configuration:
 
-| variable                     | default    |                                                                                                              |
-| ---------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------ |
-| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration.                                           |
-| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                                                             |
-| `FINALITY_DEPTH`             | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained. |
-| `INDEXER_START_BLOCK`        | `24720899` | Main Spoke genesis. Read on a cold start and never again; see [Resuming](#resuming).                         |
-| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                                                                       |
-| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                                                              |
-| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                                                              |
-| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                                                            |
-| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                                                                   |
+| variable                     | default    |                                                                                                                      |
+| ---------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `CHAIN_ID`                   | _required_ | Checked against what the providers report, on the first iteration.                                                   |
+| `RPC_URLS`                   | _required_ | Comma-separated, tried in order.                                                                                     |
+| `FINALITY_DEPTH`             | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained.         |
+| `INDEXER_START_BLOCK`        | `24720891` | Core Hub genesis, the earlier of the two contracts. Read on a cold start and never again; see [Resuming](#resuming). |
+| `INDEXER_MAX_RANGE_SIZE`     | `1000`     | Blocks per dispatch while catching up.                                                                               |
+| `INDEXER_POLL_INTERVAL_MS`   | `4000`     |                                                                                                                      |
+| `INDEXER_RPC_TIMEOUT_MS`     | `10000`    |                                                                                                                      |
+| `INDEXER_STALL_THRESHOLD_MS` | `300000`   | How long without progress before readiness fails.                                                                    |
+| `INDEXER_AUTOSTART`          | `true`     | `false` boots the probes without indexing.                                                                           |
+| `MAIN_SPOKE_ADDRESS`         | Main Spoke | Which Spoke to follow. A second Spoke is a second registration, not an edit.                                         |
+| `CORE_HUB_ADDRESS`           | Core Hub   | Which Hub to follow, for the asset state that turns shares into balances.                                            |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
 the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's
@@ -353,8 +357,8 @@ are one, because they are one change to make and one change to review. Recording
 whole file lands, so a file that fails part-way is retried from its first statement — which is why
 every statement in a multi-statement file is written `IF NOT EXISTS`.
 
-Each package owns the migrations for the tables it defines — `spoke_events` and its view belong to
-the events package, the projections over it to the positions package, the cursor and header window to
+Each package owns the migrations for the tables it defines — the `spoke_events` and `hub_events`
+ledgers and their views belong to the events package, the projections over it to the positions package, the cursor and header window to
 `@packages/indexing` — and the application names the directories that deploy together. That
 cross-directory ordering is load-bearing rather than tidy: the projections read a table another
 package creates, and `010 > 002` is the entire guarantee that they are created after it. The runner
@@ -764,6 +768,88 @@ bug is repairable by re-decoding what is already stored rather than re-fetching 
 Verified end to end against mainnet: the same block range was dispatched twice across a restart and
 the table holds one generation of it — 107 live rows, zero duplicate keys, zero mutations.
 
+### The Hub ledger, and why it is a second table
+
+Shares are not balances. Debt grows between events because the Hub's `drawnIndex` accrues with
+_time_, and that accrual emits no log — so `Supply.amount − Withdraw.amount` is net principal flow
+and nothing more (§5). Converting needs Hub asset state, and §5.3 is what makes that cheap: the Hub
+emits its own **settled** interest index on every accrual, so the checkpoint is handed over rather
+than derived, and no rate-strategy model is needed anywhere.
+
+**Thirteen events**, ten that move additive asset state (`Add`, `Remove`, `Draw`, `Restore`,
+`MintFeeShares`, `Sweep`, `Reclaim`, `ReportDeficit`, `EliminateDeficit`, `RefreshPremium`) and three
+that set one latest-wins (`UpdateAsset` for the index, `UpdateAssetConfig` for `liquidityFee`,
+`AddAsset` for `underlying` and `decimals` — the only source of either, on any contract).
+
+`TransferShares` is excluded on evidence rather than by omission: §4.4 shows it moves `addedShares`
+between two `SpokeData` records, so asset-level totals net to zero. Folding it would double-count a
+rebalance.
+
+**A separate `hub_events` table, and this is a correctness requirement.** `ReportDeficit` exists on
+both contracts with different signatures (§4.4). The position projections filter on `event_name`
+alone — they have no address predicate and cannot get one, since the Spoke address is configuration
+and a migration does not know it. So a Hub `ReportDeficit` in `spoke_events` fires a view that
+reaches for a `user` the Hub form does not have. Measured, in `ledger-separation.spec.ts`:
+
+| after inserting a Hub `ReportDeficit` into `spoke_events` |           |
+| --------------------------------------------------------- | --------- |
+| the insert                                                | **fails** |
+| rows in `spoke_events`                                    | **1**     |
+| rows in `user_positions`                                  | **0**     |
+
+The ledger row commits and the projection row does not, so ingestion jams on a range that will never
+succeed — and if the view is later fixed, the next dispatch retracts a row the projection never
+received, leaving the position short by exactly that event. `topic1` settles it independently: it is
+the **asset id** here and a reserve id there, and one column cannot hold two meanings and stay
+queryable.
+
+What the two ledgers do share is the write path. `ClickHouseSpokeEventStore` and
+`ClickHouseHubEventStore` are subclasses over one base whose only abstract members are the table and
+the view — so the retract-then-append discipline, the full-column retraction and the version
+handling are written once. The decoder splits the same way, and the address check lives in the base
+where a subclass cannot opt out of it.
+
+**Both ABIs are checked twice.** Every Hub topic0 is derived from `IHubV4_ABI` at load and asserted
+against the twelve the analysis extracted independently from the Solidity interfaces. Two
+derivations agreeing is the evidence; a hardcoded hash that drifts just matches nothing, which looks
+exactly like a quiet chain.
+
+**The backfill floor moved to the Hub's genesis.** Measured: the Core Hub's first log is at
+24,720,891, eight blocks _before_ the Main Spoke's 24,720,899, and its first state event is at
+24,722,784 — where all 17 `AddAsset` fire in one block. Those eight blocks happen to hold only the
+proxy's own lifecycle events, so the old floor lost nothing; depending on that coincidence is the
+problem, since `AddAsset` fires once per asset and missing it is indistinguishable from a quiet
+chain.
+
+Full history backfilled and counted — genesis to 25,666,327, **58,878 rows across 17 assets**:
+
+| event               | rows   | share      |
+| ------------------- | ------ | ---------- |
+| `UpdateAsset`       | 29,482 | **50.1 %** |
+| `Add`               | 12,249 | 20.8 %     |
+| `Draw`              | 7,859  | 13.3 %     |
+| `Remove`            | 5,327  | 9.0 %      |
+| `Restore`           | 3,910  | 6.6 %      |
+| `UpdateAssetConfig` | 34     | 0.1 %      |
+| `AddAsset`          | 17     | 0.0 %      |
+| the other six       | **0**  | —          |
+
+§4.4 predicted "half of them `UpdateAsset`" and gets 50.1% over the whole history rather than a
+sample. Density averages 624 logs per 10k blocks over all history and 988 in a recent 10k-block
+window, either side of the analysis's 868.
+
+**The six cold events have never fired — not in a sample, in the entire history of the contract.**
+`Sweep`, `Reclaim`, `MintFeeShares`, `RefreshPremium`, `ReportDeficit` and `EliminateDeficit` are all
+at zero across 945,000 blocks, which is the event-side confirmation of §5.4's reading that
+`premiumShares`, `premiumOffsetRay`, `deficitRay` and `swept` are zero on all 34 assets. It also sets
+the ceiling on what the next increment can prove: the asset mirror will have seven transitions
+reconcilable against mainnet and six that only synthetic fixtures can reach. They are decoded and
+pinned by specs here so that the day one fires, it is folded rather than discovered.
+
+Dispatch stays idempotent across the two ledgers, and independently: re-running a 10,000-block range
+left the live count unchanged at 1,073, and a Hub retraction over blocks both streams occupy removed
+the Hub rows and left the Spoke rows standing.
+
 ## The position fold
 
 `@aave-positions/positions` turns that ledger into balances. It contains no ingestion code at all —
@@ -1100,15 +1186,22 @@ Deliberate, in rough order of what comes next.
   Spoke's fourteen reserves sit at `CF = 0`, so the flag alone overstates collateral for those. It is
   a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
   highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
-- **Core Hub events**, and so any valuation at all — and with them the token address, which no Spoke
-  event carries, plus the `reserveId → (assetId, hub)` registry that joins a position to Hub state.
-  That registry is a projection of `AddReserve`, which the ledger already stores, so it lands with
-  the increment that first has a use for it. Shares are stored; converting them to asset
-  amounts needs Hub state. `UpdateAsset` is the one worth having first and on its own — §5.3 shows
-  the Hub emits its own interest index, which is what lets debt be valued with no archive node and
-  no rate-strategy model. The 11-event Hub asset mirror is the highest-risk fold in the design
-  (§5.5): one mishandled transition silently corrupts every supply valuation for that asset, with no
-  error, just wrong numbers. Its own PR.
+- **The Hub asset mirror**, and so any valuation at all. The thirteen Hub events are now ingested,
+  but nothing folds them: `liquidity`, `addedShares`, `drawnShares`, `swept`, `deficitRay` and the
+  premium pair are additive and want a `SummingMergeTree`; `drawnIndex`, `drawnRate`, `realizedFees`,
+  `liquidityFee`, `underlying` and `decimals` are latest-wins and want the event-grain collapse the
+  collateral flag already uses. §5.5 calls this the highest-risk fold in the design — one mishandled
+  transition silently corrupts every supply valuation for that asset, with no error, just wrong
+  numbers — and the measured zero-count on six of the thirteen events means six transitions can only
+  ever be checked against synthetic fixtures. Reconciled against `getAsset` for all 17 assets at zero
+  tolerance. Its own PR.
+- **Valuation on the read path**, once the mirror exists: the `reserveId → (assetId, hub)` registry
+  that joins a position to Hub state — a projection of `AddReserve`, which the Spoke ledger already
+  stores — and the §5.1/§5.2 arithmetic. Three traps to respect: rounding is _up_ on the debt side
+  and _down_ on the supply side, `premiumRay` is signed so BigInt truncation is not `ceil`, and
+  `getDrawnIndex` short-circuits when both share counts are zero. `unrealizedFees` is the one formula
+  the analysis summarises rather than states, so it gets transcribed from `AssetLogic` at the pinned
+  commit rather than reconstructed.
 - **A single-writer guarantee.** The cursor is durable now, so two indexers on one `chain_id` write
   the same row instead of each keeping their own — and a rolling deploy creates exactly that overlap
   while the old pod drains. Bounded damage, but the cursor can move backwards and cost a re-index. A
