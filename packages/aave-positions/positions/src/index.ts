@@ -15,6 +15,7 @@ export {
   ClickHousePositionStore,
   POSITION_MIGRATIONS_DIR,
 } from './store/clickhouse-position-store';
+export { POSITION_POSTGRES_MIGRATIONS_DIR } from './postgres-migrations';
 
 export {
   RAY,
