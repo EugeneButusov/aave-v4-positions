@@ -28,13 +28,14 @@ layer of client, readiness probe and [migration runner](#schema-and-migrations);
 thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that will value them,
 decoded against the official ABIs into two append-only ledgers;
 [the position fold](#the-position-fold) over the Spoke ledger, with a keyset-paginated store to read
-it; and [the Hub asset fold](#the-hub-asset-fold) over the Hub's, reconciled against the chain's
-own `getAsset`.
+it; [the Hub asset fold](#the-hub-asset-fold) over the Hub's, reconciled against the chain's own
+`getAsset`; and [balances](#balances) — the §5 arithmetic that turns shares into token amounts,
+exact against `getUserDebt` and `getUserSuppliedAssets`.
 
-**Not yet:** the share→asset arithmetic, and therefore any valuation on the read path — position
-_type_ as §12.1 defines it, prices, health factors, the positions endpoints, Kubernetes manifests.
-Balances are still shares: both halves of the conversion are now indexed, and nothing multiplies
-them together yet. The API still serves one stub endpoint. See [Not here yet](#not-here-yet).
+**Not yet:** the positions endpoints, position _type_ as §12.1 defines it, prices, health factors,
+Kubernetes manifests. Balances are token amounts now; what is missing above them is USD, and what is
+missing below is the config events that decide whether a supply counts as collateral. The API still
+serves one stub endpoint. See [Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -269,6 +270,7 @@ you point it at rather than on a schedule — see [the fold's verification](#ver
 
 ```bash
 pnpm --filter @aave-v4-positions/indexer reconcile:hub -- --from X --to Y
+pnpm --filter @aave-v4-positions/indexer reconcile:positions -- --users 0xabc,0xdef
 ```
 
 Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
@@ -1140,6 +1142,106 @@ run. The absolute check — all 17 assets, every field, against a fold holding f
 an archive RPC and is what `reconcile:hub --absolute` does. Everything the narrow window does not
 reach rests on the source transcription above, 22 integration specs and the ten mutation tests.
 
+## Balances
+
+Shares become numbers here. The Hub's index accrues every second and emits
+nothing (§5), so this is computed on read rather than stored — the last piece
+the two ledgers were built for.
+
+**No RPC on the read path.** §5.3 is what buys that: the Hub emits the _settled_
+index on every accrual, so a valuation applies linear interest to an
+authoritative checkpoint instead of reimplementing the interest-rate strategy.
+`eth_call` is demoted to the reconciliation oracle it should have been.
+
+### The registry, which is what joins the two halves
+
+`reserveId` is a per-Spoke index and means nothing on its own (§1). `AddReserve`
+gives it a Hub and an `assetId`; the Hub's `AddAsset` gives _that_ an ERC-20 and
+its decimals. Neither contract has both halves, which is why valuation waited for
+both ledgers rather than for one.
+
+Those `AddReserve` rows have been in the ledger since the events package existed,
+deliberately ingested with no projection so the increment that first needed them
+could read stored data instead of re-indexing. This adds the projection.
+
+### Two formulas, and they are not symmetric
+
+```
+debt    = rayMulUp(drawnShares, index) + fromRayUp(premiumShares · index − offsetRay)
+supply  = shares · (totalAddedAssets + 1e6) / (addedShares + 1e6)          # floor
+index   = rayMulUp(checkpoint, RAY + rate · elapsed / SECONDS_PER_YEAR)
+```
+
+Debt is index-based and rounds **up** throughout. Supply is not an index at all —
+it is an ERC-4626 ratio padded with 1e6 virtual assets and shares — and rounds
+**down**. The two are coupled anyway, because `totalAddedAssets` contains the
+drawn debt: suppliers are paid out of it, so **the supply side is a per-second
+quantity too**, not just the debt side.
+
+Four things the code does that reading §5 alone would not produce, each with a
+spec and each mutation-tested:
+
+- **`getDrawnIndex` short-circuits when the asset owes nothing** — on the
+  _asset's_ totals, not the user's, and on both share counts rather than either.
+  Without it every idle asset's index creeps upward.
+- **`unrealizedFees` rounds each side of its difference separately** —
+  `fromRayUp(after) − fromRayUp(before)`, not `fromRayUp(after − before)`. The two
+  agree until both sides have a remainder and the later one's is larger.
+- **The debt components are rounded before they are summed**, which is what
+  `Spoke.getUserDebt` does. Rounding the total once instead is a wei light.
+- **A negative premium throws rather than returning a number.**
+  `premiumOffsetRay` is `int200` and genuinely negative, so the subtraction can go
+  either way — but the contract closes it with `.toUint256()`, which reverts. A
+  negative here means the mirror is wrong, not that the formula needs a signed
+  branch. (The plan for this increment had it down as a rounding trap; reading
+  `Premium.sol` showed it is not reachable.)
+
+### Reading it
+
+`Position` keeps its shares and gains `asset` and `value`. Both are **null
+together**, and only when the join has nothing to offer — a reserve the registry
+has not seen, or a Hub asset with no checkpoint yet. A zero there would be
+indistinguishable from a real zero balance.
+
+`netSuppliedAmount` stays beside `value.suppliedAmount` rather than being
+replaced by it: one is cost basis, the other is current worth, and the difference
+between them is interest.
+
+**Every page carries the instant it was valued at.** `asOf` defaults to now,
+which is the same choice the chain makes — `getUserDebt` at `latest` is stored
+shares times an index extrapolated to the head block. Naming it is what makes a
+response reproducible and what lets reconciliation pin both sides to one block.
+The shares are as of whatever the indexer has folded, which is a different clock;
+reporting `valuedAt` keeps the two from being silently conflated.
+
+**Two `LEFT JOIN`s, where the collateral flag got a `UNION ALL`.** That one was
+event-grain and unbounded; these are the registry and the Hub's asset list — 14
+and 17 rows, bounded by listings rather than by history. Measured rather than
+argued: at 200,000 positions, 37x mainnet, the joins take a median page from
+9.5 ms to 18.4 ms. Roughly double, on a query fast enough that doubling is 9 ms,
+and it buys away two more round trips.
+
+### Verification
+
+**36 of 36 exact against the chain**, and this is the one that matters most. The
+arithmetic is fed the chain's own `getAsset` and `getUserPosition` for real
+mainnet positions at a pinned block, and its output compared to
+`getUserSuppliedAssets` and `getUserDebt` — five wallets, twelve positions, three
+fields each, zero wei of drift. No ClickHouse, no indexing: this isolates the
+formulas from everything else.
+
+**Eleven mutation tests, each turning its spec red** — every rounding direction,
+the virtual-share padding, both index short-circuits, the separately-rounded fee
+difference, the deficit and swept terms, and the negative-premium throw. The
+eleventh was added _because_ the first pass missed it: the original fee vector
+used values that divide evenly, so both roundings agreed and the mutant survived.
+
+What none of that covers is the two being wired together — a reserve resolved to
+the wrong asset, a checkpoint read from the wrong column. That is
+`reconcile:positions`, and it needs an archive RPC, because the registry comes
+from `AddReserve` at the Spoke's genesis. The premium branch stays synthetic-only
+either way: it has never been non-zero on mainnet (§5.4).
+
 ## Operational shape
 
 The pieces that exist because this is meant to run in Kubernetes, not on a laptop:
@@ -1268,14 +1370,11 @@ Deliberate, in rough order of what comes next.
   Spoke's fourteen reserves sit at `CF = 0`, so the flag alone overstates collateral for those. It is
   a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
   highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
-- **Valuation on the read path**, which is the last piece before a balance is a number. Both inputs
-  are indexed now: `PositionStore` has the shares and `HubAssetStore` has the index. What is missing
-  is the `reserveId → (assetId, hub)` registry that joins them — a projection of `AddReserve`, which
-  the Spoke ledger already stores — and the §5.1/§5.2 arithmetic. Three traps to respect: rounding is
-  _up_ on the debt side and _down_ on the supply side, `premiumRay` is signed so BigInt truncation is
-  not `ceil`, and `getDrawnIndex` short-circuits when both share counts are zero. `unrealizedFees` is
-  the one formula the analysis summarises rather than states, so it gets transcribed from
-  `AssetLogic` at the pinned commit rather than reconstructed.
+- **The two reconciliations that need an archive RPC.** `reconcile:positions` is the composition
+  check — the store's valued output against `getUserSuppliedAssets` and `getUserDebt` — and it cannot
+  run without full history, because the reserve registry comes from `AddReserve` at the Spoke's
+  genesis. Its two halves are each verified on their own: the arithmetic 36/36 exact against the
+  chain, the mirror at zero drift in the delta form. What is unproven is the wiring between them.
 - **The absolute Hub reconciliation.** `reconcile:hub` runs today in its delta form, which a public
   endpoint's ~127-block state window bounds to one asset or two. `--absolute` compares all 17 across
   every field but needs an archive RPC to have backfilled the fold first. It is the check that
