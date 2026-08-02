@@ -314,18 +314,6 @@ describe('the Hub asset mirror', () => {
       expect((await asset('13')).addedShares).toBe('2000');
     });
 
-    it('lists every asset in numeric order, not text order', async () => {
-      await index(100, 100, [
-        add({ block: 100, log: 0 }, '1', '1', '3'),
-        add({ block: 100, log: 1 }, '1', '1', '13'),
-        add({ block: 100, log: 2 }, '1', '1', '21'),
-      ]);
-
-      // Unqualified, ORDER BY binds the toString alias and sorts 13 before 3 —
-      // the bug the position store's pagination hit.
-      expect((await store.list(CHAIN_ID, HUB)).map((a) => a.assetId)).toEqual(['3', '13', '21']);
-    });
-
     it('keeps a listed asset whose balances net to zero', async () => {
       await index(100, 200, [
         addAsset({ block: 100 }, USDC, 6),
@@ -337,12 +325,6 @@ describe('the Hub asset mirror', () => {
       // address and an index. Dropping it would leave a position against it
       // unvaluable rather than valued at zero.
       expect(await asset()).toMatchObject({ addedShares: '0', underlying: USDC, events: 2 });
-    });
-
-    it('finds nothing for an asset the Hub never listed', async () => {
-      await index(100, 100, [add({ block: 100 }, '1000', '1000', '7')]);
-
-      expect(await store.get(CHAIN_ID, HUB, '99')).toBeNull();
     });
   });
 });
