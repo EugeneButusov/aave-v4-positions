@@ -3,14 +3,33 @@ import type { Address } from '@packages/indexing';
 import type { Position } from './position';
 
 /**
- * One wallet's positions on one Spoke.
+ * Where a page stopped: the sorting key below `(chain_id, user)`, and nothing
+ * else.
  *
- * **`user` and `spoke` are required**, which makes this a lookup rather than a
- * scan. Both are load-bearing: the sorting key leads with `user`, so pinning it
- * turns every page into a seek; and a Spoke is an isolated margin account with
- * its own collateral factors, oracle and health factor (§12.3), so positions
- * from two of them are not one list. Blending them is wrong in the one direction
- * that matters — it hides an imminent liquidation behind unrelated collateral.
+ * A plain key rather than an opaque token. Signing one so a caller cannot forge
+ * or carry it between listings is a property of *publishing* it, not of paging,
+ * and it lives with whoever publishes it — for the HTTP API, in `apps/api`.
+ * Nothing in this package holds a signing key or knows what a cursor looks like.
+ */
+export interface PositionKey {
+  readonly spoke: Address;
+  readonly reserveId: string;
+}
+
+/**
+ * One wallet's positions, on one Spoke or on all of them.
+ *
+ * **`user` is required**, which makes this a lookup rather than a scan: with
+ * `chainId` it is the leading pair of the sorting key, so pinning it turns every
+ * page into a seek into contiguous rows.
+ *
+ * **`spoke` is optional, and what it narrows is the listing, never the
+ * arithmetic.** A Spoke is an isolated margin account with its own collateral
+ * factors, oracle and health factor (§12.3), so *summing* across two of them is
+ * wrong in the one direction that matters — it hides an imminent liquidation
+ * behind unrelated collateral. Listing them together is fine, because every row
+ * names the Spoke it came from. Nothing here is aggregated, and anything that
+ * ever aggregates must do it per Spoke.
  *
  * Cross-wallet questions ("largest open positions") are analytics over the same
  * view, not a mode of this port.
@@ -19,10 +38,11 @@ export interface PositionQuery {
   readonly chainId: number;
   /** Lower-cased by the store, so a checksummed address from a caller still matches. */
   readonly user: Address;
-  readonly spoke: Address;
+  /** Omitted lists every Spoke this wallet has touched. */
+  readonly spoke?: Address;
   readonly limit: number;
-  /** Opaque; hand back {@link PositionPage.nextCursor} verbatim. */
-  readonly cursor?: string;
+  /** Resume point, already verified by whoever owns the wire format. */
+  readonly after?: PositionKey;
   /**
    * Unix seconds to value the page at. Defaults to now.
    *
@@ -47,8 +67,8 @@ export interface PositionPage {
    * the whole page, so two positions in it cannot disagree about the time.
    */
   readonly valuedAt: number;
-  /** `null` on the last page. Absence is the end, not an empty string. */
-  readonly nextCursor: string | null;
+  /** `null` on the last page. Absence is the end, not an empty key. */
+  readonly next: PositionKey | null;
 }
 
 /**

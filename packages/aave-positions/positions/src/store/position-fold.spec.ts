@@ -7,7 +7,6 @@ import { splitStatements } from '@packages/migrations';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore, POSITION_MIGRATIONS_DIR } from './clickhouse-position-store';
-import { PositionCursorCodec } from './position-cursor';
 import type { Position } from './position';
 import {
   ALICE,
@@ -104,10 +103,7 @@ describe('the position fold', () => {
   beforeAll(async () => {
     client = await migratedDatabase(DATABASE);
     events = new ClickHouseSpokeEventStore(client);
-    store = new ClickHousePositionStore(
-      client,
-      new PositionCursorCodec('spec-cursor-secret'.padEnd(32, '.')),
-    );
+    store = new ClickHousePositionStore(client);
   });
 
   afterAll(async () => {

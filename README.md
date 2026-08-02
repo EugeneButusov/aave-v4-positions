@@ -997,40 +997,6 @@ the way. A resuming indexer does not, so adding a projection to a populated ledg
 the same processors, and therefore the same revert-then-append, without touching the cursor. That it
 moves nothing is what makes it safe to do while the indexer is running.
 
-### Reading it
-
-`PositionStore.list` answers one question: **one wallet's positions on one Spoke.** `user` and `spoke`
-are required, not optional filters. Both earn it — together with `chain_id` they are the entire
-sorting-key prefix above `reserve_id`, so a page is a seek into contiguous rows rather than a filter
-over everyone's; and a Spoke is an isolated margin account with its own collateral factors, oracle and
-health factor (§12.3), so two of them are not one list. Cross-wallet questions are analytics over the
-same view, not a mode of this port.
-
-Paging is by **keyset, not `OFFSET`**. With the wallet and Spoke pinned, the resume point is a single
-`reserve_id`. `OFFSET n` would re-run the aggregation to discard `n` rows, and it shifts under
-concurrent writes: a position crossing a page boundary while the indexer advances would be returned
-twice or skipped.
-
-**Cursors are HMAC-signed, with the listing mixed into the signature.** Position data is public, so
-this is neither confidentiality nor access control — a caller can already ask for any wallet. It buys
-two things: the cursor becomes a genuinely opaque contract, so its encoding can change without
-breaking anyone who hand-rolled one; and a resume point cannot be carried between listings. That
-second one is the real defect a bare signature would leave: unsigned, Alice's cursor is a well-formed
-reserve id in Bob's listing, and his first page would silently start past it. Signing
-`(chainId, user, spoke)` alongside the reserve id makes switching listings fail the same check as
-tampering, and keeps the cursor one field long. HMAC rather than a JWT, which would add a header,
-algorithm negotiation and the `alg: none` footgun to protect a single integer. The key is
-configuration and **must be identical across replicas** — a per-process secret gives pagination that
-fails only under load.
-
-Only open positions come back — §12.1: a position exists while its shares are non-zero. The filter is
-`!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
-§9 to catch instead of vanishing behind the filter that hides closed positions.
-
-**Balances are shares.** Converting them to assets needs the Hub's interest index and no Hub event is
-ingested yet, so `netSuppliedAmount` is the only figure in asset units — and it is a _flow_, not a
-balance, because between events the index accrues and emits nothing (§5).
-
 ### What it costs
 
 Counted on a full mainnet backfill, genesis to head 25,666,105 — 25,775 ledger rows folding into
@@ -1239,6 +1205,38 @@ spec and each mutation-tested:
   `Premium.sol` showed it is not reachable.)
 
 ### Reading it
+
+`PositionStore.list` answers one question: **one wallet's positions**, on one Spoke or on all of them.
+`user` is required, not an optional filter — together with `chain_id` it is the leading pair of the
+sorting key, so a page is a seek into contiguous rows rather than a filter over everyone's.
+Cross-wallet questions are analytics over the same view, not a mode of this port.
+
+`spoke` is optional, and **what it narrows is the listing, never the arithmetic.** A Spoke is an
+isolated margin account with its own collateral factors, oracle and health factor (§12.3), so
+_summing_ across two of them is wrong in the one direction that matters — it hides an imminent
+liquidation behind unrelated collateral. Listing them together is fine, because every row names the
+Spoke it came from, and the same `reserve_id` on two Spokes stays two positions. Nothing here is
+aggregated, and anything that ever aggregates has to do it per Spoke.
+
+Paging is by **keyset, not `OFFSET`**. With the wallet pinned, the resume point is what the sorting
+key leaves free: `(spoke, reserve_id)`. `OFFSET n` would re-run the aggregation to discard `n` rows,
+and it shifts under concurrent writes: a position crossing a page boundary while the indexer advances
+would be returned twice or skipped. The pair is compared as a pair even when `spoke` is pinned and its
+half is therefore constant — one comparison rather than two branches, because a `reserve_id`-only
+special case would read a resume point from one Spoke against another's rows if the two ever
+disagreed.
+
+**Signing the resume point is the publisher's job, not the store's.** `PositionStore` takes and
+returns a `PositionKey`; keyset paging is how the database resumes a scan, and it is the same page key
+whether a CLI reconciliation asks for it or an HTTP request does. Making that key opaque and
+unforgeable is a property of _publishing_ it — it exists because a service hands the key to someone it
+does not trust and takes it back again — so it belongs with the service that does, not with the
+package that reads rows. Nothing under `packages/` holds a signing key or knows what a cursor looks
+like.
+
+Only open positions come back — §12.1: a position exists while its shares are non-zero. The filter is
+`!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
+§9 to catch instead of vanishing behind the filter that hides closed positions.
 
 `Position` keeps its shares and gains `asset` and `value`. Both are **null
 together**, and only when the join has nothing to offer — a reserve the registry
