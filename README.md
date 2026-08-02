@@ -11,9 +11,11 @@ against those findings rather than v3 intuition.
 
 ## Status
 
-The **indexing framework plus real event ingestion**. The workspace, both services, the test and
-lint toolchain, the operational shape a Kubernetes deployment expects — and a loop that walks
-Ethereum mainnet decoding Aave v4 Spoke position events into an append-only ClickHouse table.
+The **indexing framework, real event ingestion, and the fold that turns it into positions**. The
+workspace, both services, the test and lint toolchain, the operational shape a Kubernetes deployment
+expects — and a loop that walks Ethereum mainnet decoding Aave v4 Spoke position events into an
+append-only ClickHouse table, projected into per-wallet balances that survive a reorg without any
+code being told one happened.
 
 **Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
 logging, liveness/readiness probes, graceful drain, OpenAPI docs, Vitest, oxlint + Prettier,
@@ -22,11 +24,13 @@ cursor and processor seams, and hash-chain reorg detection over a retained heade
 detected fork re-reported on the next start until it has actually been applied; the shared ClickHouse
 layer of client, readiness probe and [migration runner](#schema-and-migrations); and
 [event ingestion](#event-ingestion) — the eight Main Spoke events that move a position, decoded
-against the official ABI and stored so the position fold can read them.
+against the official ABI and stored as an append-only ledger; and [the position fold](#the-position-fold)
+over that ledger, with a keyset-paginated store to read it.
 
-**Not yet:** the position fold itself, Core Hub events and therefore any valuation, prices, health
-factors, the positions endpoints, durable cursor persistence, Kubernetes manifests. The API still
-serves one stub endpoint. See [Not here yet](#not-here-yet).
+**Not yet:** Core Hub events and therefore any valuation, the token address, position _type_ as
+§12.1 defines it, prices, health factors, the positions endpoints, durable cursor persistence,
+Kubernetes manifests. Balances are shares, and the API still serves one stub endpoint. See
+[Not here yet](#not-here-yet).
 
 ## Layout
 
@@ -50,7 +54,8 @@ serves one stub endpoint. See [Not here yet](#not-here-yet).
 │   │       └── test-support/    fakes, exported so consumers test against them
 │   ├── ops/                 probes, logging, graceful shutdown — no domain logic
 │   └── aave-positions/      packages that know about Aave
-│       └── events/          ABI binding, decoder, append-only event store
+│       ├── events/          ABI binding, decoder, append-only event store
+│       └── positions/       the fold over that log, and the store that reads it
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
@@ -81,10 +86,16 @@ this package never becomes a catalogue of every table in the system.
 forks and cursors, and nothing about Aave — a processor is something a consumer writes. It had to
 leave `apps/indexer` for that to be true at all: a package cannot import from an app.
 
-`@aave-positions/events` is the first package on the other side of that line, and the only one so
-far. It ships `SpokeEventsModule`: the ClickHouse client, the event store and the block processor
-that fills it, behind one `forRootAsync`. The application says which Spoke to follow and hands the
-exported processor to the loop; it assembles none of the parts.
+`@aave-positions/events` is the first package on the other side of that line. It ships
+`SpokeEventsModule`: the ClickHouse client, the event store and the block processor that fills it,
+behind one `forRootAsync`. The application says which Spoke to follow and hands the exported
+processor to the loop; it assembles none of the parts.
+
+`@aave-positions/positions` is [the fold](#the-position-fold) over that log: materialized views that
+turn events into balances, and a read store over them. It is deliberately thin next to the events
+package, and the asymmetry is the design — ingestion is code, so that package owns a processor and a
+write path, while this one owns a query, because the database maintains the projection. There is
+nothing here to start and nothing to keep in step with the indexer.
 
 `apps/indexer` is left with about 310 lines: `main.ts`, `AppModule`, env validation and the
 migration entry point. Everything it _does_ comes from the packages it wires together, which is what
@@ -304,7 +315,10 @@ would think to test until it silently truncated a migration. A table and the vie
 therefore two files, which also means each is recorded and retried independently.
 
 Each package owns the migrations for the tables it defines — `spoke_events` and its view belong to
-the events package — and the application names the directories that deploy together. The runner orders by ordinal _across_ directories rather than
+the events package, the projections over it to the positions package — and the application names the
+directories that deploy together. That cross-directory ordering is load-bearing rather than tidy: the
+projections read a table another package creates, and `010 > 002` is the entire guarantee that they
+are created after it. The runner orders by ordinal _across_ directories rather than
 grouping by package, and rejects a set whose `NNN_` ordinals collide, naming both sides. Without
 that last part two packages could each reach for `002` without either author noticing, and the apply
 order would quietly depend on how the application happened to list the directories.
@@ -615,6 +629,166 @@ bug is repairable by re-decoding what is already stored rather than re-fetching 
 Verified end to end against mainnet: the same block range was dispatched twice across a restart and
 the table holds one generation of it — 107 live rows, zero duplicate keys, zero mutations.
 
+## The position fold
+
+`@aave-positions/positions` turns that ledger into balances. It contains no ingestion code at all —
+the projection is materialized views, so the database maintains it, and a reorg repairs it without
+anything in this package hearing about the reorg.
+
+**A position is keyed `(chain_id, user, spoke, reserve_id)`**, §12.1's identity. `reserve_id` is the
+one field that means the same thing on all eight events, and a reserve is Spoke-scoped: the same
+underlying on two Spokes is two positions with independent risk config and independent health factors
+(§12.3), so the Spoke is part of the key rather than a filter. The sorting key leads with `user`,
+where the ledger's leads with the block — different access pattern, different table.
+
+Not keyed on the token address, because **no Spoke event carries one**. `AddReserve(reserveId,
+assetId, hub)` indexes all three of its parameters and has no `underlying`; the ERC-20 address is on
+the Hub's `AddAsset`, so it arrives with Hub ingestion. Until then a position resolves to an
+`assetId` and a `hub` through a fourteen-row registry, joined at read time.
+
+### One table per kind of aggregate
+
+Retraction propagates for free to any aggregate that is **a group under addition**. The projection of
+a `sign = -1` row is the negation of the projection of its `+1` twin, so sums cancel with no
+coordination and no ordering assumption — which is the whole reason idempotence and reorg repair need
+no code here. Every share, every amount and the event count are such aggregates, and they live
+pre-aggregated in `user_positions`, a `SummingMergeTree` with no `sign` column at all: the values
+arrive already sign-multiplied.
+
+`using_as_collateral` is not additive, and **no engine holds a latest-wins fact pre-aggregated under
+retraction.** All three candidates were measured rather than argued away:
+
+| approach                                  | what it does when the latest flag is retracted                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `AggregatingMergeTree(argMaxState)`       | no operation removes a contribution — the `-1` reinforces the state                        |
+| `ReplacingMergeTree(version, is_deleted)` | the tombstone deletes the **key**, so the position loses its flag rather than falling back |
+| `argMaxIf(flag, (block, log), sign = 1)`  | returns the retracted event — measured `0` where the answer is `1`                         |
+
+The third is the interesting one: a retraction is a _pair_, and the `+1` twin still carries
+`sign = 1`. **Liveness is a property of the `(key, version)` group, not of a row** — which is exactly
+what `GROUP BY … version HAVING sum(sign) > 0` establishes. So the flag stays at event grain in
+`user_position_flags`, collapsing exactly as the ledger does, and is `argMax`ed at read time over
+what survives.
+
+**And `version` is not the ordering to `argMax` on.** Two orderings are in play: `version` orders
+_dispatches_ (`Date.now()`, stamped per batch, whose job is pairing), while `(block_number,
+log_index)` orders _chain events_, which is what "the current flag" means. Ordering by version fails
+twice over, both measured — without the collapse it keeps the retracted event anyway, since the
+`(+1, −1)` pair sits at the highest version; and with the collapse it still reads the stale flag as
+soon as a range is re-dispatched out of block order, which the loop does whenever a later processor
+asks to retry.
+
+### One view per event
+
+| view                   | position                | shares                          | amount               |
+| ---------------------- | ----------------------- | ------------------------------- | -------------------- |
+| `Supply`               | `user`, `reserveId`     | `+suppliedShares`               | `+suppliedAmount`    |
+| `Withdraw`             | `user`, `reserveId`     | `−withdrawnShares`              | `−withdrawnAmount`   |
+| `Borrow`               | `user`, `reserveId`     | `+drawnShares`                  | `+drawnAmount`       |
+| `Repay`                | `user`, `reserveId`     | `−drawnShares`, `+premiumDelta` | `−totalAmountRepaid` |
+| `ReportDeficit`        | `user`, `reserveId`     | `−drawnShares`, `+premiumDelta` | —                    |
+| `LiquidationCall` ×3   | see below               |                                 |                      |
+| `SetUsingAsCollateral` | → `user_position_flags` |                                 |                      |
+| `AddReserve`           | → `spoke_reserves`      |                                 |                      |
+
+**One `LiquidationCall` log affects up to three positions**, so it gets three views rather than one:
+the borrower's collateral (`−collateralSharesLiquidated` on `collateralReserveId`), the borrower's
+debt (`−drawnSharesLiquidated` on `debtReserveId`), and the liquidator's collateral
+(`+collateralSharesToLiquidator`, only when `receiveShares`). That third leg is §4.1's trap: the
+collateral never leaves the Hub, so the liquidator's position grows with **no `Supply` event anywhere
+in the trace**, and crediting supplied shares only on `Supply` silently under-counts every
+liquidator. It has fired 0 times in 90 mainnet liquidations, which is the argument for folding it now
+— it cannot be tested against production data when it first appears.
+
+No leg discriminator column is needed, and that is a consequence of the engine choice: a
+self-collateralised liquidation puts the first two legs on the same sorting key, and a
+`SummingMergeTree` adds them into one row carrying both deltas. Under a collapsing engine two `+1`
+rows at one key would not have been safe.
+
+### Three things measured, one of which changed the design
+
+**`JSONExtractInt` returns `0`, not a truncation.** Above Int64 max it yields zero, and below it
+yields the right answer — so it is correct for small positions and silently empties large ones, which
+is the worst shape a bug can have. A real fixture `Repay` carries 422,166,581,625,087,607,993, well
+past it. Every projection parses `JSONExtractString` → `toInt256`, which throws on anything it cannot
+read rather than writing a zero.
+
+**The read view is a `UNION ALL`, not a `JOIN`.** ClickHouse has no index-seek join: every hash
+variant reads the entire right side into memory to build a hash table, and `full_sorting_merge` sorts
+both sides rather than exploiting that they are already ordered by the join key. A `LEFT JOIN` would
+scan, aggregate and hash the whole flag table on every query unless the planner pushed the predicate
+into it — and pushdown through a join is the fragile case, where pushdown into `UNION ALL` branches is
+not. Concatenating also costs nothing, because `SummingMergeTree` merges lazily and the `GROUP BY` was
+required anyway; the flag rows just join an aggregation that was already happening.
+
+**A projection that misses a row cannot be repaired by retrying.** When a materialized view throws,
+the insert reports failure but **the ledger row is committed and the projection row is not** —
+measured, 1 against 0. The range then jams, because the revert copies the same body back for the
+projection to reject again. Worse, if the projection is later fixed, the next dispatch reverts a row
+it never received and the position ends up short by exactly that event: measured `0` where the answer
+is `100`. Recovery is truncate-and-replay, not a retry and not a merge — the same remedy as the next
+paragraph, and a spec pins each step.
+
+**There are no backfill migrations**, for the same reason. A materialized view does not see rows
+written before it existed, so adding a projection to a populated ledger needs a replay. Today a
+replay is a restart, because the in-memory cursor re-indexes from `INDEXER_START_BLOCK` every boot and
+the revert-then-append pass drives every view. The alternative — a duplicate `INSERT … SELECT` beside
+each view — can drift from its twin silently, visible only on a fresh backfill. This becomes a real
+operational step the moment the cursor goes durable.
+
+### Reading it
+
+`PositionStore.list` pages by **keyset, not `OFFSET`**. The cursor carries `(user, spoke, reserve_id)`
+and the predicate is a lexicographic tuple comparison — which is exactly the sorting key after
+`chain_id`, so resuming is a seek. `OFFSET n` would re-run the aggregation to discard `n` rows, and it
+shifts under concurrent writes: a position crossing a page boundary while the indexer advances would
+be returned twice or skipped.
+
+Only open positions come back — §12.1: a position exists while its shares are non-zero. The filter is
+`!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
+§9 to catch instead of vanishing behind the filter that hides closed positions.
+
+**Balances are shares.** Converting them to assets needs the Hub's interest index and no Hub event is
+ingested yet, so `netSuppliedAmount` is the only figure in asset units — and it is a _flow_, not a
+balance, because between events the index accrues and emits nothing (§5).
+
+### What it costs
+
+Measured against a full mainnet backfill, genesis 24,720,899 to the tip — 25,729 ledger rows folding
+into **5,347 positions, 3,380 of them open**, plus 3,240 flag rows and the 14-row registry. The event
+mix matches the catalogue the analysis extracted independently: 10,181 `Supply`, 5,360 `Borrow`,
+4,238 `Withdraw`, 3,240 `SetUsingAsCollateral`, 2,605 `Repay`, 91 `LiquidationCall`, 14 `AddReserve`.
+
+**On the write path**, which is where a materialized view actually charges you, since its SELECT runs
+in the inserting thread:
+
+|                                                                  | with the projections | without |
+| ---------------------------------------------------------------- | -------------------- | ------- |
+| retract a populated 1000-block range (148 events)                | ~23 ms               | ~12 ms  |
+| retract an empty range — most backfill chunks, every quiet block | ~8 ms, 0 rows read   | ~8 ms   |
+| build the whole fold from the ledger in one pass                 | 215 ms               | —       |
+
+So the projections roughly double a populated retraction and add about 11 ms to it, once per
+dispatched range, against a 12-second block time. The empty-range case is unchanged because there is
+nothing to project. The last row is the number that matters for the replay rule above: rebuilding
+every projection from the ledger is a fifth of a second, not an outage.
+
+**On the read path**, a per-wallet page is ~18 ms and the global "open positions ranked by size" is
+~19 ms. Worth being honest about what that does and does not prove: at 5,347 rows the whole
+`user_positions` table is a single 8,192-row granule, so a per-wallet read touches all of it no matter
+what. The pruning is visible in `EXPLAIN indexes = 1` — both `UNION ALL` branches drop to 1/5 and 2/4
+granules — but it cannot show up in rows read until the table outgrows one granule.
+
+**Reconciled against the chain**, which is the check that actually matters (§9): all 3,380 open
+positions compared to `getUserPosition` on the Spoke, **zero mismatches**, at zero tolerance (§9.2).
+The comparison ran at `latest` rather than a historical block — no archive node — having first
+confirmed no in-scope log landed between the fold's last event and the head, which makes the two
+states the same state rather than approximately so.
+
+Three paths that reconciliation cannot cover, because mainnet has never exercised them: the premium
+triple has never been non-zero, no liquidation has ever set `receiveShares`, and `ReportDeficit` has
+never fired. Those are pinned by synthetic specs and nothing else.
+
 ## Operational shape
 
 The pieces that exist because this is meant to run in Kubernetes, not on a laptop:
@@ -737,12 +911,14 @@ commit. Bypass with `LEFTHOOK=0`, or one job with `LEFTHOOK_EXCLUDE=<name>`.
 
 Deliberate, in rough order of what comes next.
 
-- **The position fold.** The immutable log is here; the derived projection that turns it into
-  balances is not (§8, §9). Note that a ClickHouse materialized view is an insert trigger, not a
-  query over `spoke_events_current`: it sees each row as written, retractions included, so the
-  target has to be sign-aware — a `SummingMergeTree` over `sign`-weighted shares rather than
-  something that reads the collapsed view.
-- **Core Hub events**, and so any valuation at all. Shares are stored; converting them to asset
+- **Position _type_, as §12.1 defines it.** Positions carry the user's own `SetUsingAsCollateral`
+  flag, but `collateral` also requires `collateralFactor > 0` under the user's pinned
+  `dynamicConfigKey` — and none of the four events that carry it are ingested. Five of the Main
+  Spoke's fourteen reserves sit at `CF = 0`, so the flag alone overstates collateral for those. It is
+  a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
+  highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
+- **Core Hub events**, and so any valuation at all — and with them the token address, which no Spoke
+  event carries. Shares are stored; converting them to asset
   amounts needs Hub state. `UpdateAsset` is the one worth having first and on its own — §5.3 shows
   the Hub emits its own interest index, which is what lets debt be valued with no archive node and
   no rate-strategy model. The 11-event Hub asset mirror is the highest-risk fold in the design
@@ -757,7 +933,13 @@ Deliberate, in rough order of what comes next.
   at-least-once window the design cannot close on its own. And it should bring a `BlockHeaderStore`
   adapter with it rather than leaving it to follow: those two are what make an unapplied reorg
   re-derivable, and a durable cursor over an in-memory window turns every cross-restart fork into
-  `unrecoverable`, which is strictly worse than today.
+  `unrecoverable`, which is strictly worse than today. It also ends the free replay the fold leans
+  on: today a projection added to a populated ledger heals on the next restart, and once the cursor
+  survives one, rebuilding a projection becomes an explicit operational step.
+- **Per-position history.** The fold writes one row per position, not one per event, so "why is this
+  number this" is answered by re-deriving from `spoke_events` rather than by reading it back. An
+  event-grain table slots in as one more materialized-view target if drift investigation (§9.4)
+  becomes routine rather than occasional.
 - **The price layer**, and therefore USD values and health factors — ~8 Chainlink aggregators plus
   two LST rebase sources (§7.4).
 - **The reconciliation job** designed in §9, which is what keeps the fold honest over time.

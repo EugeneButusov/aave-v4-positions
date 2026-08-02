@@ -18,14 +18,15 @@
   },
   "dependencies": {
     "@aave-positions/events": "workspace:*",
-    "@packages/clickhouse": "workspace:*",
-    "@packages/indexing": "workspace:*",
-    "@packages/ops": "workspace:*",
+    "@aave-positions/positions": "workspace:*",
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
     "@nestjs/config": "catalog:",
     "@nestjs/core": "catalog:",
     "@nestjs/platform-express": "catalog:",
+    "@packages/clickhouse": "workspace:*",
+    "@packages/indexing": "workspace:*",
+    "@packages/ops": "workspace:*",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:",
     "zod": "catalog:"

@@ -138,6 +138,9 @@ importers:
       '@aave-positions/events':
         specifier: workspace:*
         version: link:../../packages/aave-positions/events
+      '@aave-positions/positions':
+        specifier: workspace:*
+        version: link:../../packages/aave-positions/positions
       '@clickhouse/client':
         specifier: 'catalog:'
         version: 1.23.1
@@ -215,6 +218,34 @@ importers:
         specifier: 'catalog:'
         version: 2.55.10(typescript@7.0.2)(zod@4.4.3)
     devDependencies:
+      '@nestjs/testing':
+        specifier: 'catalog:'
+        version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
+
+  packages/aave-positions/positions:
+    dependencies:
+      '@clickhouse/client':
+        specifier: 'catalog:'
+        version: 1.23.1
+      '@nestjs/common':
+        specifier: 'catalog:'
+        version: 11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@packages/clickhouse':
+        specifier: workspace:*
+        version: link:../../clickhouse
+      '@packages/indexing':
+        specifier: workspace:*
+        version: link:../../indexing
+      reflect-metadata:
+        specifier: 'catalog:'
+        version: 0.2.2
+      rxjs:
+        specifier: 'catalog:'
+        version: 7.8.2
+    devDependencies:
+      '@aave-positions/events':
+        specifier: workspace:*
+        version: link:../events
       '@nestjs/testing':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)

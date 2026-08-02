@@ -17,6 +17,9 @@ export default defineConfig({
       '@aave-positions/events': fileURLToPath(
         new URL('../../packages/aave-positions/events/src/index.ts', import.meta.url),
       ),
+      '@aave-positions/positions': fileURLToPath(
+        new URL('../../packages/aave-positions/positions/src/index.ts', import.meta.url),
+      ),
       '@packages/clickhouse': fileURLToPath(
         new URL('../../packages/clickhouse/src/index.ts', import.meta.url),
       ),
