@@ -17,27 +17,15 @@ Two documents sit under this one, and they are where the reasoning lives:
 
 ## Why Aave v4
 
-The task is for Aave, so indexing Aave was the obvious subject. **v4 was the interesting choice** —
-it is new, its architecture is a real departure from v3, and v3 intuition misleads more than it
-helps. Every protocol claim this repository rests on was therefore read out of the contracts and
-marked `[verified]` in the analysis document rather than assumed.
+The task is for Aave, so the subject picked itself. **v4 rather than v3 because it is new** and
+Hub-and-Spoke makes it a different indexing problem rather than a familiar one — position state and
+the index that values it live on different contracts, no Spoke event names a token, and nothing may
+be summed across Spokes. Those three constraints, not preference, are what the schema, the two
+ledgers and the response shape below are built around.
 
-What makes it a genuinely different indexing problem is **Hub-and-Spoke**. One lending market is
-split across two contracts with two jobs: the Spoke holds the user's position, the Hub holds the
-asset. Three consequences shaped everything here.
-
-- **A Spoke event does not carry a balance.** It carries _shares_. A displayable amount is shares
-  multiplied by the Hub's interest index, accrued to an instant you have to name — so the API values
-  a page at one `valuedAt` and publishes the index it used, rather than pretending the events said
-  a number they did not.
-- **A Spoke event does not carry a token, either.** It carries a `reserveId`, which is the Spoke's
-  own local index. Getting to an ERC-20 address means the Spoke's reserve registry
-  (`reserveId → hub + assetId`) and then the Hub's asset state (`assetId → underlying`). That is why
-  there are two ledgers and two folds, not one.
-- **A wallet on two Spokes has two isolated margin accounts**, each with its own collateral factors,
-  oracle and health factor. They may be listed together and must never be summed — one blended
-  number hides a liquidation on one Spoke behind healthy collateral on the other. The response shape
-  enforces it: every row names its Spoke, and there is no portfolio-wide total.
+Since v3 intuition is the wrong prior here, every protocol claim this rests on was read out of the
+contracts and marked `[verified]` in the [analysis](docs/aave-v4-protocol-analysis.md) rather than
+assumed.
 
 ## Scope
 
