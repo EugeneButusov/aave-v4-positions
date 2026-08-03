@@ -49,8 +49,12 @@ assumed.
 
 ### What is not here
 
-Two things were in the plan, are described in the analysis, and did not land. Both for the same kind
-of reason — the honest version is a data-modelling increment, not an endpoint.
+Two things were in the plan, are worked out in the analysis, and did not land: **72 hours ran out**.
+
+That is the whole of the first reason, and worth saying plainly rather than dressing up. The second
+reason is why neither shipped in a cut-down form in the hours that were left — each turns out to want
+a data-modelling increment rather than an endpoint, so the quick version would have been a number I
+could not stand behind.
 
 **Per-Spoke totals and net worth.** Built and then parked
 ([#25](https://github.com/EugeneButusov/aave-v4-positions/pull/25)). Totalling on top of a paged read
