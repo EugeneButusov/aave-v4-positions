@@ -405,7 +405,7 @@ behaviour (§7.5), and a threshold set from feed cadence would mark healthy feed
 | `CHAIN_ID`                     | _required_ | Checked against what the providers report, on the first iteration.                                                   |
 | `RPC_URLS`                     | _required_ | Comma-separated, tried in order.                                                                                     |
 | `FINALITY_DEPTH`               | `128`      | The reorg detector's, never the loop's: it sets both the settled boundary and how many headers are retained.         |
-| `INDEXER_START_BLOCK`          | `24720891` | Core Hub genesis, the earlier of the two contracts. Read on a cold start and never again; see [Resuming](#resuming). |
+| `INDEXER_START_BLOCK`          | `24720891` | Core Hub genesis, the earlier of the two contracts — but **compose and both `.env.example` files set `24720899`**, the Main Spoke's, so that is what anything you actually run starts from. Read on a cold start and never again; see [Resuming](#resuming). |
 | `INDEXER_MAX_RANGE_SIZE`       | `1000`     | Blocks per dispatch while catching up.                                                                               |
 | `INDEXER_POLL_INTERVAL_MS`     | `4000`     |                                                                                                                      |
 | `INDEXER_RPC_TIMEOUT_MS`       | `10000`    |                                                                                                                      |
@@ -547,18 +547,22 @@ a processor does with a range. Each of those sits behind a port.
 
 **Three seams, all injected at module setup.**
 
+Every method that could want I/O is `T | Promise<T>`, so an adapter can be synchronous without
+wrapping its answer and the loop `await`s either.
+
 ```ts
 interface BlockProcessor {
+  readonly name: string; // what --processors matches, and what labels its span and duration metric
   // both inclusive [from, to]: index this range / discard this range
   onBlockRange(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
   onReorg(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
 }
 interface ReorgDetector {
   bootstrap(cursor): Promise<ReorgVerdict>; // vet the resume point against the chain
-  safeHead(observedHead): number; // what is settled
-  inspect(header): ReorgVerdict; // continuous | reorg | unrecoverable
-  commit(header);
-  rewindTo(lastValidBlock);
+  safeHead(observedHead): number | Promise<number>; // what is settled
+  inspect(header): ReorgVerdict | Promise<ReorgVerdict>; // continuous | reorg | unrecoverable
+  commit(header): void | Promise<void>;
+  rewindTo(lastValidBlock): void | Promise<void>;
 }
 interface CursorStore {
   load(chainId);
@@ -1179,7 +1183,8 @@ join materialises its whole right side by construction.
 
 That is harmless when the right side really is 17 rows. It is not, quite: producing those 17 reads
 **8 granules across 5 parts of `hub_asset_state`**, because `hub_assets_current` collapses and
-`argMax`es the lot on every page — 29,614 event-grain rows today. So **the read view is
+`argMax`es the lot on every page — 29,614 event-grain rows when this was measured, and 29,695 at
+block 25,669,898, which is the point. So **the read view is
 O(`UpdateAsset` history), not O(assets)**, and the join inherits that. Measured by rows read on a
 per-wallet page: positions alone 5,340; the registry join adds 14; the Hub join adds 29,631, of
 which 17 are the answer.
@@ -1192,11 +1197,19 @@ At 2,142 positions the whole `user_positions` table is a single 8,192-row granul
 read touches all of it no matter what. The pruning is visible in `EXPLAIN indexes = 1` — both
 `UNION ALL` branches drop granules — but it cannot show up in rows read until the table outgrows one.
 
-**Reconciled against the chain**, which is the check that actually matters (§9): all 3,380 open
-positions compared to `getUserPosition` on the Spoke, **zero mismatches**, at zero tolerance (§9.2).
-The comparison ran at `latest` rather than a historical block — no archive node — having first
-confirmed no in-scope log landed between the fold's last event and the head, which makes the two
-states the same state rather than approximately so.
+**Reconciled against the chain**, which is the check that actually matters (§9): all **3,380 open
+positions as the fold then held them** compared to `getUserPosition` on the Spoke, **zero
+mismatches**, at zero tolerance (§9.2). The comparison ran at `latest` rather than a historical
+block — no archive node — having first confirmed no in-scope log landed between the fold's last event
+and the head, which makes the two states the same state rather than approximately so.
+
+Two caveats on that number, because it is a record rather than a live claim. It is a **point-in-time
+count** — the same fold holds 5,383 positions at block 25,669,898 — and it was produced by a
+throwaway script, not by anything committed: `getUserPosition` is §9.1's shares-level check and is
+**not in this repository's ABI**, so nothing here reproduces it as written.
+`reconcile:positions` is the committed descendant, and it checks the layer above — valued amounts
+against `getUserSuppliedAssets` and `getUserDebt`. Closing that gap properly is the
+[continuous reconciliation](../README.md#what-i-would-improve-with-more-time) the README argues for.
 
 Three paths that reconciliation cannot cover, because mainnet has never exercised them: the premium
 triple has never been non-zero, no liquidation has ever set `receiveShares`, and `ReportDeficit` has
@@ -1456,7 +1469,8 @@ Spokes exist. It narrows the listing and nothing else — every row names its ow
 That is not an omission to fill in later without thought: §12.3 makes a blended health factor or net
 worth wrong in the one direction that matters, so anything aggregated has to be aggregated per Spoke.
 
-**Two clocks, and the response names both.** `sync` says how far the indexer has folded; `valuedAt`
+**Three clocks, and the response names all of them.** Two of them are here; the third arrives with
+prices below. `sync` says how far the indexer has folded; `valuedAt`
 says when the amounts were computed. Conflating them would be easy and wrong — shares advance when
 events land, amounts advance every second whether or not anything happened. `asOf` sets the second
 one and defaults to now, which is the same choice the chain makes; passing it explicitly is what
@@ -1846,13 +1860,22 @@ the results:
 
 ```ts
 HealthModule.forRoot({
+  // The same module object imported above, so this resolves the indicators
+  // already constructed rather than building a second graph. Both database
+  // probes reach it through that one import: SpokeEventsModule re-exports
+  // ClickHouse, and the indexing module re-exports both of them in turn.
   imports: [indexing],
-  indicators: [IndexerHealthIndicator],
+  indicators: [IndexerHealthIndicator, ClickHouseHealthIndicator, PostgresHealthIndicator],
 });
 ```
 
-That is the indexer's real registration, and the first use of the seam. It reports down on two
-conditions only: the loop has stopped, or it has made no progress for longer than
+That is the indexer's real registration, verbatim. **Readiness aggregates three checks there and two
+on the API** — the two database probes ship with `@packages/clickhouse` and `@packages/postgres`, so
+a service gets them by importing the client it already needed, and `IndexerHealthIndicator` is the
+only one written for this application.
+
+It is also the one worth describing, because the other two are the obvious thing. It reports down on
+two conditions only: the loop has stopped, or it has made no progress for longer than
 `INDEXER_STALL_THRESHOLD_MS`. Before the first iteration it reports **up** — an indicator that fails
 while starting would stop the pod ever becoming ready.
 
@@ -2084,7 +2107,8 @@ Deliberate, in rough order of what comes next.
   a real ingestion increment, not a query change: `RefreshAllUserDynamicConfig` alone is the
   highest-volume Spoke event at 8,696 logs, so it roughly doubles the ledger.
 - **A materialized `hub_assets_current`.** The read view collapses and `argMax`es all of
-  `hub_asset_state` — 29,614 rows today to produce 17 — on every page, because the valuation needs
+  `hub_asset_state` — 29,614 rows to produce 17 when measured, 29,695 by block 25,669,898 — on every
+  page, because the valuation needs
   the asset dimension whole and the join gives it nothing to prune by. That is O(`UpdateAsset`
   history), and `UpdateAsset` fires 434 times per 10k blocks, so the table grows about 1.5 million
   rows a year. Two shapes fit: an `AggregatingMergeTree` keyed by asset holding `argMaxState` per
