@@ -355,26 +355,3 @@ Beyond those four, in rough priority:
   number that matters is the gap between listed underlyings and stored rows.
 - **A materialized `hub_assets_current`.** The read view collapses 29,614 rows to produce 17 on every
   page, and that table grows about 1.5 million rows a year.
-
-## Repository map
-
-```
-apps/api/                 read API — controller, wire contract, cursors
-apps/indexer/             worker — configuration, wiring, and six CLIs. No domain logic
-packages/indexing/        the loop, chain ports, cursor, reorg detection — no Aave
-packages/clickhouse/      client, probe, migration runner
-packages/postgres/        the same, for the indexer's own state
-packages/migrations/      reads and orders .sql files; shared by both runners
-packages/ops/             probes, logging, graceful shutdown
-packages/telemetry/       the OpenTelemetry SDK, preloaded before anything else
-packages/token-metadata/  enrichment: what an ERC-20 calls itself
-packages/prices/          enrichment: what the Spoke's oracle prices it at
-packages/aave-positions/  the packages that know about Aave
-  ├── events/             ABI bindings, decoders, two append-only ledgers
-  └── positions/          the folds over them, and the stores that read them
-observability/            collector, Grafana provisioning, the dashboard
-docs/                     design notes and the protocol analysis
-```
-
-The scope says whether a package knows about Aave: `@packages/*` does not, `@aave-positions/*` does.
-[The full tour](docs/design-notes.md#layout) explains where each boundary came from.
