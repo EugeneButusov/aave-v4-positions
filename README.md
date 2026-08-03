@@ -283,8 +283,9 @@ in-memory double that runs the same contract suite as the real adapter.
 **Enrichment is merged in the service, never joined in SQL.** Labels and prices have their own
 source, cadence and failure mode, so they are read beside the position query rather than after it,
 and composed in `PositionsService`. `Position` and the ClickHouse store do not know either exists —
-which is the whole reason a third source would be additive.
-[Why](docs/design-notes.md#enrichment).
+which is the whole reason a third source is additive rather than a change.
+[Why](docs/design-notes.md#enrichment), and
+[the shape a third one takes](docs/design-notes.md#adding-another-enrichment-source).
 
 **Nothing on the read path calls a node.** Both folds exist to buy that property, and enrichment does
 not spend it: it writes a table the API reads rather than reaching for an RPC while answering a
@@ -296,48 +297,24 @@ and OpenTelemetry across all three signals — with the response's `x-request-id
 so a bug report leads straight to a span tree and the log lines under it.
 [Why](docs/design-notes.md#operational-shape).
 
-### Adding another enrichment source
-
-The two that exist are the worked examples — [`packages/token-metadata`](packages/token-metadata) and
-[`packages/prices`](packages/prices) — and they are deliberately the same shape:
-
-1. **A listing source**: one query that answers _what do we need this for_ (which underlyings are
-   listed, which reserves exist). It reads the indexer's tables but is not part of the fold.
-2. **A store port and a Postgres adapter**, plus a migration in the package's own directory. The
-   application names which directories deploy together; nothing central has to learn about the table.
-3. **A reader port and its adapter** for wherever the data actually comes from — a contract call, an
-   HTTP API, a file.
-4. **Something that keeps it current**: a `BlockProcessor` if arrivals are event-driven (token
-   metadata is pushed by `AddAsset`), or a timer if the source has its own cadence (prices are read
-   once a minute). Plus a CLI for repair and verification.
-5. **A merge in `PositionsService`**, read in parallel with the position query and mapped onto its
-   own nullable fields on the wire.
-
-The gap between steps 1 and 2 is the design: enrichment is **gap-driven and idempotent**. What to do
-next comes from the difference between "what is listed" and "what is stored", never from what a
-dispatch happened to observe — so a run that is skipped, interrupted or lost costs nothing, and the
-processor can return `ok()` unconditionally rather than being allowed to stall Aave ingestion.
-
-### Standalone datasets behind the same API surface
-
-The follow-up question in the brief — how to serve discrete data sets alongside the indexer's, without
-coupling to its pipeline — already has a partial answer in the repository, because the two enrichment
-packages _are_ that: separate schema, separate cadence, separate failure mode, joined in the service
-rather than in SQL, and invisible to the fold. Generalising it changes little.
-
-- **Model** it in its own package with its own store port and its own migration namespace. The
-  ordinal-collision check across directories is what keeps two packages from silently fighting over
-  `002`, and it is the reason no central schema file exists to become a bottleneck.
-- **Version** it on the payload, not by forking the route. `/api/v1` is the API contract's version;
-  a dataset additionally publishes its own `updatedAt` and staleness, the way `sync`, `valuedAt` and
-  `pricing` are three separate clocks today, so a caller can tell _which_ input is behind rather than
-  being handed one blended freshness number.
-- **Serve** it as its own controller under the same prefix, or as nullable fields composed into an
-  existing response — never as a SQL join against the indexer's tables. That is the actual
-  decoupling: if the dataset is missing, absent or stale, the field is null and the position still
-  serves. A join would make its availability the indexer's problem.
-
 ## What I would improve with more time
+
+**Continuous reconciliation against the chain, not a script someone remembers to run.** This is the
+one I would do first. Both checks exist and both pass — `reconcile:hub` compares the asset fold to
+the Hub's own `getAsset`, and `reconcile:positions` compares valued positions to
+`getUserSuppliedAssets` and `getUserDebt`, at zero tolerance, with both sides pinned to one block so
+accrual cannot be mistaken for drift. But they are **one-shot CLIs over a list of users you pass in**,
+so what the repository can currently say is "drift was zero the last time somebody looked" — and that
+is a weaker claim than it sounds, because the failure this guards against is silent by construction:
+a mis-folded transition produces plausible numbers, not an error.
+
+What it wants is a scheduled job: a rotating sample of open positions each cycle rather than the whole
+book, plus all seventeen Hub assets, publishing a mismatch count as a metric so the signal is
+_continuously zero_ instead of _zero on demand_. Two things shape it. Its output is an alert and a
+block range, never a mutation — repair here is replay, not patch — and the position half needs full
+history folded, so a cold environment needs an archive-capable RPC to backfill before the job means
+anything. The design is already written up in §9 of the analysis, including when it should run and
+why the tolerance is zero; what is missing is the thing that runs it.
 
 **Enrichment should be jobs, not a processor with a timer.** Today a run is triggered by the
 ingestion dispatch, holds newly listed tokens in an in-memory buffer, and backs off on a wall-clock
@@ -365,7 +342,7 @@ ranges a second, and the bottleneck may well be the endpoint rather than the ser
 exactly why it wants a measurement before a rewrite. The ledger tolerates concurrency already: writes
 are idempotent and the fold does not care what order rows arrive in.
 
-Beyond those three, in rough priority:
+Beyond those four, in rough priority:
 
 - **Kubernetes manifests**, and a CI job that builds the images — the probes, drain and JSON logs are
   shaped for them, but nothing currently fails if the `Dockerfile` rots.

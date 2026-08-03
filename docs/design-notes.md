@@ -1764,6 +1764,47 @@ resolved, with `decimals` cross-checked against `AaveV4Ethereum.ASSETS`. Same
 shape as the other reconciliations, and the same reason — it needs a node this
 repository does not ship.
 
+### Adding another enrichment source
+
+The two that exist are the worked examples — [`packages/token-metadata`](../packages/token-metadata) and
+[`packages/prices`](../packages/prices) — and they are deliberately the same shape:
+
+1. **A listing source**: one query that answers _what do we need this for_ (which underlyings are
+   listed, which reserves exist). It reads the indexer's tables but is not part of the fold.
+2. **A store port and a Postgres adapter**, plus a migration in the package's own directory. The
+   application names which directories deploy together; nothing central has to learn about the table.
+3. **A reader port and its adapter** for wherever the data actually comes from — a contract call, an
+   HTTP API, a file.
+4. **Something that keeps it current**: a `BlockProcessor` if arrivals are event-driven (token
+   metadata is pushed by `AddAsset`), or a timer if the source has its own cadence (prices are read
+   once a minute). Plus a CLI for repair and verification.
+5. **A merge in `PositionsService`**, read in parallel with the position query and mapped onto its
+   own nullable fields on the wire.
+
+The gap between steps 1 and 2 is the design: enrichment is **gap-driven and idempotent**. What to do
+next comes from the difference between "what is listed" and "what is stored", never from what a
+dispatch happened to observe — so a run that is skipped, interrupted or lost costs nothing, and the
+processor can return `ok()` unconditionally rather than being allowed to stall Aave ingestion.
+
+### Standalone datasets behind the same API surface
+
+The follow-up question in the brief — how to serve discrete data sets alongside the indexer's, without
+coupling to its pipeline — already has a partial answer in the repository, because the two enrichment
+packages _are_ that: separate schema, separate cadence, separate failure mode, joined in the service
+rather than in SQL, and invisible to the fold. Generalising it changes little.
+
+- **Model** it in its own package with its own store port and its own migration namespace. The
+  ordinal-collision check across directories is what keeps two packages from silently fighting over
+  `002`, and it is the reason no central schema file exists to become a bottleneck.
+- **Version** it on the payload, not by forking the route. `/api/v1` is the API contract's version;
+  a dataset additionally publishes its own `updatedAt` and staleness, the way `sync`, `valuedAt` and
+  `pricing` are three separate clocks today, so a caller can tell _which_ input is behind rather than
+  being handed one blended freshness number.
+- **Serve** it as its own controller under the same prefix, or as nullable fields composed into an
+  existing response — never as a SQL join against the indexer's tables. That is the actual
+  decoupling: if the dataset is missing, absent or stale, the field is null and the position still
+  serves. A join would make its availability the indexer's problem.
+
 ## Operational shape
 
 The pieces that exist because this is meant to run in Kubernetes, not on a laptop:
