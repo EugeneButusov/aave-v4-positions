@@ -1203,13 +1203,23 @@ mismatches**, at zero tolerance (§9.2). The comparison ran at `latest` rather t
 block — no archive node — having first confirmed no in-scope log landed between the fold's last event
 and the head, which makes the two states the same state rather than approximately so.
 
-Two caveats on that number, because it is a record rather than a live claim. It is a **point-in-time
-count** — the same fold holds 5,383 positions at block 25,669,898 — and it was produced by a
-throwaway script, not by anything committed: `getUserPosition` is §9.1's shares-level check and is
-**not in this repository's ABI**, so nothing here reproduces it as written.
-`reconcile:positions` is the committed descendant, and it checks the layer above — valued amounts
-against `getUserSuppliedAssets` and `getUserDebt`. Closing that gap properly is the
-[continuous reconciliation](../README.md#what-i-would-improve-with-more-time) the README argues for.
+One caveat on that number, because it is a record rather than a live claim: it is a **point-in-time
+count**, and the same fold holds 5,383 positions at block 25,669,898.
+
+**No committed command makes that particular call**, which is worth being straight about.
+`getUserPosition` returns the raw `UserPosition` struct — `drawnShares`, `premiumShares`,
+`premiumOffsetRay`, `suppliedShares`, `dynamicConfigKey` — and it is §9.1's _shares_-level check, the
+one that catches a missed log or a bad decode before any arithmetic runs on top of it. It is reachable
+(`SPOKE_ABI` is the address book's `ISpokeV4_ABI`, which carries it), but nothing here calls it:
+`reconcile:positions` checks the layer above, valued amounts against `getUserSuppliedAssets` and
+`getUserDebt`.
+
+Re-run by hand at block 25,738,877 with both sides pinned to it, the shares still agree exactly —
+`suppliedShares` 5168547488250327517 and `drawnShares` 6688270168 on the two open reserves of a
+195-event wallet, against a struct read straight off the Spoke, alongside the four valued fields
+`reconcile:positions` already covers. Twelve comparisons, zero drift. That the check has to be
+re-created by hand to say so is the argument for the
+[continuous reconciliation](../README.md#what-i-would-improve-with-more-time) the README puts first.
 
 Three paths that reconciliation cannot cover, because mainnet has never exercised them: the premium
 triple has never been non-zero, no liquidation has ever set `receiveShares`, and `ReportDeficit` has
