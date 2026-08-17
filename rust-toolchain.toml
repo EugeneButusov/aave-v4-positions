@@ -1,0 +1,7 @@
+# rustup reads this on its own, locally and on CI, so the pin lives here and
+# nowhere else. Cargo.toml's rust-version has to match.
+
+[toolchain]
+channel = "1.96.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

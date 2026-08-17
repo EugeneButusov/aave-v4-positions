@@ -101,4 +101,4 @@ FROM
         HAVING sum(sign) > 0
     )
 )
-GROUP BY chain_id, hub, asset_id
+GROUP BY chain_id, hub, asset_id;

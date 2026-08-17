@@ -88,3 +88,65 @@ jobs:
       # that only appears when writing output would otherwise reach main.
       - name: Build
         run: pnpm run build
+
+  # Its own job so a failure names itself, and so a cold Rust build does not land
+  # on the TypeScript gate's wall clock. No database services: nothing in the
+  # workspace talks to one yet. See docs/rust-migration.md.
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # No version argument: rustup reads rust-toolchain.toml, the same file a
+      # developer's shell reads. This step only makes the install visible in the
+      # log instead of hiding it inside the first cargo command.
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Cargo has no inheritance for `[lints]` or `publish`: a member that omits
+      # the line is silently exempt, with no warning from anything. The member
+      # list comes from cargo rather than a glob, so bins/* is covered the day it
+      # exists.
+      - name: Manifests inherit the workspace
+        run: |
+          bad=0
+          for manifest in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].manifest_path'); do
+            rel="${manifest#"$PWD/"}"
+            grep -qxF '[lints]' "$manifest" && grep -qxF 'workspace = true' "$manifest" \
+              || { echo "::error file=$rel::missing [lints] / workspace = true"; bad=1; }
+            grep -qxF 'publish.workspace = true' "$manifest" \
+              || { echo "::error file=$rel::missing publish.workspace = true"; bad=1; }
+          done
+          exit $bad
+
+      # Nothing in cargo ties the two together, so a bump to one and not the
+      # other resolves against a floor the toolchain does not enforce.
+      - name: Toolchain pin matches rust-version
+        run: |
+          pinned=$(grep -oE '^channel = "[^"]+"' rust-toolchain.toml | cut -d'"' -f2)
+          declared=$(grep -oE '^rust-version = "[^"]+"' Cargo.toml | cut -d'"' -f2)
+          case "$pinned" in
+            "$declared" | "$declared".*) ;;
+            *)
+              echo "::error file=Cargo.toml::rust-version $declared does not match rust-toolchain.toml channel $pinned"
+              exit 1
+              ;;
+          esac
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      # Same gap the TypeScript build step covers: clippy stops at `cargo check`,
+      # so a codegen or link fault would otherwise reach main.
+      - name: Build
+        run: cargo build --workspace --release

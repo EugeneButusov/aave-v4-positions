@@ -105,4 +105,4 @@ ORDER BY (chain_id, hub, asset_id, block_number, log_index)
 -- encodes. `rebuild` recomputes it from merged data instead of dropping it,
 -- which is what keeps it usable; the caveat that comes with that is the one
 -- spelled out on `count()` above.
-SETTINGS deduplicate_merge_projection_mode = 'rebuild'
+SETTINGS deduplicate_merge_projection_mode = 'rebuild';

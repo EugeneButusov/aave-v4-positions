@@ -3,6 +3,11 @@
 **/coverage
 **/*.tsbuildinfo
 
+# Nothing in this Dockerfile is Rust yet, but target/ enters the build context
+# the moment anyone runs cargo build, and it is the largest directory in the
+# repository by an order of magnitude.
+target
+
 .git
 .github
 docs

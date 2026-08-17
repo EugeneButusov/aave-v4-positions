@@ -1,9 +1,7 @@
 -- The projection of `AddReserve`, and the view that resolves it.
 --
 -- Two statements because they are one change: a registry nothing can read is
--- not a registry. The same `--@statement` marker the runner splits on.
-
---@statement
+-- not a registry. Each is terminated by `;`, which is what the runner splits on.
 
 -- All three parameters are indexed, so the whole event is in the topics — but
 -- it is read out of `body` like every other projection, because the decoder has
@@ -21,9 +19,7 @@ SELECT
     lower(JSONExtractString(body, 'hub'))          AS hub,
     sign
 FROM spoke_events
-WHERE event_name = 'AddReserve'
-
---@statement
+WHERE event_name = 'AddReserve';
 
 -- Latest listing wins, over rows the collapse has already filtered — the same
 -- shape as every other latest-wins read here, and ordered by chain order rather
@@ -45,4 +41,4 @@ FROM
     GROUP BY chain_id, spoke, reserve_id, block_number, log_index, version
     HAVING sum(sign) > 0
 )
-GROUP BY chain_id, spoke, reserve_id
+GROUP BY chain_id, spoke, reserve_id;

@@ -68,4 +68,4 @@ FROM
         HAVING sum(sign) > 0
     )
 )
-GROUP BY chain_id, user, spoke, reserve_id
+GROUP BY chain_id, user, spoke, reserve_id;

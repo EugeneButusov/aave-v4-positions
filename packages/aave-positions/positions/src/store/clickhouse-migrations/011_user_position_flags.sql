@@ -36,4 +36,4 @@ CREATE TABLE IF NOT EXISTS user_position_flags
 )
 ENGINE = VersionedCollapsingMergeTree(sign, version)
 PARTITION BY chain_id
-ORDER BY (chain_id, user, spoke, reserve_id, block_number, log_index)
+ORDER BY (chain_id, user, spoke, reserve_id, block_number, log_index);

@@ -28,3 +28,12 @@ pre-commit:
       glob: '*.{ts,mts,cts,js,mjs,cjs,json,md,yml,yaml}'
       run: pnpm exec prettier --write --ignore-unknown {staged_files}
       stage_fixed: true
+
+    # `rustfmt` and not `cargo fmt`: cargo-fmt hands rustfmt every target in the
+    # manifest, so `cargo fmt -- {staged_files}` would reformat and stage files
+    # nobody touched. Clippy is absent for the reason at the top of this file —
+    # a cold `cargo clippy --workspace` is neither per-file nor fast.
+    - name: rustfmt
+      glob: '*.rs'
+      run: rustfmt {staged_files}
+      stage_fixed: true

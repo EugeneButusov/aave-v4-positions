@@ -49,4 +49,4 @@ PARTITION BY chain_id
 -- Leads with `user` because the access pattern is "positions of this wallet",
 -- where the ledger's is "logs in this block range". Different table, different
 -- sorting key.
-ORDER BY (chain_id, user, spoke, reserve_id)
+ORDER BY (chain_id, user, spoke, reserve_id);

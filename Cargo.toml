@@ -1,0 +1,34 @@
+[workspace]
+# 3 for MSRV-aware resolution: `cargo update` respects rust-version rather than
+# silently raising the floor.
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+publish = false
+
+[workspace.dependencies]
+thiserror = "2.0.19"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Cast lints are pedantic's, allow-by-default: a lossy cast is this language's
+# silent wrong number.
+#
+# Absent on purpose: `arithmetic_side_effects` belongs on the valuation crate,
+# not every loop counter; `indexing_slicing` is not the
+# `noUncheckedIndexedAccess` analogue it resembles, since Rust panics where
+# TypeScript returns `undefined`.
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+cast_lossless = "deny"
+cast_possible_truncation = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unwrap_used = "deny"

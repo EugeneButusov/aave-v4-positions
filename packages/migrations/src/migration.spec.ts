@@ -65,48 +65,49 @@ describe('loadMigrations', () => {
 });
 
 describe('splitStatements', () => {
-  it('leaves a single statement alone', () => {
+  it('takes the terminator off, because the runner sends one statement per request', () => {
+    expect(splitStatements('CREATE TABLE a (x UInt8);')).toEqual(['CREATE TABLE a (x UInt8)']);
+  });
+
+  it('accepts a lone statement that was never terminated', () => {
+    // Every file here ends in `;`, but a runner that silently dropped the tail
+    // would lose a whole table to one missing character.
     expect(splitStatements('CREATE TABLE a (x UInt8)')).toEqual(['CREATE TABLE a (x UInt8)']);
   });
 
-  it('splits on the marker and trims each side', () => {
-    expect(
-      splitStatements('CREATE TABLE a (x UInt8)\n--@statement\nCREATE VIEW b AS SELECT 1\n'),
-    ).toEqual(['CREATE TABLE a (x UInt8)', 'CREATE VIEW b AS SELECT 1']);
+  it('splits on the terminator and trims each side', () => {
+    expect(splitStatements('CREATE TABLE a (x UInt8);\n\nCREATE VIEW b AS SELECT 1;\n')).toEqual([
+      'CREATE TABLE a (x UInt8)',
+      'CREATE VIEW b AS SELECT 1',
+    ]);
   });
 
-  it('keeps semicolons in comments and string literals out of it', () => {
-    const sql = `-- a comment; with a semicolon
-CREATE VIEW v AS SELECT CAST(NULL, 'Nullable(UInt8)') AS flag, 'has ; inside' AS s`;
-
-    // The reason the marker exists. Splitting on \`;\` would cut this in three,
-    // and both halves would be syntactically plausible enough to fail somewhere
-    // far from the cause — the failure the runner is written to avoid.
+  it.each([
+    ['a line comment', '-- a comment; with a semicolon\nCREATE VIEW v AS SELECT 1'],
+    ['a string literal', "CREATE VIEW v AS SELECT 'has ; inside' AS s"],
+    ['a backtick identifier', 'CREATE VIEW v AS SELECT 1 AS `has ; inside`'],
+    ['a double-quoted identifier', 'CREATE VIEW v AS SELECT 1 AS "has ; inside"'],
+  ])('does not cut on a semicolon inside %s', (_, sql) => {
+    // Nineteen of these live in the real corpus, all in comments. Cutting on one
+    // produces two halves plausible enough to fail far from the cause.
     expect(splitStatements(sql)).toEqual([sql]);
   });
 
-  it('ignores a marker that is not alone on its line', () => {
-    expect(splitStatements('SELECT 1 --@statement not a separator')).toHaveLength(1);
+  it('drops the prose a file opens with, rather than sending it as a query', () => {
+    // ClickHouse answers "Empty query" — from the migration runner, at deploy
+    // time. The header is only dropped when nothing but comments precedes the
+    // first `;`; otherwise it rides along with the statement, which is inert.
+    expect(splitStatements('-- what this file is\n-- and why\n')).toEqual([]);
   });
 
-  it('drops empty sections, so a trailing or doubled marker is harmless', () => {
-    expect(splitStatements('\n--@statement\nSELECT 1\n--@statement\n\n--@statement\n')).toEqual([
-      'SELECT 1',
-    ]);
-  });
-
-  it('drops a comment-only section, so a file can open with a header', () => {
-    // Otherwise the header is sent on its own and ClickHouse answers "Empty
-    // query" — from the migration runner, at deploy time.
-    expect(splitStatements('-- what this file is\n-- and why\n--@statement\nSELECT 1')).toEqual([
-      'SELECT 1',
-    ]);
-  });
-
-  it('keeps a statement that merely starts with a comment', () => {
+  it('keeps the comment that introduces a statement attached to it', () => {
     const sql = '-- why this view exists\nCREATE VIEW v AS SELECT 1';
 
-    expect(splitStatements(sql)).toEqual([sql]);
+    expect(splitStatements(`${sql};`)).toEqual([sql]);
+  });
+
+  it('is unbothered by a doubled or trailing terminator', () => {
+    expect(splitStatements(';;\nSELECT 1;;\n;')).toEqual(['SELECT 1']);
   });
 });
 

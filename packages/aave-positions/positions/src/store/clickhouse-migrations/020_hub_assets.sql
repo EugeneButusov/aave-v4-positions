@@ -57,4 +57,4 @@ CREATE TABLE IF NOT EXISTS hub_assets
 )
 ENGINE = SummingMergeTree
 PARTITION BY chain_id
-ORDER BY (chain_id, hub, asset_id)
+ORDER BY (chain_id, hub, asset_id);

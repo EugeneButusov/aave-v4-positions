@@ -55,4 +55,4 @@ CREATE TABLE IF NOT EXISTS token_metadata (
     -- failover list.
     fetched_at_block bigint      NOT NULL,
     PRIMARY KEY (chain_id, token)
-)
+);

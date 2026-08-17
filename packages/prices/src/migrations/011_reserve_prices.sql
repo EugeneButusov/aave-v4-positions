@@ -45,4 +45,4 @@ CREATE TABLE IF NOT EXISTS reserve_prices (
     -- rather than when some client thought it was.
     priced_at  timestamptz   NOT NULL DEFAULT now(),
     PRIMARY KEY (chain_id, spoke, reserve_id)
-)
+);
