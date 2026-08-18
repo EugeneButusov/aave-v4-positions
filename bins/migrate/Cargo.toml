@@ -1,0 +1,21 @@
+[package]
+name = "migrate"
+description = "Applies both schemas, then exits. The only thing in this workspace that issues DDL"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+clickhouse.workspace = true
+clickhouse-client.workspace = true
+postgres.workspace = true
+refinery.workspace = true
+refinery-core.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+tokio-postgres.workspace = true
+
+[lints]
+workspace = true

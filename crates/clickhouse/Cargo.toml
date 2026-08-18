@@ -1,0 +1,12 @@
+[package]
+name = "clickhouse-client"
+description = "The ClickHouse client this repository uses"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+clickhouse.workspace = true
+
+[lints]
+workspace = true
