@@ -1,8 +1,8 @@
 //! Teaching refinery to drive ClickHouse.
 //!
 //! refinery ships backends for Postgres, MySQL and SQLite. ClickHouse is not one
-//! of them, but the three traits below are all it takes — and fourteen of this
-//! deployment's eighteen migrations are ClickHouse, so the alternative was a
+//! of them, but the three traits below are all it takes — and thirty-five of this
+//! deployment's thirty-nine migrations are ClickHouse, so the alternative was a
 //! second hand-rolled runner beside refinery rather than none.
 
 use async_trait::async_trait;
@@ -11,8 +11,6 @@ use refinery_core::traits::r#async::{AsyncMigrate, AsyncQuery, AsyncTransaction}
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
-use crate::statements::split_statements;
-
 /// A ClickHouse client, in the shape refinery drives.
 pub struct ClickHouse(pub clickhouse::Client);
 
@@ -20,25 +18,24 @@ pub struct ClickHouse(pub clickhouse::Client);
 impl AsyncTransaction for ClickHouse {
     type Error = clickhouse::error::Error;
 
-    /// **The reason this crate still owns a statement splitter.** refinery hands
-    /// a migration's whole SQL as a single query, and ClickHouse's HTTP interface
-    /// refuses multi-statement bodies — `Multi-statements are not allowed`. So
-    /// each query is taken apart here before it is sent.
+    /// Each query is a whole migration file, sent as it stands.
     ///
-    /// There is no transaction, because ClickHouse has none for DDL. A file that
-    /// fails on its third statement leaves the first two behind and never reaches
-    /// refinery's ledger insert, so the retry runs it from the top — which is why
-    /// every statement in this repository is written `IF NOT EXISTS`.
+    /// ClickHouse's HTTP interface refuses a body holding more than one
+    /// statement — `Multi-statements are not allowed` — so every file here holds
+    /// exactly one, and the server is what enforces that. Leading prose and the
+    /// trailing `;` it is written with are both accepted.
+    ///
+    /// There is no transaction, because ClickHouse has none for DDL. One
+    /// statement per file makes that harmless: a migration either applied or did
+    /// not, so refinery's ledger cannot disagree with the schema.
     async fn execute<'a, T: Iterator<Item = &'a str> + Send>(
         &mut self,
         queries: T,
     ) -> Result<usize, Self::Error> {
         let mut count = 0;
         for query in queries {
-            for statement in split_statements(query) {
-                self.0.query(statement).execute().await?;
-                count += 1;
-            }
+            self.0.query(query).execute().await?;
+            count += 1;
         }
 
         Ok(count)
@@ -86,9 +83,9 @@ impl AsyncMigrate for ClickHouse {
 #[cfg(test)]
 mod tests {
     //! A real server, not a fake. What these assert is that the adapter drives
-    //! ClickHouse correctly — that a multi-statement file is taken apart, that a
-    //! re-run applies nothing, and that a failure part-way leaves what already
-    //! succeeded, which is the property Postgres does not have.
+    //! ClickHouse correctly — that a file goes over as written, that a re-run
+    //! applies nothing, and that a failure leaves the ledger agreeing with the
+    //! schema rather than ahead of it.
 
     use clickhouse_client::{Config, client};
     use refinery_core::Runner;
@@ -145,8 +142,9 @@ mod tests {
         Migration::unapplied(name, sql).unwrap()
     }
 
-    const WIDGETS: &str =
-        "CREATE TABLE IF NOT EXISTS widgets (id String) ENGINE = MergeTree ORDER BY id;";
+    /// Shaped like the files on disk: prose first, one statement, `;` at the end.
+    const WIDGETS: &str = "-- A comment, because every real migration opens with one.\n\
+                           CREATE TABLE IF NOT EXISTS widgets (id String) ENGINE = MergeTree ORDER BY id;";
     const GADGETS: &str =
         "CREATE TABLE IF NOT EXISTS gadgets (id String) ENGINE = MergeTree ORDER BY id;";
 
@@ -187,40 +185,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn takes_a_multi_statement_file_apart() {
+    async fn refuses_a_migration_holding_two_statements() {
         let mut target = db("multi_statement").await;
-        // The case the adapter exists for: refinery passes this whole string as
-        // one query, and ClickHouse would reject it as a multi-statement body.
-        let both = at(
-            "V1__widgets",
-            "CREATE TABLE IF NOT EXISTS widgets (id String) ENGINE = MergeTree ORDER BY id;\n\
-             CREATE TABLE IF NOT EXISTS gadgets (id String) ENGINE = MergeTree ORDER BY id;",
-        );
+        let two = at("V1__widgets", &format!("{WIDGETS}\n{GADGETS}"));
 
-        assert_eq!(run(&mut target, &[both]).await.unwrap(), ["V1__widgets"]);
-        assert_eq!(
-            tables(&target).await,
-            ["gadgets", "refinery_schema_history", "widgets"]
+        let refused = run(&mut target, &[two]).await.unwrap_err();
+
+        // The server is the guard, which is why nothing here parses SQL.
+        assert!(
+            refused.contains("Multi-statements are not allowed"),
+            "{refused}"
         );
     }
 
     #[tokio::test]
-    async fn keeps_what_already_succeeded_when_a_later_statement_fails() {
+    async fn resumes_at_the_migration_that_failed() {
         let mut target = db("partial").await;
-        let half_broken = at(
-            "V1__widgets",
-            "CREATE TABLE IF NOT EXISTS widgets (id String) ENGINE = MergeTree ORDER BY id;\n\
-             CREATE TABLE IF NOT EXISTS gadgets (id String ENGINE = ;",
+        let broken = at(
+            "V2__gadgets",
+            "CREATE TABLE IF NOT EXISTS gadgets (id String ENGINE = ;",
         );
 
-        run(&mut target, &[half_broken]).await.unwrap_err();
+        run(&mut target, &[at("V1__widgets", WIDGETS), broken])
+            .await
+            .unwrap_err();
 
-        // The whole difference from Postgres: no transaction for DDL, so `widgets`
-        // stays. Nothing was recorded, so the retry runs the file from its first
-        // statement — which is why every statement is `IF NOT EXISTS`.
+        // No transaction — ClickHouse has none for DDL — so `widgets` stays. It
+        // is recorded too: one statement per file means a migration that ran at
+        // all ran completely, so the retry picks up at V2 rather than redoing V1.
         assert_eq!(
             tables(&target).await,
             ["refinery_schema_history", "widgets"]
+        );
+        assert_eq!(
+            run(
+                &mut target,
+                &[at("V1__widgets", WIDGETS), at("V2__gadgets", GADGETS)]
+            )
+            .await
+            .unwrap(),
+            ["V2__gadgets"]
         );
     }
 }

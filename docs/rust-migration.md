@@ -260,24 +260,28 @@ Cargo workspace, `aave-abi` and its ABI drift job, `telemetry`, `ops`, `clickhou
 **The runner is [refinery](https://docs.rs/refinery), not hand-rolled.** It drives Postgres natively.
 ClickHouse is not one of its backends, but adding one is three trait impls — `AsyncTransaction`,
 `AsyncQuery<Vec<Migration>>` and one `AsyncMigrate` method overriding the ledger DDL, because
-refinery's default is `VARCHAR(255)` with an `int4 PRIMARY KEY` and ClickHouse has neither. That is 42
-lines against the 169 a second hand-rolled runner would have cost, and fourteen of the eighteen
+refinery's default is `VARCHAR(255)` with an `int4 PRIMARY KEY` and ClickHouse has neither. That is 49
+lines against the 169 a second hand-rolled runner would have cost, and thirty-five of the thirty-nine
 migrations are ClickHouse, so the alternative was refinery for four files and hand-rolled for the rest.
 
-Two things follow. The ledger becomes refinery's — `refinery_schema_history`, keyed on an integer
-version — so the ids are relabelled `V12__position_projections` where the file stays
-`012_position_projections.sql`; `schema.rs` carries both names. And the statement splitter survives:
-refinery hands the adapter a migration's whole SQL as one query, and ClickHouse's HTTP interface
-refuses multi-statement bodies, so it is taken apart inside `AsyncTransaction::execute`.
+The ledger becomes refinery's — `refinery_schema_history`, keyed on an integer version — so the ids
+are relabelled `V12__position_supply` where the file stays `012_position_supply.sql`; `schema.rs`
+carries both names.
 
-**The `.sql` files terminate their statements with `;`, and the splitter is a lexer.** They were
-separated by a `--@statement` comment marker, which meant a multi-statement file could not be pasted
-into a console at all: the client parses the whole buffer as one query and fails at the second
-statement, creating nothing — verified against clickhouse-client, 0 of 9 objects. A migration you
-cannot paste is one you cannot debug when it matters. Splitting on the character is therefore not a
-`find(';')`: 723 `--` comments, 184 string literals and 215 backtick identifiers across the corpus
-hold nineteen semicolons between them, all in prose. The scan tracks what it is inside; only a
-semicolon in open code terminates.
+**One statement per `.sql` file, so neither runner parses SQL.** ClickHouse's HTTP interface refuses a
+body holding more than one — `Multi-statements are not allowed` — and refinery hands the adapter a
+migration's whole text as a single query. The earlier shape kept several statements in a file and a
+`;` lexer to take them apart, which meant a hundred lines of scanner tracking comments, string
+literals and backtick identifiers so that the nineteen semicolons living in the corpus's prose did not
+cut a statement in half. Splitting the files instead deletes the scanner on both sides: the file goes
+to the server as it stands, leading prose and trailing `;` included, both of which every server here
+accepts. The server is the guard — add a second statement and ClickHouse says so at deploy time.
+
+It also makes the ledger honest. A multi-statement file that failed on its third statement left the
+first two behind and was recorded nowhere, so `IF NOT EXISTS` was load-bearing on every statement;
+now a migration either applied or did not. The cost is 35 ClickHouse files where there were 14, and a
+renumbering — the fold that was `012_position_projections.sql` is `012` through `020`, one projection
+each, and the file is named for the object it creates.
 
 **The `.sql` files are embedded, not discovered.** The TypeScript reads its migration directories with
 `readdir` at startup, which only works because `pnpm deploy` copies them next to the compiled output;
@@ -301,7 +305,7 @@ run time, because the list was only known once the process was up. Here the arra
 order, so there is no ambiguity — and no runtime, since a constant cannot change after it is compiled.
 What is left worth enforcing is that the array agrees with the directory listing a reader sees, so
 `check_order` asserts **strictly ascending ordinals**, once per database union, as a test. Verified
-against the real corpus: all twenty files are already ascending in the order the application
+against the real corpus: all thirty-nine files are already ascending in the order the application
 concatenates them.
 
 **Gate:** both migrators applied to empty databases produce the same schema. The ledger tables are
@@ -313,11 +317,11 @@ objects and 34,367 bytes identical, 59 lines of Postgres schema identical, and a
 Split in two. **2a** is the two runner crates alone, proven against live servers — including the fact
 that their failure semantics differ, which is the reason there are two: a set that fails partway
 rolls back entirely on Postgres and leaves what already succeeded on ClickHouse. **2b** adds
-`bins/migrate`, the eighteen `include_str!` constants and the byte-identical comparison above.
+`bins/migrate`, the thirty-nine `include_str!` constants and the byte-identical comparison above.
 
-Phase 0 took two PRs. The first stood up the workspace and the statement splitter, gated on a
-differential over the twenty real `.sql` files against the TypeScript loader. The second added the
-two database crates and `bins/migrate`, gated on the byte-identical comparison above.
+Phase 0 took two PRs. The first stood up the workspace, gated on a differential over the real `.sql`
+files against the TypeScript loader. The second added the two database crates and `bins/migrate`,
+gated on the byte-identical comparison above.
 
 ### Phase 1 — the arithmetic
 

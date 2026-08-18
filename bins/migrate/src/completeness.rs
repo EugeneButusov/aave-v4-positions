@@ -88,9 +88,9 @@ mod tests {
             sql: include_str!("../fixtures/001_opens_with_prose.sql"),
         },
         Embedded {
-            file: "002_two_statements",
-            label: "V2__two_statements",
-            sql: include_str!("../fixtures/002_two_statements.sql"),
+            file: "002_second_file",
+            label: "V2__second_file",
+            sql: include_str!("../fixtures/002_second_file.sql"),
         },
     ];
 
@@ -106,7 +106,7 @@ mod tests {
         assert!(
             missed
                 .to_string()
-                .ends_with("/002_two_statements.sql is not embedded by any entry in schema.rs"),
+                .ends_with("/002_second_file.sql is not embedded by any entry in schema.rs"),
             "{missed}"
         );
     }
@@ -122,7 +122,7 @@ mod tests {
                 sql: "",
             },
             Embedded {
-                file: "002_two_statements",
+                file: "002_second_file",
                 label: "V2__b",
                 sql: "",
             },

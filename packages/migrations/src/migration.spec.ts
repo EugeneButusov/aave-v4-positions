@@ -4,15 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  assertOrderable,
-  loadMigrations,
-  ordered,
-  splitStatements,
-  type Migration,
-} from './migration';
+import { assertOrderable, loadMigrations, ordered, type Migration } from './migration';
 
-const at = (id: string): Migration => ({ id, statements: ['SELECT 1'] });
+const at = (id: string): Migration => ({ id, statement: 'SELECT 1' });
 
 /** A migrations directory, as a package would ship one. */
 async function directory(files: Record<string, string>): Promise<string> {
@@ -24,11 +18,14 @@ async function directory(files: Record<string, string>): Promise<string> {
 }
 
 describe('loadMigrations', () => {
-  it('reads each .sql file, taking the id from its name', async () => {
-    const dir = await directory({ '001_spoke_events.sql': 'CREATE TABLE spoke_events (x UInt8)' });
+  it('reads each .sql file verbatim, taking the id from its name', async () => {
+    const body = '-- why this table exists\nCREATE TABLE spoke_events (x UInt8);\n';
+    const dir = await directory({ '001_spoke_events.sql': body });
 
+    // Prose and terminator included: both servers accept them, so nothing is
+    // stripped — and stripping would mean parsing SQL to know what to strip.
     await expect(loadMigrations([dir])).resolves.toEqual([
-      { id: '001_spoke_events', statements: ['CREATE TABLE spoke_events (x UInt8)'] },
+      { id: '001_spoke_events', statement: body },
     ]);
   });
 
@@ -61,53 +58,6 @@ describe('loadMigrations', () => {
     const hub = await directory({ '002_hub_assets.sql': 'b' });
 
     await expect(loadMigrations([events, hub])).rejects.toThrow(/ordinal 002 is claimed by both/);
-  });
-});
-
-describe('splitStatements', () => {
-  it('takes the terminator off, because the runner sends one statement per request', () => {
-    expect(splitStatements('CREATE TABLE a (x UInt8);')).toEqual(['CREATE TABLE a (x UInt8)']);
-  });
-
-  it('accepts a lone statement that was never terminated', () => {
-    // Every file here ends in `;`, but a runner that silently dropped the tail
-    // would lose a whole table to one missing character.
-    expect(splitStatements('CREATE TABLE a (x UInt8)')).toEqual(['CREATE TABLE a (x UInt8)']);
-  });
-
-  it('splits on the terminator and trims each side', () => {
-    expect(splitStatements('CREATE TABLE a (x UInt8);\n\nCREATE VIEW b AS SELECT 1;\n')).toEqual([
-      'CREATE TABLE a (x UInt8)',
-      'CREATE VIEW b AS SELECT 1',
-    ]);
-  });
-
-  it.each([
-    ['a line comment', '-- a comment; with a semicolon\nCREATE VIEW v AS SELECT 1'],
-    ['a string literal', "CREATE VIEW v AS SELECT 'has ; inside' AS s"],
-    ['a backtick identifier', 'CREATE VIEW v AS SELECT 1 AS `has ; inside`'],
-    ['a double-quoted identifier', 'CREATE VIEW v AS SELECT 1 AS "has ; inside"'],
-  ])('does not cut on a semicolon inside %s', (_, sql) => {
-    // Nineteen of these live in the real corpus, all in comments. Cutting on one
-    // produces two halves plausible enough to fail far from the cause.
-    expect(splitStatements(sql)).toEqual([sql]);
-  });
-
-  it('drops the prose a file opens with, rather than sending it as a query', () => {
-    // ClickHouse answers "Empty query" — from the migration runner, at deploy
-    // time. The header is only dropped when nothing but comments precedes the
-    // first `;`; otherwise it rides along with the statement, which is inert.
-    expect(splitStatements('-- what this file is\n-- and why\n')).toEqual([]);
-  });
-
-  it('keeps the comment that introduces a statement attached to it', () => {
-    const sql = '-- why this view exists\nCREATE VIEW v AS SELECT 1';
-
-    expect(splitStatements(`${sql};`)).toEqual([sql]);
-  });
-
-  it('is unbothered by a doubled or trailing terminator', () => {
-    expect(splitStatements(';;\nSELECT 1;;\n;')).toEqual(['SELECT 1']);
   });
 });
 

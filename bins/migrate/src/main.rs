@@ -11,7 +11,6 @@
 
 mod clickhouse;
 mod schema;
-mod statements;
 
 #[cfg(test)]
 mod completeness;
@@ -106,7 +105,7 @@ mod tests {
     /// rather than at deploy time.
     #[test]
     fn both_unions_parse() {
-        assert_eq!(union(CLICKHOUSE).unwrap().len(), 14);
+        assert_eq!(union(CLICKHOUSE).unwrap().len(), 35);
         assert_eq!(union(POSTGRES).unwrap().len(), 4);
     }
 
