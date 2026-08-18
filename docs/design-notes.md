@@ -1209,7 +1209,7 @@ throwaway script, not by anything committed: `getUserPosition` is §9.1's shares
 **not in this repository's ABI**, so nothing here reproduces it as written.
 `reconcile:positions` is the committed descendant, and it checks the layer above — valued amounts
 against `getUserSuppliedAssets` and `getUserDebt`. Closing that gap properly is the
-[continuous reconciliation](../README.md#what-i-would-improve-with-more-time) the README argues for.
+[continuous reconciliation](../README.md#what-comes-next) the README argues for.
 
 Three paths that reconciliation cannot cover, because mainnet has never exercised them: the premium
 triple has never been non-zero, no liquidation has ever set `receiveShares`, and `ReportDeficit` has
@@ -1802,7 +1802,7 @@ processor can return `ok()` unconditionally rather than being allowed to stall A
 
 ### Standalone datasets behind the same API surface
 
-The follow-up question in the brief — how to serve discrete data sets alongside the indexer's, without
+The next question after that one — how to serve discrete data sets alongside the indexer's, without
 coupling to its pipeline — already has a partial answer in the repository, because the two enrichment
 packages _are_ that: separate schema, separate cadence, separate failure mode, joined in the service
 rather than in SQL, and invisible to the fold. Generalising it changes little.

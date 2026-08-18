@@ -756,7 +756,7 @@ Three properties worth stating in the API contract:
 Worth separating clearly, because public RPCs blur it commercially:
 
 - **historical state** (`eth_call`, `eth_getCode`, `eth_getStorageAt` at an old block) →
-  needs an archive node. **Out of scope per the task brief, and our design avoids it entirely.**
+  needs an archive node. **Out of scope for this indexer, and our design avoids it entirely.**
 - **historical logs** (`eth_getLogs` over old ranges) → retained by any full node; not an
   archive feature.
 
@@ -808,7 +808,7 @@ get slow.
 
 ### Reorgs
 
-Nothing v4-specific, but the brief calls it out. Store `block_number` + `block_hash` per event,
+Nothing v4-specific, but required all the same. Store `block_number` + `block_hash` per event,
 keep the last N blocks (~64–128) "unfinalized", and on a parent-hash mismatch roll back and
 re-scan. Because positions are a **fold over events**, rollback means deleting events above the
 fork point and replaying — which argues for keeping the raw event log as an immutable table and
@@ -998,7 +998,7 @@ Two things to design for, visible in this table:
 
 ## 11. Enrichment candidates
 
-The brief needs ≥1 additional source, exposed alongside indexed data.
+The design wants at least one source outside the event log, served alongside the indexed data.
 
 USD values already come from the protocol's own price feeds (§7.4), so an off-chain price API
 adds nothing as a currency converter. Its value here is comparison, not conversion:
@@ -1013,7 +1013,7 @@ adds nothing as a currency converter. Its value here is comparison, not conversi
   position at HF 1.05 priced by an oracle that is 2% away from market is a materially
   different risk from the same HF with the feeds in agreement.
 
-  It also exercises everything the brief is probing for — separate source, separate cadence,
+  It also exercises everything enrichment has to get right — separate source, separate cadence,
   separate failure mode, needs caching and staleness handling — while being an actual product
   feature rather than a bolt-on.
   - CoinGecko's free tier now allows **1 contract address per request** — unusable for batch

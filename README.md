@@ -15,13 +15,13 @@ Two documents sit under this one, and they are where the reasoning lives:
   position state actually lives in v4, which events reconstruct it, the share/asset arithmetic, and
   the health-factor and price layers.
 
-## Why Aave v4
+## Why v4
 
-The task is for Aave, so the subject picked itself. **v4 rather than v3 because it is new** and
-Hub-and-Spoke makes it a different indexing problem rather than a familiar one — position state and
-the index that values it live on different contracts, no Spoke event names a token, and nothing may
-be summed across Spokes. Those three constraints, not preference, are what the schema, the two
-ledgers and the response shape below are built around.
+**v4 rather than v3 because it is new** and Hub-and-Spoke makes it a different indexing problem
+rather than a familiar one — position state and the index that values it live on different
+contracts, no Spoke event names a token, and nothing may be summed across Spokes. Those three
+constraints, not preference, are what the schema, the two ledgers and the response shape below are
+built around.
 
 Since v3 intuition is the wrong prior here, every protocol claim this rests on was read out of the
 contracts and marked `[verified]` in the [analysis](docs/aave-v4-protocol-analysis.md) rather than
@@ -49,12 +49,9 @@ assumed.
 
 ### What is not here
 
-Two things were in the plan, are worked out in the analysis, and did not land: **72 hours ran out**.
-
-That is the whole of the first reason, and worth saying plainly rather than dressing up. The second
-reason is why neither shipped in a cut-down form in the hours that were left — each turns out to want
-a data-modelling increment rather than an endpoint, so the quick version would have been a number I
-could not stand behind.
+Two things are worked out in the analysis and deliberately not built here, for one reason: **each
+wants a data-modelling increment rather than an endpoint**, so the cut-down version of either would
+have been a number nothing in this repository could stand behind.
 
 **Per-Spoke totals and net worth.** Built and then parked
 ([#25](https://github.com/EugeneButusov/aave-v4-positions/pull/25)). Totalling on top of a paged read
@@ -63,7 +60,7 @@ like a whole number; or issue a second unpaged read of every position the wallet
 that PR did — correct, but it recomputes the same aggregate on every request and needs a refusal
 threshold to stay bounded. The aggregate wants **its own representation**, maintained the way the
 position fold is maintained rather than derived per request. That is a schema and ingestion change,
-so it is its own increment rather than a rushed one.
+so it is its own increment rather than an addition to this one.
 
 **Health factor.** It needs risk parameters this build does not ingest: `collateralFactor` at the
 user's pinned `dynamicConfigKey`, which comes from `AddDynamicReserveConfig` /
@@ -297,10 +294,10 @@ and OpenTelemetry across all three signals — with the response's `x-request-id
 so a bug report leads straight to a span tree and the log lines under it.
 [Why](docs/design-notes.md#operational-shape).
 
-## What I would improve with more time
+## What comes next
 
 **Continuous reconciliation against the chain, not a script someone remembers to run.** This is the
-one I would do first. Both checks exist and both pass — `reconcile:hub` compares the asset fold to
+one to do first. Both checks exist and both pass — `reconcile:hub` compares the asset fold to
 the Hub's own `getAsset`, and `reconcile:positions` compares valued positions to
 `getUserSuppliedAssets` and `getUserDebt`, at zero tolerance, with both sides pinned to one block so
 accrual cannot be mistaken for drift. But they are **one-shot CLIs over a list of users you pass in**,
