@@ -214,7 +214,7 @@ services:
   # Grafana, Prometheus, Tempo, Loki and an OTLP collector in one container.
   #
   # **Up by default, not behind a profile.** `docker compose up` is what a
-  # reviewer runs, and a telemetry stack you have to remember to enable is one
+  # newcomer runs, and a telemetry stack you have to remember to enable is one
   # nobody sees. The cost is stated in the README rather than hidden: ~807 MB on
   # the first pull, and a measured few seconds on a cold start. Skip it with
   # `docker compose up clickhouse postgres migrate api indexer`, or keep it and
