@@ -1,5 +1,4 @@
 export {
-  STATEMENT_SEPARATOR,
   assertOrderable,
   loadMigrations,
   ordered,

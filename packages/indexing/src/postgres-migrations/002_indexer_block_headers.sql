@@ -22,4 +22,4 @@ CREATE TABLE IF NOT EXISTS indexer_block_headers (
     -- the trailing one, which is the case a composite btree exists for.
     -- Reversed, every prune would be a full scan.
     PRIMARY KEY (chain_id, block_number)
-)
+);

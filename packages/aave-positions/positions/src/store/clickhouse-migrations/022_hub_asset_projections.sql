@@ -19,8 +19,6 @@
 -- `topic1` is the asset id on all thirteen, but it is read out of `body`
 -- alongside everything else so one expression style covers the file.
 
---@statement
-
 -- Add: supply arrives. `addedShares += shares`, `liquidity += amount`.
 --
 -- Note `liquidity` is *assigned* on chain, not incremented —
@@ -42,9 +40,7 @@ SELECT
     toInt256(0)                                            AS deficit_ray,
     toInt64(sign)                                          AS events
 FROM hub_events
-WHERE event_name = 'Add'
-
---@statement
+WHERE event_name = 'Add';
 
 -- Remove: supply leaves. The exact inverse of Add.
 CREATE MATERIALIZED VIEW IF NOT EXISTS hub_remove TO hub_assets AS
@@ -61,9 +57,7 @@ SELECT
     toInt256(0)                                            AS deficit_ray,
     toInt64(sign)                                          AS events
 FROM hub_events
-WHERE event_name = 'Remove'
-
---@statement
+WHERE event_name = 'Remove';
 
 -- Draw: a Spoke borrows against Hub liquidity. Debt shares up, liquidity down.
 CREATE MATERIALIZED VIEW IF NOT EXISTS hub_draw TO hub_assets AS
@@ -80,9 +74,7 @@ SELECT
     toInt256(0)                                                 AS deficit_ray,
     toInt64(sign)                                               AS events
 FROM hub_events
-WHERE event_name = 'Draw'
-
---@statement
+WHERE event_name = 'Draw';
 
 -- Restore: debt is repaid. Debt shares down, and **liquidity rises by
 -- `drawnAmount + premiumAmount`** — the premium is cash that arrives too, which
@@ -107,9 +99,7 @@ SELECT
     toInt256(0)                                                 AS deficit_ray,
     toInt64(sign)                                               AS events
 FROM hub_events
-WHERE event_name = 'Restore'
-
---@statement
+WHERE event_name = 'Restore';
 
 -- ReportDeficit: debt written off as bad. Shares leave without cash arriving,
 -- and the loss is recorded RAY-scaled in `deficitRay`, where it stays inside
@@ -134,9 +124,7 @@ SELECT
     sign * toInt256(JSONExtractString(body, 'deficitAmountRay')) AS deficit_ray,
     toInt64(sign)                                               AS events
 FROM hub_events
-WHERE event_name = 'ReportDeficit'
-
---@statement
+WHERE event_name = 'ReportDeficit';
 
 -- EliminateDeficit: a spoke covers bad debt by burning its own supply shares.
 --
@@ -161,9 +149,7 @@ SELECT
     sign * -toInt256(JSONExtractString(body, 'deficitAmountRay')) AS deficit_ray,
     toInt64(sign)                                                AS events
 FROM hub_events
-WHERE event_name = 'EliminateDeficit'
-
---@statement
+WHERE event_name = 'EliminateDeficit';
 
 -- MintFeeShares: accrued protocol fees are minted as supply shares to the fee
 -- receiver. `asset.addedShares += shares`.
@@ -188,9 +174,7 @@ SELECT
     toInt256(0)                                            AS deficit_ray,
     toInt64(sign)                                          AS events
 FROM hub_events
-WHERE event_name = 'MintFeeShares'
-
---@statement
+WHERE event_name = 'MintFeeShares';
 
 -- Sweep: liquidity leaves for a reinvestment controller. Still the asset's, so
 -- `swept` rises by what `liquidity` loses and `totalAddedAssets` counts both.
@@ -208,9 +192,7 @@ SELECT
     toInt256(0)                                            AS deficit_ray,
     toInt64(sign)                                          AS events
 FROM hub_events
-WHERE event_name = 'Sweep'
-
---@statement
+WHERE event_name = 'Sweep';
 
 -- Reclaim: swept liquidity comes back. The exact inverse of Sweep.
 CREATE MATERIALIZED VIEW IF NOT EXISTS hub_reclaim TO hub_assets AS
@@ -227,9 +209,7 @@ SELECT
     toInt256(0)                                            AS deficit_ray,
     toInt64(sign)                                          AS events
 FROM hub_events
-WHERE event_name = 'Reclaim'
-
---@statement
+WHERE event_name = 'Reclaim';
 
 -- RefreshPremium: the risk premium moves with no cash and no shares changing
 -- hands. **Not in the analysis's transition table** — read from
@@ -256,9 +236,7 @@ SELECT
     toInt256(0)                                   AS deficit_ray,
     toInt64(sign)                                 AS events
 FROM hub_events
-WHERE event_name = 'RefreshPremium'
-
---@statement
+WHERE event_name = 'RefreshPremium';
 
 -- UpdateAsset: the interest checkpoint, and the reason none of this needs an
 -- RPC on the read path (§5.3). The emitted index is the *settled* one, because
@@ -287,9 +265,7 @@ SELECT
     CAST(NULL, 'Nullable(UInt8)')                                 AS decimals,
     sign
 FROM hub_events
-WHERE event_name = 'UpdateAsset'
-
---@statement
+WHERE event_name = 'UpdateAsset';
 
 -- UpdateAssetConfig: only `liquidityFee` is read. It is the fee rate in the
 -- supply side's `unrealizedFees` term (§5.2), so a wrong one moves every supply
@@ -312,9 +288,7 @@ SELECT
     CAST(NULL, 'Nullable(UInt8)')                                  AS decimals,
     sign
 FROM hub_events
-WHERE event_name = 'UpdateAssetConfig'
-
---@statement
+WHERE event_name = 'UpdateAssetConfig';
 
 -- AddAsset: the ERC-20 address and its decimals, which appear in no other event
 -- on either contract (§12.2). Seventeen of them on the Core Hub, all in one
@@ -340,4 +314,4 @@ SELECT
     toUInt8(JSONExtractString(body, 'decimals'))       AS decimals,
     sign
 FROM hub_events
-WHERE event_name = 'AddAsset'
+WHERE event_name = 'AddAsset';

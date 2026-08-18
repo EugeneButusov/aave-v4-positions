@@ -1,0 +1,12 @@
+[package]
+name = "migrations"
+description = "Compile-time embedded .sql migrations: the Migration type and the splitter behind Migration::statements"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dev-dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

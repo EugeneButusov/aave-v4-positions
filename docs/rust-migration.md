@@ -73,8 +73,8 @@ crates/
   aave-abi/                 vendored ABI JSON + sol! bindings + addresses   ← new, see Risk 1
   telemetry/                OTLP init for traces, metrics, logs
   ops/                      HealthIndicator trait, probe router, graceful drain
-  migrations/               .sql discovery, ordinal ordering, collision check
-  clickhouse/               client, probe, migration runner
+  migrations/               the Migration type, the statement splitter, the two checks
+  clickhouse/               client, probe, migration runner   ← package `clickhouse-client`
   postgres/                 pool, probe, migration runner
   indexing/                 loop, ports + alloy adapters, reorg, cursor, backfill
   aave-events/              decoders, two append-only ledgers
@@ -82,12 +82,44 @@ crates/
   token-metadata/           enrichment: ERC-20 symbol/name
   prices/                   enrichment: the Spoke oracle
 bins/
+  migrate/                  applies both schemas, then exits   ← see below
   api/                      axum
-  indexer/                  tokio worker + probe server + six CLIs
+  indexer/                  tokio worker + probe server + five CLIs
 ```
 
-Thirteen crates against twelve packages. `aave-abi` is the one addition, and it exists because of
-Risk 1.
+Fourteen crates against twelve packages. `aave-abi` is one addition and exists because of Risk 1;
+`bins/migrate` is the other, and exists because of the linkage rule below.
+
+**Names are bare, because nothing here is published.** That is the split in the ecosystem: `alloy`,
+`reth`, `revm`, `foundry` and `agave` all prefix their package names because crates.io is one flat
+namespace, while rust-analyzer and Zed — the two largest unpublished workspaces — use bare `hir`,
+`ide`, `editor`, `project` under a workspace-level `publish = false`. Directory names are bare in
+every one of them, published or not, which is what the block above already draws. No crate declares a
+`version` either, for the same reason: it is optional since Cargo 1.75, and a number nobody publishes
+is a number nobody maintains.
+
+The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
+sharing a name with a dependency makes `cargo -p <name>` ambiguous
+([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a
+client factory, a probe and a runner rather than "ClickHouse" anyway. `crates/postgres` needs no such
+dodge: the driver here is `tokio-postgres`, not `postgres`.
+
+**Each binary is a boundary, not just an entry point.** In Node the image is the artifact and
+`migrate.js` ships beside `main.js` in a tree where viem is one `require` away, so "the migration tool
+cannot reach the chain" is a claim about discipline. Here the dependency graph decides it at link
+time:
+
+| binary    | links                                                                | **cannot** link                       |
+| --------- | -------------------------------------------------------------------- | ------------------------------------- |
+| `migrate` | `migrations`, `clickhouse-client`, `postgres`, the SQL-owning crates | `alloy`, `axum` — no chain, no socket |
+| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy`, `indexing`, the write paths  |
+| `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
+
+The third column is asserted in CI with `cargo tree -i`, so reaching across fails the build rather
+than passing review. `migrate` is its own crate because its lifecycle differs — it runs before the
+service exists, issues the only DDL in the system, and something has to block on it, which is already
+how [`compose.yaml`](../compose.yaml) treats it. The five operational CLIs need the indexer's graph
+exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 
 ## Dependency mapping
 
@@ -219,12 +251,48 @@ finishes, rather than one switch at the end.
 
 ### Phase 0 — foundations
 
-Cargo workspace, `aave-abi` and its ABI drift job, `telemetry`, `ops`, `migrations`, `clickhouse`,
-`postgres`. Both migration runners, including the `--@statement` marker split and the cross-directory
-ordinal collision check.
+Cargo workspace, `aave-abi` and its ABI drift job, `telemetry`, `ops`, `migrations`,
+`clickhouse-client`, `postgres`, both migration runners and `bins/migrate`.
+
+**The `.sql` files terminate their statements with `;`, and the splitter is a lexer.** They were
+separated by a `--@statement` comment marker, which meant a multi-statement file could not be pasted
+into a console at all: the client parses the whole buffer as one query and fails at the second
+statement, creating nothing — verified against clickhouse-client, 0 of 9 objects. A migration you
+cannot paste is one you cannot debug when it matters. Splitting on the character is therefore not a
+`find(';')`: 723 `--` comments, 184 string literals and 215 backtick identifiers across the corpus
+hold nineteen semicolons between them, all in prose. The scan tracks what it is inside; only a
+semicolon in open code terminates.
+
+**The `.sql` files are embedded, not discovered.** The TypeScript reads its migration directories with
+`readdir` at startup, which only works because `pnpm deploy` copies them next to the compiled output;
+a binary shipped on its own has nothing to read. Every Rust migration tool embeds at compile time —
+`sqlx::migrate!`, `diesel_migrations`, `refinery` — and the reason diesel gives is precisely this one,
+that it is what lets you ship a single executable. So each crate that owns tables declares a
+`const MIGRATIONS: &[Migration]` with **one `include_str!` per file, written by hand**: not
+`include_dir!`, whose proc macro cannot register a rebuild dependency on stable and would happily ship
+yesterday's SQL from a warm `target/`, and not a globbing macro either, since adding a file would then
+change no Rust source and the macro would not re-run
+([sqlx#681](https://github.com/launchbadge/sqlx/issues/681) is the reference for both halves).
+
+Two consequences. What the directory read was buying — nobody has to remember to register a file — is
+bought back by `check_complete`, a test that compares the constant against the directory in both
+directions.
+
+And the ordinal check changes shape, because it is no longer answering the same question. In
+TypeScript the set was discovered and sorted, so two migrations sharing an ordinal left the apply
+order to whichever array the caller concatenated first; the guard existed to reject that ambiguity, at
+run time, because the list was only known once the process was up. Here the array *is* the apply
+order, so there is no ambiguity — and no runtime, since a constant cannot change after it is compiled.
+What is left worth enforcing is that the array agrees with the directory listing a reader sees, so
+`check_order` asserts **strictly ascending ordinals**, once per database union, as a test. Verified
+against the real corpus: all twenty files are already ascending in the order the application
+concatenates them.
 
 **Gate:** the Rust `migrate` applies both schemas to empty databases, and the resulting
 `schema_migrations` rows and `SHOW CREATE TABLE` output are byte-identical to the TypeScript runner's.
+
+Phase 0 is more than one PR. Iteration 1 is the workspace itself plus `migrations`, whose own gate is
+a differential over the twenty real `.sql` files against the TypeScript loader.
 
 ### Phase 1 — the arithmetic
 

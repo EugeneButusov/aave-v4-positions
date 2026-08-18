@@ -62,4 +62,4 @@ CREATE TABLE IF NOT EXISTS hub_events
 )
 ENGINE = VersionedCollapsingMergeTree(sign, version)
 PARTITION BY intDiv(block_number, 1000000)
-ORDER BY (chain_id, block_number, log_index)
+ORDER BY (chain_id, block_number, log_index);

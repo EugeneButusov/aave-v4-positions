@@ -24,4 +24,4 @@ CREATE TABLE IF NOT EXISTS indexer_cursor (
     -- server rather than in the reader — it is written by this server's clock,
     -- so a reader subtracting its own would report skew as staleness.
     updated_at timestamptz NOT NULL DEFAULT now()
-)
+);

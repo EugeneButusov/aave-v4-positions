@@ -5,13 +5,12 @@
 -- because they are one thing: the fold. Adding an event means adding a section
 -- here, and reviewing the fold means reading this rather than nine diffs.
 --
--- Statements are separated by the `--@statement` marker the runner splits on —
--- ClickHouse's HTTP interface refuses multi-statement requests, and splitting on
--- `;` would cut the comments and string literals below in the wrong places.
+-- Each statement ends in `;`, which is what the runner splits on, and what lets
+-- this file be pasted into a console unchanged. ClickHouse's HTTP interface
+-- refuses multi-statement requests, so something has to take the file apart; the
+-- splitter skips semicolons inside comments and quoted text, so the prose is safe.
 -- Every statement is `IF NOT EXISTS`, because a file that fails part-way through
 -- is recorded nowhere and retried from the top.
-
---@statement
 
 -- Supply: shares in, assets in. The first projection, and the one whose
 -- comments the rest do not repeat — three invariants hold in every one:
@@ -46,9 +45,7 @@ SELECT
     toInt256(0)                                                 AS net_borrowed_amount,
     toInt64(sign)                                               AS events
 FROM spoke_events
-WHERE event_name = 'Supply'
-
---@statement
+WHERE event_name = 'Supply';
 
 -- Withdraw: shares out, assets out. See position_supply for the three invariants.
 CREATE MATERIALIZED VIEW IF NOT EXISTS position_withdraw TO user_positions AS
@@ -65,9 +62,7 @@ SELECT
     toInt256(0)                                                  AS net_borrowed_amount,
     toInt64(sign)                                                AS events
 FROM spoke_events
-WHERE event_name = 'Withdraw'
-
---@statement
+WHERE event_name = 'Withdraw';
 
 -- Borrow: debt shares in, assets out to the borrower. See position_supply.
 CREATE MATERIALIZED VIEW IF NOT EXISTS position_borrow TO user_positions AS
@@ -84,9 +79,7 @@ SELECT
     sign * toInt256(JSONExtractString(body, 'drawnAmount'))   AS net_borrowed_amount,
     toInt64(sign)                                             AS events
 FROM spoke_events
-WHERE event_name = 'Borrow'
-
---@statement
+WHERE event_name = 'Borrow';
 
 -- Repay: debt shares out, plus the premium components. See position_supply.
 --
@@ -111,9 +104,7 @@ SELECT
     sign * -toInt256(JSONExtractString(body, 'totalAmountRepaid'))                AS net_borrowed_amount,
     toInt64(sign)                                                                 AS events
 FROM spoke_events
-WHERE event_name = 'Repay'
-
---@statement
+WHERE event_name = 'Repay';
 
 -- ReportDeficit: bad debt written off the borrower. See position_supply.
 --
@@ -139,9 +130,7 @@ SELECT
     toInt256(0)                                                                AS net_borrowed_amount,
     toInt64(sign)                                                              AS events
 FROM spoke_events
-WHERE event_name = 'ReportDeficit'
-
---@statement
+WHERE event_name = 'ReportDeficit';
 
 -- LiquidationCall, leg 1 of 3: collateral seized from the borrower.
 --
@@ -167,9 +156,7 @@ SELECT
     toInt256(0)                                                              AS net_borrowed_amount,
     toInt64(sign)                                                            AS events
 FROM spoke_events
-WHERE event_name = 'LiquidationCall'
-
---@statement
+WHERE event_name = 'LiquidationCall';
 
 -- LiquidationCall, leg 2 of 3: debt restored on the borrower.
 --
@@ -191,9 +178,7 @@ SELECT
     sign * -toInt256(JSONExtractString(body, 'debtAmountRestored'))            AS net_borrowed_amount,
     toInt64(sign)                                                              AS events
 FROM spoke_events
-WHERE event_name = 'LiquidationCall'
-
---@statement
+WHERE event_name = 'LiquidationCall';
 
 -- LiquidationCall, leg 3 of 3: collateral credited to the liquidator.
 --
@@ -226,9 +211,7 @@ SELECT
     toInt256(0)                                                               AS net_borrowed_amount,
     toInt64(sign)                                                             AS events
 FROM spoke_events
-WHERE event_name = 'LiquidationCall' AND JSONExtractBool(body, 'receiveShares')
-
---@statement
+WHERE event_name = 'LiquidationCall' AND JSONExtractBool(body, 'receiveShares');
 
 -- SetUsingAsCollateral -> user_position_flags.
 --
@@ -253,4 +236,4 @@ SELECT
     JSONExtractBool(body, 'usingAsCollateral')      AS using_as_collateral,
     sign
 FROM spoke_events
-WHERE event_name = 'SetUsingAsCollateral'
+WHERE event_name = 'SetUsingAsCollateral';

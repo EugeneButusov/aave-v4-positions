@@ -30,4 +30,4 @@ SELECT
     any(data)            AS data
 FROM hub_events
 GROUP BY chain_id, block_number, log_index, version
-HAVING sum(sign) > 0
+HAVING sum(sign) > 0;

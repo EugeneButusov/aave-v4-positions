@@ -33,4 +33,4 @@ CREATE TABLE IF NOT EXISTS spoke_reserves
 )
 ENGINE = VersionedCollapsingMergeTree(sign, version)
 PARTITION BY chain_id
-ORDER BY (chain_id, spoke, reserve_id, block_number, log_index)
+ORDER BY (chain_id, spoke, reserve_id, block_number, log_index);

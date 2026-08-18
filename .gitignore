@@ -19,3 +19,6 @@ pnpm-debug.log*
 
 # lefthook writes a local override file that must never be committed
 lefthook-local.yml
+
+# Cargo build output.
+/target/

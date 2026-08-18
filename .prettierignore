@@ -9,3 +9,7 @@ pnpm-lock.yaml
 
 # The protocol analysis is hand-formatted (wide reference tables); leave it alone.
 docs/
+
+# Cargo build output. `prettier --check .` walks the tree looking for JSON, and
+# target/debug/.fingerprint is nothing but.
+target/

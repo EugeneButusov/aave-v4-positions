@@ -18,47 +18,79 @@ import { join } from 'node:path';
 export interface Migration {
   /** The file's basename without `.sql`: `NNN_snake_case`. */
   readonly id: string;
-  /** In file order. Usually one; see {@link STATEMENT_SEPARATOR}. */
+  /** In file order. Usually one; see {@link splitStatements}. */
   readonly statements: readonly string[];
 }
 
+/** Where the scan is when it meets a character. Only `code` can end a statement. */
+type Lexical = 'code' | 'comment' | "'" | '"' | '`';
+
 /**
- * Separates statements within one migration file.
+ * Splits a migration file into the statements it holds, on `;`.
  *
  * ClickHouse's HTTP interface refuses multi-statement requests outright —
  * `Multi-statements are not allowed` — so a file holding more than one has to be
- * split before it is sent. **Not on `;`.** These files carry semicolons inside
- * comments and inside string literals (`CAST(NULL, 'Nullable(UInt8)')` sits next
- * to prose that uses them), so splitting on the character means writing a SQL
- * lexer that knows about quoting, escapes and both comment forms — one nobody
- * would think to test until it silently truncated a migration.
+ * taken apart before it is sent. Postgres would accept them, but is split the
+ * same way so that one rule covers both.
  *
- * A marker the author writes instead needs no lexer, cannot collide with SQL
- * content, and is itself a comment, so the file stays valid SQL. A statement
- * still belongs in its own file unless it is meaningless apart from its
- * neighbours: the nine projections of one table are one change to read and one
- * change to review, where a table and the view over it are two.
- */
-export const STATEMENT_SEPARATOR = /^[ \t]*--@statement[ \t]*$/m;
-
-/**
- * Splits on {@link STATEMENT_SEPARATOR}, dropping sections that hold no SQL.
+ * **The terminator is `;` because these files are written to be pasted.** A
+ * migration you cannot drop into a SQL console and run is one you cannot debug
+ * when it matters — and a file that separates statements with a comment marker
+ * cannot be: the console parses the whole buffer as a single query and fails at
+ * the second statement, having created nothing.
  *
- * A file's header sits before its first marker and would otherwise be sent on
- * its own, which ClickHouse rejects as an empty query. "Holds SQL" is one line
- * that is neither blank nor a comment — enough here without a lexer, because a
- * section where *every* non-blank line opens with `--` cannot also contain a
- * statement.
+ * Which is why this cannot simply cut on the character. Measured over the twenty
+ * files here: 723 `--` comments, 184 string literals, 215 backtick identifiers
+ * and 14 double-quoted ones — with nineteen semicolons living inside that prose,
+ * across half the files. So the scan tracks what it is inside, and only a
+ * semicolon in open code ends a statement.
+ *
+ * Deliberately not handled, because the corpus contains none of them and untested
+ * code is worse than absent code: block comments, `''` and backslash escapes, and
+ * dollar quoting. A test holds the corpus to that.
  */
 export function splitStatements(sql: string): string[] {
-  return sql
-    .split(STATEMENT_SEPARATOR)
-    .map((statement) => statement.trim())
-    .filter((statement) =>
-      statement
-        .split('\n')
-        .some((line) => line.trim() !== '' && !line.trimStart().startsWith('--')),
-    );
+  const statements: string[] = [];
+  let start = 0;
+  let inside: Lexical = 'code';
+
+  for (let index = 0; index < sql.length; index++) {
+    const char = sql[index]!;
+
+    if (inside === 'code') {
+      if (char === '-' && sql[index + 1] === '-') inside = 'comment';
+      else if (char === "'" || char === '"' || char === '`') inside = char;
+      else if (char === ';') {
+        pushIfSql(statements, sql.slice(start, index));
+        start = index + 1;
+      }
+    } else if (inside === 'comment') {
+      if (char === '\n') inside = 'code';
+    } else if (char === inside) {
+      inside = 'code';
+    }
+  }
+
+  // Whatever follows the last `;`: a trailing comment in a well-formed file, and
+  // an unterminated statement otherwise. Dropping the latter silently is how a
+  // table goes missing at deploy time.
+  pushIfSql(statements, sql.slice(start));
+
+  return statements;
+}
+
+/**
+ * Keeps a section only if it holds one line that is neither blank nor a comment.
+ *
+ * A file opens with prose, so the text before its first `;` is a comment block
+ * that would otherwise be sent on its own — which ClickHouse rejects as an empty
+ * query, from the migration runner, at deploy time.
+ */
+function pushIfSql(statements: string[], section: string): void {
+  const statement = section.trim();
+  if (statement.split('\n').some((line) => line.trim() !== '' && !line.trim().startsWith('--'))) {
+    statements.push(statement);
+  }
 }
 
 const ID_PATTERN = /^(\d{3})_[a-z0-9_]+$/;

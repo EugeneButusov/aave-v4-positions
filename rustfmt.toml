@@ -1,0 +1,6 @@
+# max_width and newline_style match prettier. Comment wrapping and import
+# grouping are nightly-only, so comment layout stays hand-managed.
+
+edition = "2024"
+max_width = 100
+newline_style = "Unix"

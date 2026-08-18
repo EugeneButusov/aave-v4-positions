@@ -54,4 +54,4 @@ PARTITION BY intDiv(block_number, 1000000)
 -- 838 logs ran 0..837 unbroken across transaction boundaries — so tx_hash would
 -- add no uniqueness, and placed ahead of log_index it would order a block's
 -- logs by a random digest and destroy replay order.
-ORDER BY (chain_id, block_number, log_index)
+ORDER BY (chain_id, block_number, log_index);

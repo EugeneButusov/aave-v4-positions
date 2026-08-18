@@ -1,0 +1,5 @@
+# Relaxes the three panicking-construct lints in test code only. Cargo.toml
+# denies them everywhere else.
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-unwrap-in-tests = true
