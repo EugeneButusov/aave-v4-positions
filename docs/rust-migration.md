@@ -106,12 +106,10 @@ which has one obvious right answer, and its dependency versions, which do not �
 compiles is worse than a line you delete. Features come with them, since they are per-consumer
 anyway: `crates/postgres` needs `tokio/rt`, `bins/migrate` needs `rt` and `macros`.
 
-What sharing was buying is bought back by a check on the resolved graph rather than the declared
-text: **no dependency any member declares may resolve to two versions.** That is the failure it
-guards against, and it holds however the versions were written down. `tokio` is why it is worth
-having — two of them is not a compile error but a runtime looked up through the wrong thread-local,
-which panics on first use. Scoped to declared deps, because proc macros duplicate `syn` quite
-legitimately.
+What sharing was buying, nothing now enforces. The case that would justify a check is `tokio`: two
+of them in one graph is not a compile error but a runtime found through the wrong thread-local,
+panicking on first use. `cargo tree --duplicates`, scoped to what members declare, is the check if it
+is ever wanted — unscoped it fires on `syn`, which proc macros duplicate quite legitimately.
 
 **A database crate owns its driver and re-exports it.** `clickhouse` is a dependency of
 `clickhouse-client` alone and `tokio-postgres` of `postgres` alone, because both appear in those
