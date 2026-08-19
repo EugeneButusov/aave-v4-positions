@@ -1,0 +1,26 @@
+[package]
+name = "migrate"
+description = "Applies both schemas, then exits. The only thing in this workspace that issues DDL"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+clickhouse-client.workspace = true
+postgres.workspace = true
+
+# Each of these names a feature nothing else here would turn on: `tokio-postgres`
+# supplies refinery's Postgres backend, `parsing` is what `OffsetDateTime::parse`
+# needs — refinery-core takes one in `Migration::applied` and re-exports no
+# `time` — and `macros` is `#[tokio::main]`.
+async-trait = "0.1"
+refinery-core = { version = "0.9.2", default-features = false, features = ["tokio-postgres"] }
+time = { version = "0.3", features = ["parsing"] }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+
+[dev-dependencies]
+# Only `completeness`, which is `#[cfg(test)]`, defines an error type.
+thiserror = "2.0.19"
+
+[lints]
+workspace = true

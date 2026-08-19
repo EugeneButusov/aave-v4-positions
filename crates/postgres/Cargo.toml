@@ -1,0 +1,16 @@
+[package]
+name = "postgres"
+description = "Connecting to Postgres"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["rt"] }
+
+# Only this crate builds against the driver; everyone else goes through it.
+tokio-postgres = "0.7.18"
+
+[lints]
+workspace = true

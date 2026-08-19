@@ -24,9 +24,8 @@ async function appliedIds(client: ClickHouseClient): Promise<Set<string>> {
  */
 async function bootstrapLedger(client: ClickHouseClient): Promise<void> {
   const [ledger] = await loadMigrations([LEDGER_DIR]);
-  const [statement] = ledger?.statements ?? [];
-  if (!statement) throw new Error(`no ledger migration found in ${LEDGER_DIR}`);
-  await client.command({ query: statement });
+  if (!ledger) throw new Error(`no ledger migration found in ${LEDGER_DIR}`);
+  await client.command({ query: ledger.statement });
 }
 
 /**
@@ -54,16 +53,13 @@ export async function migrate(
   for (const migration of pending) {
     if (done.has(migration.id)) continue;
 
-    for (const statement of migration.statements) {
-      // Sequential because migrations are order-dependent: a view selects from
-      // the table created by the migration before it, and within a file the
-      // same holds statement to statement.
-      // oxlint-disable-next-line no-await-in-loop
-      await client.command({ query: statement });
-    }
-    // Recorded only once the whole file lands, so a failure part-way through is
-    // retried from its first statement rather than skipped. That is safe
-    // because every statement is `IF NOT EXISTS`, and it is why they have to be.
+    // Sequential because migrations are order-dependent: a view selects from
+    // the table created by the migration before it.
+    // oxlint-disable-next-line no-await-in-loop
+    await client.command({ query: migration.statement });
+
+    // Recorded straight after, and it cannot disagree with the schema: one
+    // statement per file means a migration that ran at all ran completely.
     // oxlint-disable-next-line no-await-in-loop
     await client.insert({ table: LEDGER, values: [{ id: migration.id }], format: 'JSONEachRow' });
     applied.push(migration.id);

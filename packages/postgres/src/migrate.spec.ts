@@ -33,8 +33,8 @@ beforeAll(async () => {
   }
 });
 
-function at(id: string, ...statements: string[]): Migration {
-  return { id, statements };
+function at(id: string, statement: string): Migration {
+  return { id, statement };
 }
 
 const WIDGETS = at('001_widgets', 'CREATE TABLE widgets (id text PRIMARY KEY)');
@@ -84,22 +84,6 @@ describe('migrate', () => {
 
     await expect(migrate(sql, [WIDGETS, GADGETS])).resolves.toEqual([]);
     expect(await recorded()).toEqual(['001_widgets', '002_gadgets']);
-  });
-
-  it('applies every statement in a multi-statement file', async () => {
-    const both = at(
-      '001_widgets',
-      'CREATE TABLE widgets (id text PRIMARY KEY)',
-      'CREATE TABLE gadgets (id text PRIMARY KEY)',
-    );
-
-    // One file, one ledger row, however many statements — so a file that fails
-    // part-way is retried from its first statement, which is why every one of
-    // them is written `IF NOT EXISTS`.
-    await expect(migrate(sql, [both])).resolves.toEqual(['001_widgets']);
-
-    expect(await tables()).toEqual(['gadgets', 'schema_migrations', 'widgets']);
-    expect(await recorded()).toEqual(['001_widgets']);
   });
 
   it('leaves nothing behind when a migration fails', async () => {

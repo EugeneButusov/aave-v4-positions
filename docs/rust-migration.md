@@ -73,22 +73,23 @@ crates/
   aave-abi/                 vendored ABI JSON + sol! bindings + addresses   ← new, see Risk 1
   telemetry/                OTLP init for traces, metrics, logs
   ops/                      HealthIndicator trait, probe router, graceful drain
-  migrations/               the Migration type, the statement splitter, the two checks
-  clickhouse/               client, probe, migration runner   ← package `clickhouse-client`
-  postgres/                 pool, probe, migration runner
+  clickhouse/               client   ← package `clickhouse-client`
+  postgres/                 connect
   indexing/                 loop, ports + alloy adapters, reorg, cursor, backfill
   aave-events/              decoders, two append-only ledgers
   aave-positions/           folds, read stores, valuation (the math)
   token-metadata/           enrichment: ERC-20 symbol/name
   prices/                   enrichment: the Spoke oracle
 bins/
-  migrate/                  applies both schemas, then exits   ← see below
+  migrate/                  refinery, its ClickHouse adapter, the schema,
+                            and the only DDL in the system
   api/                      axum
   indexer/                  tokio worker + probe server + five CLIs
 ```
 
-Fourteen crates against twelve packages. `aave-abi` is one addition and exists because of Risk 1;
-`bins/migrate` is the other, and exists because of the linkage rule below.
+Thirteen crates against twelve packages. `aave-abi` is the one addition, and exists because of
+Risk 1. Two packages have no crate of their own: `packages/migrations` lives inside `bins/migrate`,
+because nothing but that binary ever names a `Migration` and nothing can depend on a binary anyway.
 
 **Names are bare, because nothing here is published.** That is the split in the ecosystem: `alloy`,
 `reth`, `revm`, `foundry` and `agave` all prefix their package names because crates.io is one flat
@@ -98,11 +99,31 @@ every one of them, published or not, which is what the block above already draws
 `version` either, for the same reason: it is optional since Cargo 1.75, and a number nobody publishes
 is a number nobody maintains.
 
+**`[workspace.dependencies]` holds the two path deps and nothing else.** A crate declares the
+version of everything it names, because that version is something only it knows: extracting a crate
+from here means replacing its inherited `edition`, `rust-version`, `publish` and `[lints]`, each of
+which has one obvious right answer, and its dependency versions, which do not — a guess that still
+compiles is worse than a line you delete. Features come with them, since they are per-consumer
+anyway: `crates/postgres` needs `tokio/rt`, `bins/migrate` needs `rt` and `macros`.
+
+What sharing was buying, nothing now enforces. The case that would justify a check is `tokio`: two
+of them in one graph is not a compile error but a runtime found through the wrong thread-local,
+panicking on first use. `cargo tree --duplicates`, scoped to what members declare, is the check if it
+is ever wanted — unscoped it fires on `syn`, which proc macros duplicate quite legitimately.
+
+**A database crate owns its driver and re-exports it.** `clickhouse` is a dependency of
+`clickhouse-client` alone and `tokio-postgres` of `postgres` alone, because both appear in those
+crates' signatures — `client` returns a `clickhouse::Client`, `connect` a `tokio_postgres::Client` —
+and a caller that cannot name the return type has been handed half an API. That is the flaw refinery
+has: it takes an `OffsetDateTime` in `Migration::applied` and re-exports no `time`, so every backend
+picks its own version and hopes. Re-exporting instead means one dependency for the consumer and no
+version for the two of them to disagree about.
+
 The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
 ([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a
-client factory, a probe and a runner rather than "ClickHouse" anyway. `crates/postgres` needs no such
-dodge: the driver here is `tokio-postgres`, not `postgres`.
+client factory and a probe rather than "ClickHouse" anyway. `crates/postgres` needs no such dodge: the
+driver here is `tokio-postgres`, not `postgres`.
 
 **Each binary is a boundary, not just an entry point.** In Node the image is the artifact and
 `migrate.js` ships beside `main.js` in a tree where viem is one `require` away, so "the migration tool
@@ -111,15 +132,17 @@ time:
 
 | binary    | links                                                                | **cannot** link                       |
 | --------- | -------------------------------------------------------------------- | ------------------------------------- |
-| `migrate` | `migrations`, `clickhouse-client`, `postgres`, the SQL-owning crates | `alloy`, `axum` — no chain, no socket |
+| `migrate` | `clickhouse-client`, `postgres`, and the schema it embeds           | `alloy`, `axum` — no chain, no socket |
 | `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy`, `indexing`, the write paths  |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
 The third column is asserted in CI with `cargo tree -i`, so reaching across fails the build rather
 than passing review. `migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
-how [`compose.yaml`](../compose.yaml) treats it. The five operational CLIs need the indexer's graph
-exactly, so they stay `[[bin]]` targets of `bins/indexer`.
+how [`compose.yaml`](../compose.yaml) treats it. It also owns every migration concept in the
+workspace: the database crates it uses are connectivity and nothing more, so a crate named for a
+database is never where migration semantics are decided. The five operational CLIs need the indexer's
+graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 
 ## Dependency mapping
 
@@ -136,7 +159,7 @@ exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 | OpenTelemetry JS SDK | `opentelemetry` + `opentelemetry-otlp` + `tracing-opentelemetry` | see Risk 2 |
 | `bigint` | `alloy_primitives::U256` / `I256` (ruint) | see [Port notes](#port-notes) |
 | `node:crypto` HMAC | `hmac` + `sha2` + `subtle` | cursor signing; `subtle` for the constant-time compare |
-| `vitest` | `cargo test` + `testcontainers` | store specs keep running against real servers |
+| `vitest` | `cargo test` | store specs keep running against real servers, reached through `CLICKHOUSE_URL` / `POSTGRES_URL` exactly as the vitest configs reach them, with CI providing both as service containers |
 | `supertest` | `tower::ServiceExt::oneshot` | no socket needed |
 | `oxlint` + `prettier` | `clippy` + `rustfmt` | keep [`lefthook`](../lefthook.yml), add both |
 
@@ -251,17 +274,34 @@ finishes, rather than one switch at the end.
 
 ### Phase 0 — foundations
 
-Cargo workspace, `aave-abi` and its ABI drift job, `telemetry`, `ops`, `migrations`,
-`clickhouse-client`, `postgres`, both migration runners and `bins/migrate`.
+Cargo workspace, `aave-abi` and its ABI drift job, `telemetry`, `ops`, `clickhouse-client`,
+`postgres`, and `bins/migrate`.
 
-**The `.sql` files terminate their statements with `;`, and the splitter is a lexer.** They were
-separated by a `--@statement` comment marker, which meant a multi-statement file could not be pasted
-into a console at all: the client parses the whole buffer as one query and fails at the second
-statement, creating nothing — verified against clickhouse-client, 0 of 9 objects. A migration you
-cannot paste is one you cannot debug when it matters. Splitting on the character is therefore not a
-`find(';')`: 723 `--` comments, 184 string literals and 215 backtick identifiers across the corpus
-hold nineteen semicolons between them, all in prose. The scan tracks what it is inside; only a
-semicolon in open code terminates.
+**The runner is [refinery](https://docs.rs/refinery), not hand-rolled.** It drives Postgres natively.
+ClickHouse is not one of its backends, but adding one is three trait impls — `AsyncTransaction`,
+`AsyncQuery<Vec<Migration>>` and one `AsyncMigrate` method overriding the ledger DDL, because
+refinery's default is `VARCHAR(255)` with an `int4 PRIMARY KEY` and ClickHouse has neither. That is 49
+lines against the 169 a second hand-rolled runner would have cost, and thirty-five of the thirty-nine
+migrations are ClickHouse, so the alternative was refinery for four files and hand-rolled for the rest.
+
+The ledger becomes refinery's — `refinery_schema_history`, keyed on an integer version — so the ids
+are relabelled `V12__position_supply` where the file stays `012_position_supply.sql`; `schema.rs`
+carries both names.
+
+**One statement per `.sql` file, so neither runner parses SQL.** ClickHouse's HTTP interface refuses a
+body holding more than one — `Multi-statements are not allowed` — and refinery hands the adapter a
+migration's whole text as a single query. The earlier shape kept several statements in a file and a
+`;` lexer to take them apart, which meant a hundred lines of scanner tracking comments, string
+literals and backtick identifiers so that the nineteen semicolons living in the corpus's prose did not
+cut a statement in half. Splitting the files instead deletes the scanner on both sides: the file goes
+to the server as it stands, leading prose and trailing `;` included, both of which every server here
+accepts. The server is the guard — add a second statement and ClickHouse says so at deploy time.
+
+It also makes the ledger honest. A multi-statement file that failed on its third statement left the
+first two behind and was recorded nowhere, so `IF NOT EXISTS` was load-bearing on every statement;
+now a migration either applied or did not. The cost is 35 ClickHouse files where there were 14, and a
+renumbering — the fold that was `012_position_projections.sql` is `012` through `020`, one projection
+each, and the file is named for the object it creates.
 
 **The `.sql` files are embedded, not discovered.** The TypeScript reads its migration directories with
 `readdir` at startup, which only works because `pnpm deploy` copies them next to the compiled output;
@@ -285,14 +325,23 @@ run time, because the list was only known once the process was up. Here the arra
 order, so there is no ambiguity — and no runtime, since a constant cannot change after it is compiled.
 What is left worth enforcing is that the array agrees with the directory listing a reader sees, so
 `check_order` asserts **strictly ascending ordinals**, once per database union, as a test. Verified
-against the real corpus: all twenty files are already ascending in the order the application
+against the real corpus: all thirty-nine files are already ascending in the order the application
 concatenates them.
 
-**Gate:** the Rust `migrate` applies both schemas to empty databases, and the resulting
-`schema_migrations` rows and `SHOW CREATE TABLE` output are byte-identical to the TypeScript runner's.
+**Gate:** both migrators applied to empty databases produce the same schema. The ledger tables are
+excluded and expected to differ — that is the point of adopting refinery — so what is compared is
+`SHOW CREATE TABLE` for every other object and `pg_dump --schema-only`. Measured: 35 ClickHouse
+objects and 34,367 bytes identical, 59 lines of Postgres schema identical, and a second run reporting
+"schema already up to date".
 
-Phase 0 is more than one PR. Iteration 1 is the workspace itself plus `migrations`, whose own gate is
-a differential over the twenty real `.sql` files against the TypeScript loader.
+Split in two. **2a** is the two runner crates alone, proven against live servers — including the fact
+that their failure semantics differ, which is the reason there are two: a set that fails partway
+rolls back entirely on Postgres and leaves what already succeeded on ClickHouse. **2b** adds
+`bins/migrate`, the thirty-nine `include_str!` constants and the byte-identical comparison above.
+
+Phase 0 took two PRs. The first stood up the workspace, gated on a differential over the real `.sql`
+files against the TypeScript loader. The second added the two database crates and `bins/migrate`,
+gated on the byte-identical comparison above.
 
 ### Phase 1 — the arithmetic
 
@@ -360,7 +409,7 @@ Beyond the per-phase gates:
   What must not shrink is the coverage — in particular the port contract suites, the
   [four ERC-20 hazards](design-notes.md#four-erc-20-hazards-each-measured), the collapsing-semantics
   store specs, and the reorg window shapes. Store specs keep running against real ClickHouse and
-  Postgres through `testcontainers`, because what they assert is that the SQL executes.
+  Postgres, because what they assert is that the SQL executes.
 - **The mutation tests survive the move.** The design notes name specific mutants that must turn a
   spec red — dropping the `context.with()`, the error status on a retry, the head clamp, the failover
   transition guard, awaiting inside `onBlockRange`, collapsing the two enrichment outcomes into one.

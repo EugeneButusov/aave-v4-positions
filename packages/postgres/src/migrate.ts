@@ -46,8 +46,7 @@ export async function migrate(sql: Sql, migrations: readonly Migration[]): Promi
   const pending = ordered(migrations);
 
   const [ledger] = await loadMigrations([LEDGER_DIR]);
-  const [ledgerStatement] = ledger?.statements ?? [];
-  if (!ledgerStatement) throw new Error(`no ledger migration found in ${LEDGER_DIR}`);
+  if (!ledger) throw new Error(`no ledger migration found in ${LEDGER_DIR}`);
 
   return sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(${MIGRATION_LOCK_KEY})`;
@@ -55,7 +54,7 @@ export async function migrate(sql: Sql, migrations: readonly Migration[]): Promi
     // `unsafe` because DDL cannot be parameterised, and there is nothing unsafe
     // about it here: the string is a `.sql` file from this repository, read off
     // disk at deploy time, never anything a request supplied.
-    await tx.unsafe(ledgerStatement);
+    await tx.unsafe(ledger.statement);
 
     const done = await appliedIds(tx);
     const applied: string[] = [];
@@ -63,13 +62,10 @@ export async function migrate(sql: Sql, migrations: readonly Migration[]): Promi
     for (const migration of pending) {
       if (done.has(migration.id)) continue;
 
-      for (const statement of migration.statements) {
-        // Sequential because migrations are order-dependent: a view selects from
-        // the table created by the migration before it, and within a file the
-        // same holds statement to statement.
-        // oxlint-disable-next-line no-await-in-loop
-        await tx.unsafe(statement);
-      }
+      // Sequential because migrations are order-dependent: a view selects from
+      // the table created by the migration before it.
+      // oxlint-disable-next-line no-await-in-loop
+      await tx.unsafe(migration.statement);
 
       // oxlint-disable-next-line no-await-in-loop
       await tx`INSERT INTO schema_migrations ${tx({ id: migration.id })} ON CONFLICT (id) DO NOTHING`;

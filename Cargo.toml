@@ -2,7 +2,7 @@
 # 3 for MSRV-aware resolution: `cargo update` respects rust-version rather than
 # silently raising the floor.
 resolver = "3"
-members = ["crates/*"]
+members = ["bins/*", "crates/*"]
 
 [workspace.package]
 edition = "2024"
@@ -10,10 +10,15 @@ rust-version = "1.96"
 publish = false
 
 [workspace.dependencies]
-thiserror = "2.0.19"
+clickhouse-client = { path = "crates/clickhouse" }
+postgres = { path = "crates/postgres" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+# A binary crate cannot be depended on, so every `pub` in one claims a reach it
+# does not have.
+unreachable_pub = "deny"
 
 # Cast lints are pedantic's, allow-by-default: a lossy cast is this language's
 # silent wrong number.

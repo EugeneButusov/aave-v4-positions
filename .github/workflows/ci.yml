@@ -19,13 +19,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    # The store specs run against real servers rather than mocks: what they
-    # assert is that the SQL executes — the collapsing semantics on one side, the
-    # upsert-and-prune in a single data-modifying CTE on the other — and neither
-    # is something a fake can tell us. CLICKHOUSE_SKIP_USER_SETUP and
-    # POSTGRES_HOST_AUTH_METHOD both drop the password, so the defaults in the
-    # vitest configs need no secrets.
-    services:
+    # Both suites run their store specs against real servers rather than mocks:
+    # what they assert is that the SQL executes — the collapsing semantics on one
+    # side, the upsert-and-prune in a single data-modifying CTE on the other, and
+    # for the Rust runners how each behaves when a set fails partway. Nothing a
+    # fake can tell us. CLICKHOUSE_SKIP_USER_SETUP and POSTGRES_HOST_AUTH_METHOD
+    # both drop the password, so the defaults in the vitest configs and the Rust
+    # tests need no secrets.
+    #
+    # Anchored rather than written twice. Service containers are per job and are
+    # destroyed when it ends, so the `rust` job below genuinely gets its own pair
+    # on its own runner — what the alias removes is the duplicated YAML, not
+    # duplicated containers.
+    services: &databases
       clickhouse:
         image: clickhouse/clickhouse-server:26.3-alpine
         ports:
@@ -95,6 +101,8 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    services: *databases
 
     steps:
       - uses: actions/checkout@v7

@@ -3,7 +3,6 @@ import { join } from 'node:path';
 
 import type { ClickHouseClient } from '@clickhouse/client';
 import { ClickHouseSpokeEventStore, type DecodedEvent } from '@aave-positions/events';
-import { splitStatements } from '@packages/migrations';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ClickHousePositionStore, POSITION_MIGRATIONS_DIR } from './clickhouse-position-store';
@@ -48,15 +47,9 @@ async function positions(user: string = ALICE): Promise<Position[]> {
   return [...page.items];
 }
 
-/** One view's DDL, out of the file that holds all nine. */
-async function projection(name: string): Promise<string> {
-  const file = await readFile(
-    join(POSITION_MIGRATIONS_DIR, '012_position_projections.sql'),
-    'utf8',
-  );
-  const statement = splitStatements(file).find((s) => s.includes(name));
-  if (statement === undefined) throw new Error(`no projection named ${name}`);
-  return statement;
+/** One view's DDL, which is the whole of the file named after it. */
+async function projection(file: string): Promise<string> {
+  return readFile(join(POSITION_MIGRATIONS_DIR, `${file}.sql`), 'utf8');
 }
 
 async function scalar(query: string): Promise<string> {
@@ -372,7 +365,7 @@ describe('the position fold', () => {
       // projection to a populated ledger.
       await client.command({ query: `DROP VIEW position_supply` });
       await index(500, 500, [supply({ block: 500 }, ALICE, '7', '100')]);
-      await client.command({ query: await projection('position_supply') });
+      await client.command({ query: await projection('012_position_supply') });
 
       await index(500, 500, [supply({ block: 500 }, ALICE, '7', '100')]);
 
