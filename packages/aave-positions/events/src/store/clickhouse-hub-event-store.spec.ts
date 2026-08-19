@@ -1,9 +1,8 @@
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
-import { migrate } from '@packages/clickhouse';
-import { loadMigrations } from '@packages/migrations';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DecodedEvent } from '../decode/decoded-event';
+import { applySql } from './apply-sql';
 import { EVENT_MIGRATIONS_DIR } from './clickhouse-event-store';
 import { ClickHouseHubEventStore } from './clickhouse-hub-event-store';
 import { ClickHouseSpokeEventStore } from './clickhouse-spoke-event-store';
@@ -60,7 +59,7 @@ describe('ClickHouseHubEventStore', () => {
     await bootstrap.close();
 
     client = createClient({ ...CONNECTION, database: DATABASE });
-    await migrate(client, await loadMigrations([EVENT_MIGRATIONS_DIR]));
+    await applySql(client, [EVENT_MIGRATIONS_DIR]);
     hub = new ClickHouseHubEventStore(client);
     spoke = new ClickHouseSpokeEventStore(client);
   });

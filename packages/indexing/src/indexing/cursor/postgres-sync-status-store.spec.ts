@@ -1,9 +1,8 @@
-import { loadMigrations } from '@packages/migrations';
-import { migrate } from '@packages/postgres';
 import postgres from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { INDEXING_MIGRATIONS_DIR } from '../../postgres-migrations';
+import { applySql } from '../../test-support/apply-sql';
 import { hashOf } from '../../test-support/fake-chain-client';
 import { PostgresCursorStore } from './postgres-cursor-store';
 import { PostgresSyncStatusStore } from './postgres-sync-status-store';
@@ -26,7 +25,7 @@ beforeAll(async () => {
     await admin.end();
   }
 
-  await migrate(sql, await loadMigrations([INDEXING_MIGRATIONS_DIR]));
+  await applySql(sql, [INDEXING_MIGRATIONS_DIR]);
 });
 
 afterAll(async () => {

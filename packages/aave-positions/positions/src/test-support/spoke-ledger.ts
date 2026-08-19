@@ -1,7 +1,8 @@
+import { readdir, readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import { EVENT_MIGRATIONS_DIR, type DecodedEvent } from '@aave-positions/events';
-import { migrate } from '@packages/clickhouse';
-import { loadMigrations } from '@packages/migrations';
 import type { Address } from '@packages/indexing';
 
 import { POSITION_MIGRATIONS_DIR } from '../store/clickhouse-position-store';
@@ -143,18 +144,44 @@ const CONNECTION = {
  */
 export async function migratedDatabase(name: string): Promise<ClickHouseClient> {
   const bootstrap = createClient(CONNECTION);
-  // **Dropped first, not `IF NOT EXISTS`.** `migrate` skips ids already in
-  // `schema_migrations`, so a database left behind by an earlier run keeps
-  // whatever schema it was first created with — editing a migration would then
-  // have no effect locally, and the suite would go on testing a table that no
-  // longer matches the file. Found the hard way: a mutation that removed a
-  // projection from `021` left every spec green here and would have failed only
+  // **Dropped first, not `IF NOT EXISTS`.** Every migration is written
+  // `IF NOT EXISTS`, so against a database left behind by an earlier run the
+  // whole set is a no-op — it keeps whatever schema it was first created with,
+  // editing a migration has no effect locally, and the suite goes on testing a
+  // table that no longer matches the file. Found the hard way: a mutation that
+  // removed a projection left every spec green here and would have failed only
   // in CI, where the server is always fresh.
   await bootstrap.command({ query: `DROP DATABASE IF EXISTS ${name}` });
   await bootstrap.command({ query: `CREATE DATABASE ${name}` });
   await bootstrap.close();
 
   const client = createClient({ ...CONNECTION, database: name });
-  await migrate(client, await loadMigrations([EVENT_MIGRATIONS_DIR, POSITION_MIGRATIONS_DIR]));
+  await applySql(client, [EVENT_MIGRATIONS_DIR, POSITION_MIGRATIONS_DIR]);
   return client;
+}
+
+/**
+ * Applies every `.sql` file in these directories, in ordinal order across them.
+ *
+ * **Not a migration runner.** `bins/migrate` is the only one, and the only thing
+ * that keeps a ledger. The database above was created empty a line ago, so there
+ * is nothing to skip and nothing to record.
+ *
+ * Ordering is by filename across both directories rather than one then the
+ * other, which is what puts the projections after the table they read: `010`
+ * beats `002` wherever each of them lives.
+ */
+async function applySql(client: ClickHouseClient, directories: readonly string[]): Promise<void> {
+  const found = await Promise.all(
+    directories.map(async (directory) =>
+      (await readdir(directory))
+        .filter((entry) => entry.endsWith('.sql'))
+        .map((entry) => join(directory, entry)),
+    ),
+  );
+
+  for (const file of found.flat().toSorted((a, b) => basename(a).localeCompare(basename(b)))) {
+    // oxlint-disable-next-line no-await-in-loop
+    await client.command({ query: await readFile(file, 'utf8') });
+  }
 }

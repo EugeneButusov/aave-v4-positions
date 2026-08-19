@@ -11,7 +11,6 @@ export default defineConfig({
   // for the same reason the apps do: otherwise a stale dist is what gets tested.
   resolve: {
     alias: {
-      '@packages/migrations': fileURLToPath(new URL('../migrations/src/index.ts', import.meta.url)),
       '@packages/ops': fileURLToPath(new URL('../ops/src/index.ts', import.meta.url)),
       '@packages/postgres': fileURLToPath(new URL('../postgres/src/index.ts', import.meta.url)),
     },

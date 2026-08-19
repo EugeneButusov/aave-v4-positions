@@ -16,7 +16,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.build.json && node -e \"require('node:fs').cpSync('src/migrations','dist/migrations',{recursive:true})\"",
+    "build": "rimraf dist && tsc -p tsconfig.build.json",
     "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -26,7 +26,6 @@
     "@clickhouse/client": "catalog:",
     "@nestjs/common": "catalog:",
     "@opentelemetry/api": "catalog:",
-    "@packages/migrations": "workspace:*",
     "@packages/ops": "workspace:*",
     "reflect-metadata": "catalog:",
     "rxjs": "catalog:"

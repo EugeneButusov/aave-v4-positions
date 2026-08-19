@@ -112,9 +112,10 @@ readiness probe and the [migration runner](#schema-and-migrations), and nothing 
 stored in it. Repositories live with whatever owns their tables and inject the client from here, so
 this package never becomes a catalogue of every table in the system.
 
-`@packages/postgres` is the same package for the other database, and `@packages/migrations` is what
-fell out when there were two: reading and ordering `.sql` files needs no client, and two copies of the
-ordinal-collision rule would drift silently.
+`@packages/postgres` is the same package for the other database. Neither applies migrations any more:
+`bins/migrate` is the only thing that does, and the only thing that keeps a ledger. A spec that needs
+a schema executes the `.sql` files against a database it just created — no ledger, nothing to skip,
+and a dozen lines that stay in the package that needs them.
 
 `@packages/indexing` is the [loop](#indexing) and the seams it drives. It knows about block numbers,
 forks and cursors, and nothing about Aave — a processor is something a consumer writes. It had to

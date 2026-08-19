@@ -3,14 +3,13 @@ import type { Address } from '@packages/indexing';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { DecodedEvent } from '../decode/decoded-event';
+import { applySql } from './apply-sql';
 import { EVENT_MIGRATIONS_DIR } from './clickhouse-event-store';
 import {
   ClickHouseSpokeEventStore,
   SPOKE_EVENTS_TABLE as EVENTS_TABLE,
   SPOKE_EVENTS_VIEW as EVENTS_VIEW,
 } from './clickhouse-spoke-event-store';
-import { migrate } from '@packages/clickhouse';
-import { loadMigrations } from '@packages/migrations';
 
 /** Its own database, for the reason spelled out in `beforeAll`. */
 const DATABASE = 'spec_spoke_events';
@@ -82,7 +81,7 @@ describe('ClickHouseSpokeEventStore', () => {
     // Running the application's `migrate` against a local ClickHouse is enough
     // to put those projections in `default`, which is why this suite does not
     // use it.
-    await migrate(client, await loadMigrations([EVENT_MIGRATIONS_DIR]));
+    await applySql(client, [EVENT_MIGRATIONS_DIR]);
     store = new ClickHouseSpokeEventStore(client);
   });
 

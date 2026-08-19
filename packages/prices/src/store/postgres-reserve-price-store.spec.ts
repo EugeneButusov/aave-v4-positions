@@ -1,6 +1,7 @@
-import { loadMigrations } from '@packages/migrations';
-import { migrate } from '@packages/postgres';
-import postgres from 'postgres';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import postgres, { type Sql } from 'postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { PRICE_MIGRATIONS_DIR } from '../migrations';
@@ -34,7 +35,7 @@ beforeAll(async () => {
     await admin.end();
   }
 
-  await migrate(sql, await loadMigrations([PRICE_MIGRATIONS_DIR]));
+  await applySql(sql, PRICE_MIGRATIONS_DIR);
 });
 
 afterAll(async () => {
@@ -192,3 +193,23 @@ describe('PostgresReservePriceStore', () => {
     });
   });
 });
+
+/**
+ * Applies every `.sql` file in this directory to the schema created above.
+ *
+ * **Not a migration runner.** `bins/migrate` is the only one, and the only thing
+ * that keeps a ledger or decides what is pending. The schema is a line old, so
+ * there is nothing to skip — and every migration here is written
+ * `IF NOT EXISTS`, so a second call does nothing without anything recording the
+ * first.
+ */
+async function applySql(target: Sql, directory: string): Promise<void> {
+  const files = (await readdir(directory)).filter((entry) => entry.endsWith('.sql')).toSorted();
+
+  for (const file of files) {
+    // `unsafe` because DDL cannot be parameterised, and there is nothing unsafe
+    // about it: the string is a file from this repository, not a request.
+    // oxlint-disable-next-line no-await-in-loop
+    await target.unsafe(await readFile(join(directory, file), 'utf8'));
+  }
+}
