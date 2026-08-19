@@ -22,7 +22,7 @@ use crate::schema::Embedded;
 /// [`Error::Unreadable`] if the directory cannot be listed — which matters, since
 /// a wrong path returning `Ok` would make the whole guarantee vacuous — and
 /// [`Error::NotEmbedded`] or [`Error::NotOnDisk`] for a disagreement either way.
-pub fn check_complete(files: &[Embedded], directory: &Path) -> Result<(), Error> {
+pub(crate) fn check_complete(files: &[Embedded], directory: &Path) -> Result<(), Error> {
     let unreadable = |source| Error::Unreadable {
         directory: directory.to_path_buf(),
         source,
@@ -61,7 +61,7 @@ pub fn check_complete(files: &[Embedded], directory: &Path) -> Result<(), Error>
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("{}/{id}.sql is not embedded by any entry in schema.rs", directory.display())]
     NotEmbedded { directory: PathBuf, id: String },
 

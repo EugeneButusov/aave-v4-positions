@@ -13,7 +13,7 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 /// A ClickHouse client, in the shape refinery drives.
-pub struct ClickHouse(pub clickhouse::Client);
+pub(crate) struct ClickHouse(pub clickhouse::Client);
 
 #[async_trait]
 impl AsyncTransaction for ClickHouse {

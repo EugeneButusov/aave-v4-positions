@@ -16,26 +16,26 @@
 use refinery_core::{Error, Migration};
 
 /// One `.sql` file, and the two names it goes by.
-pub struct Embedded {
+pub(crate) struct Embedded {
     /// The basename without `.sql`, which is what the directory calls it. Only
     /// the completeness test reads this.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub file: &'static str,
+    pub(crate) file: &'static str,
     /// What refinery calls it. Its parser requires `V{version}__{name}`, and
     /// the version has to be an integer, so `012_position_supply` becomes
     /// `V12__position_supply` — same order, refinery's spelling.
-    pub label: &'static str,
+    pub(crate) label: &'static str,
     /// The whole file, sent as it stands. One statement per file, so nothing
     /// here has to be taken apart before it reaches a server.
-    pub sql: &'static str,
+    pub(crate) sql: &'static str,
 }
 
 /// One future crate's worth of schema, and where it is read from.
-pub struct Source {
+pub(crate) struct Source {
     /// Relative to this crate's manifest, which is what a test's cwd is.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub directory: &'static str,
-    pub files: &'static [Embedded],
+    pub(crate) directory: &'static str,
+    pub(crate) files: &'static [Embedded],
 }
 
 /// Flattens the groups into the migration set refinery is handed.
@@ -44,7 +44,7 @@ pub struct Source {
 ///
 /// Propagates refinery's parse error if a label is not `V{version}__{name}` —
 /// which would be a typo in this file, caught the first time it runs.
-pub fn union(sources: &[Source]) -> Result<Vec<Migration>, Error> {
+pub(crate) fn union(sources: &[Source]) -> Result<Vec<Migration>, Error> {
     sources
         .iter()
         .flat_map(|source| source.files)
@@ -53,7 +53,7 @@ pub fn union(sources: &[Source]) -> Result<Vec<Migration>, Error> {
 }
 
 /// The ClickHouse schema: the two append-only ledgers and the folds over them.
-pub const CLICKHOUSE: &[Source] = &[
+pub(crate) const CLICKHOUSE: &[Source] = &[
     // the Spoke and Hub event ledgers
     Source {
         directory: "../../packages/aave-positions/events/src/store/clickhouse-migrations",
@@ -315,7 +315,7 @@ pub const CLICKHOUSE: &[Source] = &[
 
 /// The Postgres schema: the indexer's own position, and the two enrichment
 /// dimensions.
-pub const POSTGRES: &[Source] = &[
+pub(crate) const POSTGRES: &[Source] = &[
     // the indexer's own position
     Source {
         directory: "../../packages/indexing/src/postgres-migrations",
