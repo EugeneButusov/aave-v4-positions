@@ -14,11 +14,11 @@ use crate::error::Error;
 ///
 /// # Errors
 ///
-/// [`Error::Connect`] if the URL will not parse or the server will not have us.
+/// [`Error::ConnectFailed`] if the URL will not parse or the server will not have us.
 pub async fn connect(url: &str) -> Result<tokio_postgres::Client, Error> {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
-        .map_err(|source| Error::Connect { source })?;
+        .map_err(|source| Error::ConnectFailed { source })?;
 
     // tokio-postgres hands back the client and the connection separately: the
     // client only queues messages, and this task is what drives the socket. Skip
