@@ -10,14 +10,10 @@ rust-version = "1.96"
 publish = false
 
 [workspace.dependencies]
-async-trait = "0.1"
 clickhouse = "0.15.1"
 clickhouse-client = { path = "crates/clickhouse" }
 postgres = { path = "crates/postgres" }
-refinery = { version = "0.9.2", default-features = false, features = ["tokio-postgres"] }
-refinery-core = { version = "0.9.2", default-features = false }
 thiserror = "2.0.19"
-time = "0.3"
 tokio = "1.53.1"
 tokio-postgres = "0.7.18"
 
