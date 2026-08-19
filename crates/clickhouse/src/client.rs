@@ -2,7 +2,7 @@
 ///
 /// Four discrete parts rather than one URL, because that is what the server's
 /// HTTP interface takes and what every deployment of it hands you. Postgres gets
-/// a URL for the opposite reason — see `postgres::connect`.
+/// a URL for the opposite reason — see `postgres::client`.
 ///
 /// Taken as parameters rather than read from the environment: a library that
 /// reaches for `std::env` cannot be used twice in one process with two different

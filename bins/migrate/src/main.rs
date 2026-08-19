@@ -49,9 +49,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     report("clickhouse", &applied);
 
-    let mut connection = postgres::connect(&env("POSTGRES_URL", POSTGRES_URL)).await?;
+    let mut target = postgres::client(&env("POSTGRES_URL", POSTGRES_URL)).await?;
     let applied = Runner::new(&schema::union(schema::POSTGRES)?)
-        .run_async(&mut connection)
+        .run_async(&mut target)
         .await?;
     report("postgres", &applied);
 
