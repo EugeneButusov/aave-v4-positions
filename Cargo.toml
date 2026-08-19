@@ -10,12 +10,10 @@ rust-version = "1.96"
 publish = false
 
 [workspace.dependencies]
-clickhouse = "0.15.1"
 clickhouse-client = { path = "crates/clickhouse" }
 postgres = { path = "crates/postgres" }
 thiserror = "2.0.19"
 tokio = "1.53.1"
-tokio-postgres = "0.7.18"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

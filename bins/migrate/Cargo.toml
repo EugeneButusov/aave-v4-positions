@@ -6,12 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-clickhouse.workspace = true
 clickhouse-client.workspace = true
 postgres.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
-tokio-postgres.workspace = true
 
 # Only this crate uses these, so the workspace has no version to agree on.
 # `time` is here because refinery takes an `OffsetDateTime` in `Migration::applied`

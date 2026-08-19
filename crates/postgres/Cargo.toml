@@ -8,7 +8,9 @@ publish.workspace = true
 [dependencies]
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt"] }
-tokio-postgres.workspace = true
+
+# Only this crate builds against the driver; everyone else goes through it.
+tokio-postgres = "0.7.18"
 
 [lints]
 workspace = true

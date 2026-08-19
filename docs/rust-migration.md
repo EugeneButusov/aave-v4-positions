@@ -109,6 +109,14 @@ Features stay on the member either way, because they are per-consumer — `crate
 `tokio/rt` and `bins/migrate` needs `rt` and `macros`, and hoisting that would erase which crate
 wanted which. CI rejects a member that re-declares something the table already shares.
 
+**A database crate owns its driver and re-exports it.** `clickhouse` is a dependency of
+`clickhouse-client` alone and `tokio-postgres` of `postgres` alone, because both appear in those
+crates' signatures — `client` returns a `clickhouse::Client`, `connect` a `tokio_postgres::Client` —
+and a caller that cannot name the return type has been handed half an API. That is the flaw refinery
+has: it takes an `OffsetDateTime` in `Migration::applied` and re-exports no `time`, so every backend
+picks its own version and hopes. Re-exporting instead means one dependency for the consumer and no
+version for the two of them to disagree about.
+
 The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
 ([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a

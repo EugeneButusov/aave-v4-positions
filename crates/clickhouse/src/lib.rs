@@ -6,4 +6,7 @@
 
 mod client;
 
+/// The driver, so a caller naming a `Client` or an `Error` needs one dependency
+/// and cannot end up on a different version than this crate was built against.
+pub use clickhouse;
 pub use client::{Config, client};

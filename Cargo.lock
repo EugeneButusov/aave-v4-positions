@@ -616,7 +616,6 @@ name = "migrate"
 version = "0.0.0"
 dependencies = [
  "async-trait",
- "clickhouse",
  "clickhouse-client",
  "postgres",
  "refinery",
@@ -624,7 +623,6 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
- "tokio-postgres",
 ]
 
 [[package]]

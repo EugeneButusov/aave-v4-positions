@@ -6,6 +6,7 @@
 //! second hand-rolled runner beside refinery rather than none.
 
 use async_trait::async_trait;
+use clickhouse_client::clickhouse;
 use refinery_core::Migration;
 use refinery_core::traits::r#async::{AsyncMigrate, AsyncQuery, AsyncTransaction};
 use time::OffsetDateTime;
