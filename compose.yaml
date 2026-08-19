@@ -96,6 +96,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
       args:
         APP: api
     init: true
@@ -159,6 +160,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
       args:
         APP: indexer
     init: true

@@ -1,10 +1,58 @@
 # syntax=docker/dockerfile:1
 
-# One Dockerfile for both services; compose passes APP=api or APP=indexer.
-# `migrate` is a third target and shares nothing with them — see its stage.
+# Three targets. `migrate` is the Rust binary that applies the schema; `runtime`
+# is either Node service, chosen with APP=api or APP=indexer.
+#
+# **Every consumer names its target.** `runtime` is last so a bare `docker build`
+# still produces a service image, but compose says which one it wants either way
+# — appending a stage must not be able to change what an existing service is.
 ARG NODE_VERSION=24
 ARG RUST_VERSION=1.96
 ARG ALPINE_VERSION=3.24
+
+# ------------------------------------------------------------- rust-build ----
+# The schema is applied by a Rust binary, so this stage shares no layer with the
+# Node ones above. `rust:*-alpine` builds against musl, which is what the runtime
+# below wants anyway.
+FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS rust-build
+# The linker and crt objects. Nothing more: the dependency tree is pure Rust —
+# no `-sys` crates and no build script that shells out to a C compiler — which
+# is what makes a musl build this uneventful.
+RUN apk add --no-cache musl-dev
+WORKDIR /src
+
+# rust-toolchain.toml first, so rustup installs the pinned toolchain rather than
+# whatever the image tag happens to carry.
+COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY bins ./bins
+
+# The SQL, named one directory at a time rather than copying `packages`.
+# `bins/migrate/src/schema.rs` embeds every file with `include_str!` and the
+# paths reach back here, so these are a build input; listing them exactly keeps
+# a TypeScript edit from invalidating this layer. They come home in Phase 5.
+COPY packages/aave-positions/events/src/store/clickhouse-migrations ./packages/aave-positions/events/src/store/clickhouse-migrations
+COPY packages/aave-positions/positions/src/store/clickhouse-migrations ./packages/aave-positions/positions/src/store/clickhouse-migrations
+COPY packages/indexing/src/postgres-migrations ./packages/indexing/src/postgres-migrations
+COPY packages/token-metadata/src/migrations ./packages/token-metadata/src/migrations
+COPY packages/prices/src/migrations ./packages/prices/src/migrations
+
+RUN cargo build --release --locked -p migrate
+
+# ---------------------------------------------------------------- migrate ----
+FROM alpine:${ALPINE_VERSION} AS migrate
+# The image is the binary. It reads no file at runtime — every `.sql` is
+# compiled in and the whole configuration is five environment variables — so
+# there is nothing to copy beside it and nothing to mount.
+#
+# Alpine rather than scratch: the binary is musl-linked either way, and one
+# shell is worth having the first time a migration fails inside a container.
+COPY --from=rust-build /src/target/release/migrate /usr/local/bin/migrate
+USER nobody
+
+# Exec form and no shell, so a `docker compose down` mid-migration reaches the
+# process. There is nothing to drain — a failed run leaves the ledger accurate.
+ENTRYPOINT ["/usr/local/bin/migrate"]
 
 # ---------------------------------------------------------------- build ------
 FROM node:${NODE_VERSION}-alpine AS build
@@ -66,47 +114,3 @@ USER node
 # workspace packages. `OTEL_SDK_DISABLED=true` makes it a no-op without a
 # rebuild, which is what the overhead A/B in the README relies on.
 CMD ["node", "--require", "@packages/telemetry/start", "--enable-source-maps", "dist/main.js"]
-
-# ------------------------------------------------------------- rust-build ----
-# The schema is applied by a Rust binary, so this stage shares no layer with the
-# Node ones above. `rust:*-alpine` builds against musl, which is what the runtime
-# below wants anyway.
-FROM rust:${RUST_VERSION}-alpine${ALPINE_VERSION} AS rust-build
-# The linker and crt objects. Nothing more: the dependency tree is pure Rust —
-# no `-sys` crates and no build script that shells out to a C compiler — which
-# is what makes a musl build this uneventful.
-RUN apk add --no-cache musl-dev
-WORKDIR /src
-
-# rust-toolchain.toml first, so rustup installs the pinned toolchain rather than
-# whatever the image tag happens to carry.
-COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
-COPY crates ./crates
-COPY bins ./bins
-
-# The SQL, named one directory at a time rather than copying `packages`.
-# `bins/migrate/src/schema.rs` embeds every file with `include_str!` and the
-# paths reach back here, so these are a build input; listing them exactly keeps
-# a TypeScript edit from invalidating this layer. They come home in Phase 5.
-COPY packages/aave-positions/events/src/store/clickhouse-migrations ./packages/aave-positions/events/src/store/clickhouse-migrations
-COPY packages/aave-positions/positions/src/store/clickhouse-migrations ./packages/aave-positions/positions/src/store/clickhouse-migrations
-COPY packages/indexing/src/postgres-migrations ./packages/indexing/src/postgres-migrations
-COPY packages/token-metadata/src/migrations ./packages/token-metadata/src/migrations
-COPY packages/prices/src/migrations ./packages/prices/src/migrations
-
-RUN cargo build --release --locked -p migrate
-
-# ---------------------------------------------------------------- migrate ----
-FROM alpine:${ALPINE_VERSION} AS migrate
-# The image is the binary. It reads no file at runtime — every `.sql` is
-# compiled in and the whole configuration is five environment variables — so
-# there is nothing to copy beside it and nothing to mount.
-#
-# Alpine rather than scratch: the binary is musl-linked either way, and one
-# shell is worth having the first time a migration fails inside a container.
-COPY --from=rust-build /src/target/release/migrate /usr/local/bin/migrate
-USER nobody
-
-# Exec form and no shell, so a `docker compose down` mid-migration reaches the
-# process. There is nothing to drain — a failed run leaves the ledger accurate.
-ENTRYPOINT ["/usr/local/bin/migrate"]
