@@ -178,9 +178,12 @@ cargo run --release -p migrate                     # schema is its own step, nev
 pnpm dev:indexer                                   # and, in another shell, pnpm dev:api
 ```
 
-Needs Node 24, pnpm 11, and a ClickHouse and Postgres to point at —
+Needs Node 24, pnpm 11, Rust 1.96 — `rust-toolchain.toml` pins it and rustup installs it on the
+first `cargo` command — and a ClickHouse and Postgres to point at;
 [Prerequisites](docs/design-notes.md#prerequisites) has the two `docker run` lines. `pnpm check` runs
-format, lint, typecheck and the full test suite: **743 tests across 65 files, in about 17 seconds**.
+format, lint, typecheck and the TypeScript suite: **716 tests across 63 files, in about 17 seconds**.
+It is not the whole gate any more — CI also runs `cargo fmt`, `clippy`, `cargo test --workspace` and
+a release build, so a change under `bins/` or `crates/` passes `pnpm check` and can still fail.
 Docker is required for them too — the store specs go against real servers rather than mocks, because
 what they assert is that the SQL executes, and no fake can tell you that.
 

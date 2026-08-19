@@ -27,7 +27,7 @@ lefthook, the [indexing framework](#indexing) — chain client with provider fai
 cursor and processor seams, and hash-chain reorg detection over a retained header window, with a
 detected fork re-reported on the next start until it has actually been applied; a durable cursor and
 header window in Postgres, so a restart resumes instead of re-indexing; the shared ClickHouse
-layer of client, readiness probe and [migration runner](#schema-and-migrations); and
+layer of client and readiness probe; and
 [event ingestion](#event-ingestion) — the eight Main Spoke events that move a position and the
 thirteen [Core Hub events](#the-hub-ledger-and-why-it-is-a-second-table) that will value them,
 decoded against the official ABIs into two append-only ledgers;
@@ -53,9 +53,8 @@ longer list, in rough order of what comes next.
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
-│   ├── clickhouse/          the client, its Nest module, a probe, the migration runner
-│   ├── postgres/            the same four things for the indexer's own state
-│   ├── migrations/          reads and orders .sql files; no client, so both runners share it
+│   ├── clickhouse/          the client, its Nest module, a probe
+│   ├── postgres/            the same three things for the indexer's own state
 │   ├── indexing/            the chain-agnostic indexing engine
 │   │   └── src/
 │   │       ├── chain/           RPC access — the ChainClient and LogReader ports
@@ -107,9 +106,9 @@ boundary. It carries no Aave domain knowledge and would work in any Kubernetes-d
 so the share maths becomes its own package rather than accumulating here. Wrapping `nestjs-pino`
 there also means no app depends on it directly.
 
-`@packages/clickhouse` is the database layer on the same terms — the client, its Nest module, a
-readiness probe and the [migration runner](#schema-and-migrations), and nothing that knows what is
-stored in it. Repositories live with whatever owns their tables and inject the client from here, so
+`@packages/clickhouse` is the database layer on the same terms — the client, its Nest module and a
+readiness probe, and nothing that knows what is stored in it. Applying schema is not among them: that
+is [`bins/migrate`](#schema-and-migrations) and nothing else. Repositories live with whatever owns their tables and inject the client from here, so
 this package never becomes a catalogue of every table in the system.
 
 `@packages/postgres` is the same package for the other database. Neither applies migrations any more:
@@ -123,7 +122,7 @@ leave `apps/indexer` for that to be true at all: a package cannot import from an
 
 Each seam folder holds its port and the adapter behind it side by side — `cursor/` has `CursorStore`
 and `PostgresCursorStore`, `reorg/` the same for the header window. The two tables those adapters own
-ship as `.sql` from `src/postgres-migrations/`, and the application names the directory. There is
+ship as `.sql` from `src/postgres-migrations/`, and `bins/migrate` names the directory. There is
 **one** adapter per persistence port, not two: an in-memory cursor under a durable window (or the
 reverse) names a resume point nothing can vet, so the second one would exist only to be wired by
 mistake. The in-memory doubles live in `test-support/` with the other fakes, and they run the same
@@ -141,14 +140,13 @@ package, and the asymmetry is the design — ingestion is code, so that package 
 write path, while this one owns a query, because the database maintains the projection. There is
 nothing here to start and nothing to keep in step with the indexer.
 
-`apps/indexer` is left with composition and nothing else. The service itself is about 480 lines —
-`main.ts`, `AppModule`, env validation and the migration entry point — and the rest of the directory
-is the six CLIs (backfill, two reconciliations, enrichment, pricing, migrate), each of which is
-argument parsing over a module resolved from the same DI graph the daemon uses. There is no domain
-logic in any of it. Everything it _does_ comes from the packages it wires together, which is what
-makes the engine reusable and the Aave half independently testable. It is also the composition point
-for schema: each package owns the migrations for its own tables, and the application declares which
-sets ship together — the same reason it is the application that names which processors to run.
+`apps/indexer` is left with composition and nothing else. The service itself is about 370 lines —
+`main.ts`, `AppModule` and env validation — and the rest of the directory is the five CLIs (backfill,
+two reconciliations, enrichment, pricing), each of which is argument parsing over a module resolved
+from the same DI graph the daemon uses. There is no domain logic in any of it. Everything it _does_
+comes from the packages it wires together, which is what makes the engine reusable and the Aave half
+independently testable. It is no longer the composition point for schema: that moved to
+`bins/migrate` in Phase 0, and applying migrations is not something this process can do at all.
 
 `apps/api` is the same shape on the read side: a controller, a service that maps the domain type onto
 a wire contract, and the request schemas. It owns two things the packages deliberately do not — the
@@ -167,6 +165,9 @@ aliases the workspace packages, one entry each, so tests can never exercise a st
 - **Node 24** — enforced by `engines` with `engine-strict` on, so an older runtime fails at install
   rather than at runtime. It is the only version CI runs, so the declaration and the evidence match.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
+- **Rust 1.96**, to apply the schema. `rust-toolchain.toml` pins the exact channel and rustup
+  installs it on the first `cargo` command, so there is nothing to choose. Only the migrator is Rust
+  so far; everything else still builds without it.
 - **Docker**, to run the tests. The store specs go against real servers rather than mocks: what they
   assert is that the SQL executes — the collapsing semantics on one side, upsert-and-prune in a single
   data-modifying CTE on the other — and neither is something a fake can tell you. CI runs the same
@@ -285,11 +286,18 @@ If 3000 or 3001 are taken:
 API_PORT=4000 INDEXER_PORT=4001 docker compose up --build
 ```
 
-One [`Dockerfile`](../Dockerfile) serves both services — compose passes `APP=api` or `APP=indexer`. It
-is a multi-stage build: manifests are copied before sources so the dependency layer survives a source
-edit, and `pnpm deploy` collects the app, its built workspace packages and production-only
-`node_modules` into a self-contained directory. The runtime stage carries that and nothing else, and
-runs as the image's unprivileged `node` user.
+One [`Dockerfile`](../Dockerfile) holds three targets. `runtime` serves both Node services — compose
+passes `APP=api` or `APP=indexer` — and `migrate` is a bare `alpine` carrying the Rust binary and
+nothing else, built by a `rust-build` stage above it.
+
+The Node half is a multi-stage build: manifests are copied before sources so the dependency layer
+survives a source edit, and `pnpm deploy` collects the app, its built workspace packages and
+production-only `node_modules` into a self-contained directory. The runtime stage carries that and
+nothing else, and runs as the image's unprivileged `node` user.
+
+**Every service names its target.** `runtime` is last so a bare `docker build` still produces a
+service image, but compose says which one it wants regardless — appending a stage must not be able to
+change what an existing service builds, which is exactly what happened once.
 
 Two details that exist so the drain actually works in a container:
 
@@ -491,7 +499,9 @@ that forgets is caught by the hard-coded path list in the OpenAPI spec.
 
 ## Schema and migrations
 
-**Migrations are `.sql` files**, including the one that creates the ledger they are recorded in — so
+**Migrations are `.sql` files.** The ledger they are recorded in is not one of them: it is
+`refinery_schema_history`, created by refinery on Postgres and by an `AsyncMigrate` override for
+ClickHouse, which has neither `VARCHAR(255)` nor an `int4 PRIMARY KEY`. Everything else is a file, so
 the schema reads as schema: reviewable as a diff, runnable by hand when something needs checking,
 and not something a refactor of the code around it can quietly alter.
 
@@ -511,27 +521,29 @@ stays anyway, because these files are also meant to be pasted into a console.
 
 Each package owns the migrations for the tables it defines — the `spoke_events` and `hub_events`
 ledgers and their views belong to the events package, the projections over it to the positions package, the cursor and header window to
-`@packages/indexing` — and the application names the directories that deploy together. That
+`@packages/indexing` — and `bins/migrate/src/schema.rs` names the directories that deploy together.
+That
 cross-directory ordering is load-bearing rather than tidy: the projections read a table another
-package creates, and `010 > 002` is the entire guarantee that they are created after it. The runner
-orders by ordinal _across_ directories rather than grouping by package, and rejects a set whose
-`NNN_` ordinals collide, naming both sides. Without that last part two packages could each reach for
-`002` without either author noticing, and the apply order would quietly depend on how the application
-happened to list the directories.
+package creates, and `010 > 002` is the entire guarantee that they are created after it. The order is
+now literal — the arrays in `schema.rs`, written by ordinal across directories rather than grouped by
+package — so nothing sorts at run time and nothing rejects a collision at run time either. What was a
+runtime guard is now the `each_union_ascends` test, which asserts ascending non-repeating versions
+per database union against the real corpus. A constant cannot drift between compiling and running,
+which is what the old check was defending against.
 
-**Two databases mean two ordinal namespaces**, and `migrate` loads them as two separate sets for
+**Two databases mean two ordinal namespaces**, and `migrate` embeds them as two separate sets for
 exactly that reason: the event log's `001_spoke_events` and the cursor's `001_indexer_cursor` are not
 a collision, and merging them to "apply everything at once" would both reintroduce one and try to run
 Postgres DDL against ClickHouse. Each half logs under its own name so a failure says which database
 it was.
 
 **The engine is in the directory name** — `clickhouse-migrations/`, `postgres-migrations/` — because
-nothing else about a migration says which one it is for. Both runners take the same
+nothing else about a migration says which one it is for. Both databases take the same
 `NNN_snake_case.sql` shape, and a set is only valid against the database it was written for. It is
 the directory rather than the filename because the ordinal has to lead the filename, so a prefix
-there would sit in the middle and group nothing; and because the recorded id _is_ the filename, so
-renaming files would make every migration look pending again. The two database packages keep a plain
-`migrations/`: `@packages/clickhouse` and `@packages/postgres` already say it in their own names.
+there would sit in the middle and group nothing; and because renaming a file changes the version
+refinery records it under — `012_position_supply.sql` is `V12__position_supply` — so a rename makes
+the migration look pending again.
 
 **Both databases fail the same way**, which is new. The TypeScript runner wrapped an entire Postgres
 run in one transaction, so a set that failed partway left nothing at all. refinery commits each
@@ -1794,8 +1806,9 @@ The two that exist are the worked examples — [`packages/token-metadata`](../pa
 
 1. **A listing source**: one query that answers _what do we need this for_ (which underlyings are
    listed, which reserves exist). It reads the indexer's tables but is not part of the fold.
-2. **A store port and a Postgres adapter**, plus a migration in the package's own directory. The
-   application names which directories deploy together; nothing central has to learn about the table.
+2. **A store port and a Postgres adapter**, plus a migration in the package's own directory —
+   registered in `bins/migrate/src/schema.rs`, which is the one central place that has to learn about
+   it, and a `check_complete` test fails the build if you forget.
 3. **A reader port and its adapter** for wherever the data actually comes from — a contract call, an
    HTTP API, a file.
 4. **Something that keeps it current**: a `BlockProcessor` if arrivals are event-driven (token
@@ -1816,9 +1829,9 @@ coupling to its pipeline — already has a partial answer in the repository, bec
 packages _are_ that: separate schema, separate cadence, separate failure mode, joined in the service
 rather than in SQL, and invisible to the fold. Generalising it changes little.
 
-- **Model** it in its own package with its own store port and its own migration namespace. The
-  ordinal-collision check across directories is what keeps two packages from silently fighting over
-  `002`, and it is the reason no central schema file exists to become a bottleneck.
+- **Model** it in its own package with its own store port and its own migration namespace. Ordinals
+  are unique per database rather than per directory, so two packages must not both reach for `002` in
+  the same one — `each_union_ascends` catches it.
 - **Version** it on the payload, not by forking the route. `/api/v1` is the API contract's version;
   a dataset additionally publishes its own `updatedAt` and staleness, the way `sync`, `valuedAt` and
   `pricing` are three separate clocks today, so a caller can tell _which_ input is behind rather than
@@ -1904,8 +1917,8 @@ that already has them.
 place before Nest, pino or `http` is first loaded. A first-line `import` in each `main.ts` would in
 fact order correctly here — the build is CommonJS and `tsc` emits `require` calls in source order —
 so the argument for the flag is not "the other way is broken". It is that the flag can be removed
-without rebuilding, which is exactly what the overhead A/B below needs, and that six CLI entry points
-would otherwise each need the same import. Its cost, plainly: someone running `node dist/main.js` by
+without rebuilding, which is exactly what the overhead A/B below needs, and that five CLI entry
+points would otherwise each need the same import. Its cost, plainly: someone running `node dist/main.js` by
 hand gets no telemetry and no error, which is why the SDK writes one line at boot naming its
 endpoint.
 
