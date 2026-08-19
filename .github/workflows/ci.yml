@@ -96,8 +96,8 @@ jobs:
         run: pnpm run build
 
   # Its own job so a failure names itself, and so a cold Rust build does not land
-  # on the TypeScript gate's wall clock. No database services: nothing in the
-  # workspace talks to one yet. See docs/rust-migration.md.
+  # on the TypeScript gate's wall clock. Same databases as the gate above: the
+  # ClickHouse adapter drives a real server. See docs/rust-migration.md.
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
