@@ -174,8 +174,8 @@ Outside Docker it is `pnpm backfill --from … --to …`.
 ```bash
 pnpm install
 cp apps/api/.env.example apps/api/.env && cp apps/indexer/.env.example apps/indexer/.env
-pnpm --filter @aave-v4-positions/indexer migrate    # schema is its own step, never done at boot
-pnpm dev:indexer                                     # and, in another shell, pnpm dev:api
+cargo run --release -p migrate                     # schema is its own step, never done at boot
+pnpm dev:indexer                                   # and, in another shell, pnpm dev:api
 ```
 
 Needs Node 24, pnpm 11, and a ClickHouse and Postgres to point at —

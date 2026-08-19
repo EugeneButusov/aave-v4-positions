@@ -237,9 +237,6 @@ importers:
       '@packages/indexing':
         specifier: workspace:*
         version: link:../../packages/indexing
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../../packages/migrations
       '@packages/ops':
         specifier: workspace:*
         version: link:../../packages/ops
@@ -255,9 +252,6 @@ importers:
       '@packages/token-metadata':
         specifier: workspace:*
         version: link:../../packages/token-metadata
-      postgres:
-        specifier: 'catalog:'
-        version: 3.4.9
       reflect-metadata:
         specifier: 'catalog:'
         version: 0.2.2

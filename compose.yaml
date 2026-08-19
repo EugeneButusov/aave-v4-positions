@@ -70,13 +70,15 @@ services:
   #
   # Two databases, applied in sequence and logged separately, so a failure names
   # which one it was.
+  #
+  # Its own image, and not a Node one: the schema is applied by `bins/migrate`,
+  # which links no chain client and no HTTP server. It shares no layer with the
+  # api and indexer images beyond the base — that is the point of it.
   migrate:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        APP: indexer
-    command: ['node', 'dist/migrate.js']
+      target: migrate
     restart: 'no'
     environment:
       CLICKHOUSE_URL: http://clickhouse:8123

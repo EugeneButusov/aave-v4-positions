@@ -197,10 +197,10 @@ cp apps/api/.env.example apps/api/.env && cp apps/indexer/.env.example apps/inde
 ```
 
 The indexer needs a ClickHouse to write to (see [Prerequisites](#prerequisites)) with the schema
-applied. It never migrates at boot, so this is a step:
+applied. It never migrates at boot, so this is a step — and it is a Rust binary, not a Node one:
 
 ```bash
-pnpm --filter @aave-v4-positions/indexer migrate
+cargo run --release -p migrate
 ```
 
 Run either service in watch mode:
@@ -313,10 +313,12 @@ Two details that exist so the drain actually works in a container:
 | `pnpm check`                        | format, lint, typecheck, test — what CI runs |
 | `pnpm clean`                        | remove build output                          |
 
-Applying the ClickHouse schema is its own command, never something a service does at boot:
+Applying the ClickHouse schema is its own command, never something a service does at boot. It is
+the one part of the system already ported to Rust, so it is a `cargo` command rather than a `pnpm`
+one, and it reads the same five environment variables the services do:
 
 ```bash
-pnpm --filter @aave-v4-positions/indexer migrate
+cargo run --release -p migrate
 ```
 
 Checking the Hub fold against the chain is its own command too, and it runs against whatever RPC
@@ -490,21 +492,21 @@ that forgets is caught by the hard-coded path list in the OpenAPI spec.
 
 **Migrations are `.sql` files**, including the one that creates the ledger they are recorded in — so
 the schema reads as schema: reviewable as a diff, runnable by hand when something needs checking,
-and not something a refactor of the surrounding TypeScript can quietly alter.
+and not something a refactor of the code around it can quietly alter.
 
-**A file is one migration, recorded once, however many statements it holds.** ClickHouse's HTTP
-interface refuses multi-statement requests outright — `Multi-statements are not allowed`, measured —
-so the runner splits, and it splits on a `--@statement` marker the author writes rather than on `;`.
-These files carry semicolons inside comments and inside string literals, so splitting on the
-character means writing a SQL lexer that knows about quoting, escapes and both comment forms — one
-nobody would think to test until it silently truncated a migration. A marker needs no lexer, cannot
-collide with SQL content, and is itself a comment, so the file stays valid SQL.
+**A file holds exactly one statement**, and the file is named for the object it creates. ClickHouse's
+HTTP interface refuses a body holding more than one — `Multi-statements are not allowed`, measured —
+so an earlier shape kept several per file and a `;` lexer to take them apart, which meant tracking
+comments, string literals and backtick identifiers so that the nineteen semicolons living in these
+files' prose did not cut a statement in half. Splitting the files deletes the lexer: a file now goes
+to the server as it stands, leading prose and trailing `;` included, both of which every server here
+accepts. The server is the guard — a second statement fails at deploy time.
 
-Statements still go in separate files unless they are meaningless apart from each other. A table and
-the view over it are two migrations; [the fold](#the-position-fold)'s nine projections of one table
-are one, because they are one change to make and one change to review. Recording happens once the
-whole file lands, so a file that fails part-way is retried from its first statement — which is why
-every statement in a multi-statement file is written `IF NOT EXISTS`.
+The cost is more files. [The fold](#the-position-fold)'s nine projections were one migration and are
+now nine, `012` through `020`. What it buys is a ledger that cannot lie: a file that failed part-way
+used to leave earlier statements behind and be recorded nowhere, which is what made `IF NOT EXISTS`
+load-bearing on every statement, and now a migration either applied or it did not. `IF NOT EXISTS`
+stays anyway, because these files are also meant to be pasted into a console.
 
 Each package owns the migrations for the tables it defines — the `spoke_events` and `hub_events`
 ledgers and their views belong to the events package, the projections over it to the positions package, the cursor and header window to
@@ -530,10 +532,16 @@ there would sit in the middle and group nothing; and because the recorded id _is
 renaming files would make every migration look pending again. The two database packages keep a plain
 `migrations/`: `@packages/clickhouse` and `@packages/postgres` already say it in their own names.
 
-The two runners differ in one way worth knowing. Postgres DDL is transactional, so a failed run there
-leaves _nothing_ — no half-created table to drop by hand before retrying — and it takes a
-`pg_advisory_xact_lock` so two runners started together serialise. ClickHouse can offer neither, so it
-records each migration only after the statement lands and retries from there.
+**Both databases fail the same way**, which is new. The TypeScript runner wrapped an entire Postgres
+run in one transaction, so a set that failed partway left nothing at all. refinery commits each
+migration together with its own ledger row instead, so what is before the failure stays, is recorded,
+and the retry resumes at the one that failed — the behaviour ClickHouse always had, now on both.
+Postgres still rolls back _within_ a migration where ClickHouse cannot, and that stopped mattering
+when a migration became a single statement.
+
+Neither takes a lock. The TypeScript runner held a `pg_advisory_xact_lock`; refinery does not, and
+nothing replaces it. Compose serialises this with a one-shot service, so what is missing is
+protection against a deploy pipeline that runs `migrate` from two jobs at once.
 
 Applying the schema is **its own step, never something a service does at boot** — two replicas
 starting together would race each other through the same DDL. Compose runs `migrate` as a one-shot
