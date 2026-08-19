@@ -131,6 +131,23 @@ jobs:
           done
           exit $bad
 
+      # The workspace table exists so members cannot drift apart on a version.
+      # A member that spells one out for a crate already shared there is exactly
+      # the drift it prevents, and nothing in cargo objects to it.
+      - name: Shared deps are inherited, never re-declared
+        run: |
+          bad=0
+          shared=$(sed -n '/^\[workspace.dependencies\]/,/^$/p' Cargo.toml | grep -oE '^[a-z0-9_-]+')
+          for manifest in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].manifest_path'); do
+            rel="${manifest#"$PWD/"}"
+            for dep in $shared; do
+              grep -qE "^${dep}(\.workspace = true| = \{ *workspace = true)" "$manifest" && continue
+              grep -qE "^${dep} *=" "$manifest" \
+                && { echo "::error file=$rel::${dep} is shared by the workspace; inherit it with ${dep}.workspace = true"; bad=1; }
+            done
+          done
+          exit $bad
+
       # Nothing in cargo ties the two together, so a bump to one and not the
       # other resolves against a floor the toolchain does not enforce.
       - name: Toolchain pin matches rust-version

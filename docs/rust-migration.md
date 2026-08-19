@@ -99,6 +99,16 @@ every one of them, published or not, which is what the block above already draws
 `version` either, for the same reason: it is optional since Cargo 1.75, and a number nobody publishes
 is a number nobody maintains.
 
+**A dependency reaches `[workspace.dependencies]` when a second member wants it, and not before.**
+The table exists so members cannot drift apart on a version — a hazard that begins at two consumers
+and is impossible at one, where the entry is only indirection between a crate and the version it
+picked. So `clickhouse`, `thiserror`, `tokio` and `tokio-postgres` are shared; `refinery`, `time` and
+`async-trait` sit in `bins/migrate`, which is the only thing that uses them. The two path deps are
+shared regardless: they describe the workspace's own shape rather than an external version choice.
+Features stay on the member either way, because they are per-consumer — `crates/postgres` needs
+`tokio/rt` and `bins/migrate` needs `rt` and `macros`, and hoisting that would erase which crate
+wanted which. CI rejects a member that re-declares something the table already shares.
+
 The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
 ([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a
