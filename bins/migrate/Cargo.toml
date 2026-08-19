@@ -8,20 +8,19 @@ publish.workspace = true
 [dependencies]
 clickhouse-client.workspace = true
 postgres.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
 
-# Only this crate uses these, so the workspace has no version to agree on.
-# Each names a feature nothing else here would turn on: `tokio-postgres` is what
-# supplies refinery's Postgres backend, and `parsing` is what
-# `OffsetDateTime::parse` needs — refinery-core takes one in `Migration::applied`
-# and re-exports no `time`, so the crate and its feature are both ours to pick.
+# Each of these names a feature nothing else here would turn on: `tokio-postgres`
+# supplies refinery's Postgres backend, `parsing` is what `OffsetDateTime::parse`
+# needs — refinery-core takes one in `Migration::applied` and re-exports no
+# `time` — and `macros` is `#[tokio::main]`.
 async-trait = "0.1"
 refinery-core = { version = "0.9.2", default-features = false, features = ["tokio-postgres"] }
 time = { version = "0.3", features = ["parsing"] }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
 
 [dev-dependencies]
 # Only `completeness`, which is `#[cfg(test)]`, defines an error type.
-thiserror.workspace = true
+thiserror = "2.0.19"
 
 [lints]
 workspace = true

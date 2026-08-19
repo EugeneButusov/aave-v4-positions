@@ -148,6 +148,22 @@ jobs:
           done
           exit $bad
 
+      # Sharing a version through the workspace table was one way to keep two
+      # members off different copies of a crate. Checking the resolved graph is
+      # the stronger one: it holds however the versions were declared, and it is
+      # what actually breaks — two tokios means a runtime found through the wrong
+      # thread-local, which panics rather than failing to build. Scoped to what a
+      # member declares, because proc macros legitimately duplicate `syn`.
+      - name: No declared dependency resolves to two versions
+        run: |
+          cargo metadata --format-version 1 > /tmp/all.json
+          bad=$(cargo metadata --no-deps --format-version 1 | jq -r --slurpfile all /tmp/all.json '
+            [.packages[].dependencies[].name] | unique
+            | map(. as $d | {n: $d, v: ([$all[0].packages[] | select(.name == $d) | .version] | unique)})
+            | map(select(.v | length > 1))
+            | .[] | "\(.n) resolves to \(.v | join(" and "))"')
+          if [ -n "$bad" ]; then echo "$bad" | while read -r l; do echo "::error::$l"; done; exit 1; fi
+
       # Nothing in cargo ties the two together, so a bump to one and not the
       # other resolves against a floor the toolchain does not enforce.
       - name: Toolchain pin matches rust-version

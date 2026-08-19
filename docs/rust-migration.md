@@ -99,15 +99,19 @@ every one of them, published or not, which is what the block above already draws
 `version` either, for the same reason: it is optional since Cargo 1.75, and a number nobody publishes
 is a number nobody maintains.
 
-**A dependency reaches `[workspace.dependencies]` when a second member wants it, and not before.**
-The table exists so members cannot drift apart on a version — a hazard that begins at two consumers
-and is impossible at one, where the entry is only indirection between a crate and the version it
-picked. So `clickhouse`, `thiserror`, `tokio` and `tokio-postgres` are shared; `refinery`, `time` and
-`async-trait` sit in `bins/migrate`, which is the only thing that uses them. The two path deps are
-shared regardless: they describe the workspace's own shape rather than an external version choice.
-Features stay on the member either way, because they are per-consumer — `crates/postgres` needs
-`tokio/rt` and `bins/migrate` needs `rt` and `macros`, and hoisting that would erase which crate
-wanted which. CI rejects a member that re-declares something the table already shares.
+**`[workspace.dependencies]` holds the two path deps and nothing else.** A crate declares the
+version of everything it names, because that version is something only it knows: extracting a crate
+from here means replacing its inherited `edition`, `rust-version`, `publish` and `[lints]`, each of
+which has one obvious right answer, and its dependency versions, which do not — a guess that still
+compiles is worse than a line you delete. Features come with them, since they are per-consumer
+anyway: `crates/postgres` needs `tokio/rt`, `bins/migrate` needs `rt` and `macros`.
+
+What sharing was buying is bought back by a check on the resolved graph rather than the declared
+text: **no dependency any member declares may resolve to two versions.** That is the failure it
+guards against, and it holds however the versions were written down. `tokio` is why it is worth
+having — two of them is not a compile error but a runtime looked up through the wrong thread-local,
+which panics on first use. Scoped to declared deps, because proc macros duplicate `syn` quite
+legitimately.
 
 **A database crate owns its driver and re-exports it.** `clickhouse` is a dependency of
 `clickhouse-client` alone and `tokio-postgres` of `postgres` alone, because both appear in those

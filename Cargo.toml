@@ -12,8 +12,6 @@ publish = false
 [workspace.dependencies]
 clickhouse-client = { path = "crates/clickhouse" }
 postgres = { path = "crates/postgres" }
-thiserror = "2.0.19"
-tokio = "1.53.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
