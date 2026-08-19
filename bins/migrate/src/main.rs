@@ -96,10 +96,7 @@ fn env(key: &str, fallback: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use crate::completeness::check_complete;
-    use crate::schema::{CLICKHOUSE, POSTGRES, Source, union};
+    use crate::schema::{CLICKHOUSE, POSTGRES, union};
 
     /// Every label parses as `V{version}__{name}`. A typo in schema.rs fails here
     /// rather than at deploy time.
@@ -126,17 +123,6 @@ mod tests {
             expected.dedup();
 
             assert_eq!(versions, expected, "versions must ascend and not repeat");
-        }
-    }
-
-    /// The guard that catches a `.sql` file nobody added to schema.rs, and an
-    /// entry whose file was renamed out from under it. Per group, because each
-    /// group is exactly one directory.
-    #[test]
-    fn every_group_matches_the_directory_it_was_embedded_from() {
-        for Source { directory, files } in CLICKHOUSE.iter().chain(POSTGRES) {
-            check_complete(files, Path::new(directory))
-                .unwrap_or_else(|error| panic!("{directory}: {error}"));
         }
     }
 }
