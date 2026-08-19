@@ -5,9 +5,9 @@
 mod client;
 mod error;
 
-/// `client` hands back a `tokio_postgres::Client`, which a caller cannot name
-/// without this.
+/// `build_client` hands back a `tokio_postgres::Client`, which a caller cannot
+/// name without this.
 pub use tokio_postgres;
 
-pub use client::client;
+pub use client::build_client;
 pub use error::Error;

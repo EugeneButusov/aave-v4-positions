@@ -15,7 +15,7 @@ use crate::error::Error;
 /// # Errors
 ///
 /// [`Error::ConnectFailed`] if the URL will not parse or the server will not have us.
-pub async fn client(url: &str) -> Result<tokio_postgres::Client, Error> {
+pub async fn build_client(url: &str) -> Result<tokio_postgres::Client, Error> {
     let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
         .map_err(|source| Error::ConnectFailed { source })?;

@@ -2,7 +2,7 @@
 ///
 /// Four discrete parts rather than one URL, because that is what the server's
 /// HTTP interface takes and what every deployment of it hands you. Postgres gets
-/// a URL for the opposite reason — see `postgres::client`.
+/// a URL for the opposite reason — see `postgres::build_client`.
 ///
 /// Taken as parameters rather than read from the environment: a library that
 /// reaches for `std::env` cannot be used twice in one process with two different
@@ -25,7 +25,7 @@ pub struct Config {
 /// borrow. A caller that wants to keep its config clones visibly, rather than
 /// every caller paying for a copy it cannot see.
 #[must_use]
-pub fn client(config: Config) -> clickhouse::Client {
+pub fn build_client(config: Config) -> clickhouse::Client {
     clickhouse::Client::default()
         .with_url(config.url)
         .with_database(config.database)

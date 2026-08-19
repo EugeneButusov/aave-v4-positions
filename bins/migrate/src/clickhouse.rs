@@ -88,7 +88,7 @@ mod tests {
     //! applies nothing, and that a failure leaves the ledger agreeing with the
     //! schema rather than ahead of it.
 
-    use clickhouse_client::{Config, client};
+    use clickhouse_client::{Config, build_client};
     use refinery_core::Runner;
 
     use super::*;
@@ -103,7 +103,7 @@ mod tests {
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
         };
 
-        let admin = client(config.clone());
+        let admin = build_client(config.clone());
         for statement in [
             format!("DROP DATABASE IF EXISTS {database}"),
             format!("CREATE DATABASE {database}"),
@@ -111,7 +111,7 @@ mod tests {
             admin.query(&statement).execute().await.unwrap();
         }
 
-        ClickHouse(client(Config { database, ..config }))
+        ClickHouse(build_client(Config { database, ..config }))
     }
 
     async fn run(target: &mut ClickHouse, migrations: &[Migration]) -> Result<Vec<String>, String> {
