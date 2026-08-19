@@ -532,14 +532,16 @@ there would sit in the middle and group nothing; and because the recorded id _is
 renaming files would make every migration look pending again. The two database packages keep a plain
 `migrations/`: `@packages/clickhouse` and `@packages/postgres` already say it in their own names.
 
-The two databases differ in one way worth knowing. Postgres DDL is transactional, so a failed run
-there leaves _nothing_ — no half-created table to drop by hand before retrying. ClickHouse has no
-transaction for DDL, so what already applied stays; one statement per file makes that harmless,
-because a migration that ran at all ran completely and the retry resumes at the one that failed.
+**Both databases fail the same way**, which is new. The TypeScript runner wrapped an entire Postgres
+run in one transaction, so a set that failed partway left nothing at all. refinery commits each
+migration together with its own ledger row instead, so what is before the failure stays, is recorded,
+and the retry resumes at the one that failed — the behaviour ClickHouse always had, now on both.
+Postgres still rolls back _within_ a migration where ClickHouse cannot, and that stopped mattering
+when a migration became a single statement.
 
-Neither takes a lock. The TypeScript runner held a `pg_advisory_xact_lock` on the Postgres side;
-refinery does not, and nothing replaces it. Compose serialises this with a one-shot service, so what
-is missing is protection against a deploy pipeline that runs `migrate` from two jobs at once.
+Neither takes a lock. The TypeScript runner held a `pg_advisory_xact_lock`; refinery does not, and
+nothing replaces it. Compose serialises this with a one-shot service, so what is missing is
+protection against a deploy pipeline that runs `migrate` from two jobs at once.
 
 Applying the schema is **its own step, never something a service does at boot** — two replicas
 starting together would race each other through the same DDL. Compose runs `migrate` as a one-shot
