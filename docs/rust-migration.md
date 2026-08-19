@@ -10,10 +10,10 @@ untouched, because it describes Aave rather than this codebase.
 
 ## Context
 
-What exists is a working TypeScript indexer and read API for Aave v4: two NestJS services, twelve
+What exists is a working TypeScript indexer and read API for Aave v4: two NestJS services, nine
 workspace packages, ClickHouse for the event ledgers and the folds over them, Postgres for the cursor,
 the reorg window and the two enrichment dimensions. It reconciles against the chain at zero tolerance
-and has 743 tests behind it. Nothing here is broken; this is a stack decision, not a repair.
+and has 716 tests behind it. Nothing here is broken; this is a stack decision, not a repair.
 
 So the plan is built around one idea: **the TypeScript implementation is the oracle.** Every phase
 ends with a gate comparing Rust output against TypeScript output on the same inputs — same databases,
@@ -34,24 +34,29 @@ repo has had to work around viem: `fallback` hiding which provider served a call
 
 ## Scope, measured
 
+Counted as `src/**` line totals: `.ts` excluding specs, then `.spec.ts`, then `.sql`. Stated so the
+numbers can be re-derived rather than trusted — they move as packages are ported and deleted.
+
 | | source | tests | SQL |
 | ---------------------------------------- | -----: | -----: | ----: |
 | `apps/api` | 1,547 | 995 | — |
-| `apps/indexer` | 2,020 | 304 | — |
-| `packages/indexing` | 4,210 | 3,576 | 52 |
-| `packages/aave-positions/positions` | 1,458 | 1,832 | 1,117 |
-| `packages/aave-positions/events` | 1,156 | 1,345 | 189 |
-| `packages/prices` | 901 | 863 | 48 |
-| `packages/token-metadata` | 768 | 877 | 58 |
+| `apps/indexer` | 1,911 | 304 | — |
+| `packages/indexing` | 4,244 | 3,573 | 52 |
+| `packages/aave-positions/positions` | 1,485 | 1,825 | 1,035 |
+| `packages/aave-positions/events` | 1,189 | 1,343 | 189 |
+| `packages/prices` | 901 | 884 | 48 |
+| `packages/token-metadata` | 768 | 898 | 58 |
 | `packages/ops` | 467 | 296 | — |
-| `packages/postgres` | 403 | 330 | 13 |
+| `packages/postgres` | 321 | 201 | — |
 | `packages/telemetry` | 247 | — | — |
-| `packages/clickhouse` | 213 | — | 12 |
-| **total** | **13,390** | **10,418** | **1,489** |
+| `packages/clickhouse` | 135 | — | — |
+| **total** | **13,215** | **10,319** | **1,382** |
 
-**The 1,489 lines of SQL move unchanged.** Schema, materialized views, projections and the read views
-_are_ the fold — not application code, and not a line of TypeScript. Roughly a tenth of the system is
-already ported before anyone starts.
+**The 1,382 lines of SQL are not rewritten in Rust.** Schema, materialized views, projections and the
+read views _are_ the fold — not application code, and not a line of TypeScript. Roughly a tenth of
+the system needs no porting at all, and Phase 0 embedded every file into `bins/migrate` without
+touching what any of them say. They were renumbered, though: one statement per file took the
+ClickHouse fold from 14 files to 35.
 
 **The architecture is the second gift.** Seventeen ports already exist as interfaces behind DI
 tokens — `ChainClient`, `LogReader`, `Erc20MetadataReader`, `CursorStore`, `BlockHeaderStore`,
@@ -121,7 +126,8 @@ version for the two of them to disagree about.
 The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
 ([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a
-client factory and a probe rather than "ClickHouse" anyway. `crates/postgres` needs no such dodge: the
+client factory rather than "ClickHouse" anyway. It was to be a probe as well; probes went to Phase 2
+with `ops`, so today it is `Config` and `build_client` and nothing else. `crates/postgres` needs no such dodge: the
 driver here is `tokio-postgres`, not `postgres`.
 
 **Each binary is a boundary, not just an entry point.** In Node the image is the artifact and
@@ -135,8 +141,9 @@ time:
 | `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy`, `indexing`, the write paths  |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
-The third column is asserted in CI with `cargo tree -i`, so reaching across fails the build rather
-than passing review. `migrate` is its own crate because its lifecycle differs — it runs before the
+The third column will be asserted in CI with `cargo tree -i`, so reaching across fails the build
+rather than passing review — from Phase 2, when `bins/api` gives it something to check. Today neither
+`alloy` nor `axum` is in the workspace and the assertion would pass without proving anything. `migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
 how [`compose.yaml`](../compose.yaml) treats it. It also owns every migration concept in the
 workspace: the database crates it uses are connectivity and nothing more, so a crate named for a
@@ -176,7 +183,7 @@ commit. There is no Rust equivalent of it.
 `crates/aave-abi` holds the extracted `ISpokeV4`, `IHubV4` and `IAaveOracleV4` JSON with
 `alloy::sol!` generating the bindings, plus the Main Spoke, Core Hub and oracle addresses as
 constants — the same single-Spoke, single-Hub configuration as today. **A CI job re-extracts from the
-pinned npm version and fails on any diff.** That keeps the design notes' claim that the ABI is "taken
+pinned npm version and fails on any diff**, landing with the crate in Phase 3. That keeps the design notes' claim that the ABI is "taken
 from the official address book rather than transcribed" true, and turns an upstream change into a red
 build rather than a silent divergence.
 
@@ -273,13 +280,17 @@ finishes, rather than one switch at the end.
 
 ### Phase 0 — foundations
 
-Cargo workspace, `aave-abi` and its ABI drift job, `telemetry`, `ops`, `clickhouse-client`,
-`postgres`, and `bins/migrate`.
+Cargo workspace, `clickhouse-client`, `postgres`, and `bins/migrate`.
+
+`aave-abi`, `telemetry` and `ops` were scoped here and moved out: none has a Rust consumer until a
+binary exists that needs one, and Phase 0's gate never covered them. `telemetry` and `ops` go to
+Phase 2 with `bins/api`; `aave-abi` to Phase 3 with the decoders. Building them here would have been
+three crates and a CI job with no caller and nothing to prove them against.
 
 **The runner is [refinery](https://docs.rs/refinery), not hand-rolled.** It drives Postgres natively.
 ClickHouse is not one of its backends, but adding one is three trait impls — `AsyncTransaction`,
 `AsyncQuery<Vec<Migration>>` and one `AsyncMigrate` method overriding the ledger DDL, because
-refinery's default is `VARCHAR(255)` with an `int4 PRIMARY KEY` and ClickHouse has neither. That is 49
+refinery's default is `VARCHAR(255)` with an `int4 PRIMARY KEY` and ClickHouse has neither. That is 50
 lines against the 169 a second hand-rolled runner would have cost, and thirty-five of the thirty-nine
 migrations are ClickHouse, so the alternative was refinery for four files and hand-rolled for the rest.
 
@@ -287,12 +298,13 @@ The ledger becomes refinery's — `refinery_schema_history`, keyed on an integer
 are relabelled `V12__position_supply` where the file stays `012_position_supply.sql`; `schema.rs`
 carries both names.
 
-**One statement per `.sql` file, so neither runner parses SQL.** ClickHouse's HTTP interface refuses a
+**One statement per `.sql` file, so nothing parses SQL.** ClickHouse's HTTP interface refuses a
 body holding more than one — `Multi-statements are not allowed` — and refinery hands the adapter a
 migration's whole text as a single query. The earlier shape kept several statements in a file and a
 `;` lexer to take them apart, which meant a hundred lines of scanner tracking comments, string
 literals and backtick identifiers so that the nineteen semicolons living in the corpus's prose did not
-cut a statement in half. Splitting the files instead deletes the scanner on both sides: the file goes
+cut a statement in half. Splitting the files instead deleted the scanner — from the Rust adapter, and
+from the TypeScript runner while it still existed: the file goes
 to the server as it stands, leading prose and trailing `;` included, both of which every server here
 accepts. The server is the guard — add a second statement and ClickHouse says so at deploy time.
 
@@ -302,12 +314,13 @@ now a migration either applied or did not. The cost is 35 ClickHouse files where
 renumbering — the fold that was `012_position_projections.sql` is `012` through `020`, one projection
 each, and the file is named for the object it creates.
 
-**The `.sql` files are embedded, not discovered.** The TypeScript reads its migration directories with
-`readdir` at startup, which only works because `pnpm deploy` copies them next to the compiled output;
+**The `.sql` files are embedded, not discovered.** The TypeScript read its migration directories with
+`readdir` at startup, which only worked because `pnpm deploy` copied them next to the compiled output;
 a binary shipped on its own has nothing to read. Every Rust migration tool embeds at compile time —
 `sqlx::migrate!`, `diesel_migrations`, `refinery` — and the reason diesel gives is precisely this one,
-that it is what lets you ship a single executable. So each crate that owns tables declares a
-`const MIGRATIONS: &[Migration]` with **one `include_str!` per file, written by hand**: not
+that it is what lets you ship a single executable. So `bins/migrate/src/schema.rs` declares every
+file with **one `include_str!` each, written by hand**, grouped by the directory it came from — the
+crate that will own each group once Phases 3 and 4 create them. Not
 `include_dir!`, whose proc macro cannot register a rebuild dependency on stable and would happily ship
 yesterday's SQL from a warm `target/`, and not a globbing macro either, since adding a file would then
 change no Rust source and the macro would not re-run
@@ -323,24 +336,36 @@ order to whichever array the caller concatenated first; the guard existed to rej
 run time, because the list was only known once the process was up. Here the array *is* the apply
 order, so there is no ambiguity — and no runtime, since a constant cannot change after it is compiled.
 What is left worth enforcing is that the array agrees with the directory listing a reader sees, so
-`check_order` asserts **strictly ascending ordinals**, once per database union, as a test. Verified
-against the real corpus: all thirty-nine files are already ascending in the order the application
-concatenates them.
+`each_union_ascends` asserts **strictly ascending ordinals**, once per database union, as a test in
+`bins/migrate/src/main.rs`. Verified against the real corpus: all thirty-nine files are already
+ascending in the order the application concatenates them. `check_complete` is the other half, private
+inside `completeness::tests` — it has no caller in the shipped binary, so it lives with the tests that
+are its only consumer.
 
-**Gate:** both migrators applied to empty databases produce the same schema. The ledger tables are
-excluded and expected to differ — that is the point of adopting refinery — so what is compared is
-`SHOW CREATE TABLE` for every other object and `pg_dump --schema-only`. Measured: 35 ClickHouse
-objects and 34,367 bytes identical, 59 lines of Postgres schema identical, and a second run reporting
-"schema already up to date".
+**Gate, and it has already been spent.** Both migrators were applied to empty databases and the
+schemas compared, with the ledger tables excluded and expected to differ — that is the point of
+adopting refinery. Measured: **35 ClickHouse objects and 34,509 bytes identical**, **33 Postgres
+catalog rows identical**, and a second run reporting "schema already up to date" on both.
 
-Split in two. **2a** is the two runner crates alone, proven against live servers — including the fact
-that their failure semantics differ, which is the reason there are two: a set that fails partway
-rolls back entirely on Postgres and leaves what already succeeded on ClickHouse. **2b** adds
-`bins/migrate`, the thirty-nine `include_str!` constants and the byte-identical comparison above.
+Postgres is compared against the catalog — `information_schema` plus `pg_indexes`, sorted — and not a
+filtered `pg_dump`. Renaming the ledger table shifts pg_dump's alphabetical ordering of constraints,
+and a line-based filter duly reported `reserve_prices_pkey` missing from one side when it was present
+in both. Worth knowing for anyone tempted to reproduce this the obvious way.
 
-Phase 0 took two PRs. The first stood up the workspace, gated on a differential over the real `.sql`
-files against the TypeScript loader. The second added the two database crates and `bins/migrate`,
-gated on the byte-identical comparison above.
+It cannot be run again: the TypeScript migrator is gone. That is deliberate and it is the right
+order — measure, then delete — but it is [Risk 3](#3-each-cutover-destroys-its-own-oracle) arriving
+in Phase 0 rather than at the API. What replaces it from here is `bins/migrate`'s own tests and the
+compose stack coming up.
+
+Phase 0 took five PRs: [#36](https://github.com/EugeneButusov/aave-v4-positions/pull/36) the workspace
+and `clickhouse-client`, gated on a differential over the real `.sql` files against the TypeScript
+loader; [#38](https://github.com/EugeneButusov/aave-v4-positions/pull/38) `postgres`, `bins/migrate`
+on refinery, and one statement per file, gated on the comparison above;
+[#39](https://github.com/EugeneButusov/aave-v4-positions/pull/39) compose onto the Rust migrator;
+[#40](https://github.com/EugeneButusov/aave-v4-positions/pull/40) deleting the TypeScript runner; and
+[#41](https://github.com/EugeneButusov/aave-v4-positions/pull/41), which fixed what #39 broke — the
+Rust stages went on the end of the Dockerfile, and `api` and `indexer` name no build target, so both
+services quietly became the migrate image.
 
 ### Phase 1 — the arithmetic
 
@@ -359,7 +384,9 @@ This phase must not be rushed; everything downstream inherits it.
 ### Phase 2 — the read API, then ship it
 
 `bins/api` on axum, the `PositionStore` ClickHouse adapter, `HubAssetStore`, the read halves of
-`token-metadata` and `prices`, cursor signing, request validation, utoipa.
+`token-metadata` and `prices`, cursor signing, request validation, utoipa. Plus `telemetry` and
+`ops`, which arrive here because this is the first long-lived process: one needs a `main` that
+initialises OTLP, the other a probe router and a drain.
 
 **Gate, and it has to happen before anything is deleted:** both APIs pointed at the same ClickHouse
 and Postgres, and a replay harness issuing several hundred requests — every wallet in the fold, every
@@ -368,15 +395,17 @@ JSON**. Diff the two OpenAPI documents too.
 
 **Then capture that corpus as golden files and commit it.** Once `apps/api` is gone the oracle is
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the
-Rust API, soak, then delete `apps/api` in its own PR. `packages/*` stay — the TypeScript indexer still
-needs them.
+Rust API, soak, then delete `apps/api` in its own PR. The remaining `packages/*` stay — the
+TypeScript indexer still needs them, and only the ones it has stopped needing go early, as
+`packages/migrations` did in Phase 0.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
 `indexing` — the loop, `ReorgDetector`, `CursorStore`, `BlockHeaderStore`, backfill, the alloy
 adapters and provider health — and `aave-events`, the decoders, both ledgers and the processors. The
 port contract suites in `test-support/` port with them; they are what keeps the in-memory doubles
-honest.
+honest. `aave-abi` and its drift job land here too: the decoders are the first thing that needs
+`sol!` bindings, and vendoring ABIs before anything reads them would be a copy nothing checks.
 
 **Gate:** the Rust indexer walks from Main Spoke genesis into a _fresh_ pair of databases while the
 TypeScript one walks into the existing pair, then `SELECT`-level diffs of `spoke_events_current`,
@@ -385,8 +414,9 @@ of difference. Plus the reorg harness driven through every window shape the loop
 
 ### Phase 4 — enrichment, prices, the CLIs, then ship the indexer
 
-The `token-metadata` and `prices` write paths, then `backfill`, `migrate`, `reconcile:hub`,
-`reconcile:positions`, `enrich:tokens` and `price:reserves`.
+The `token-metadata` and `prices` write paths, then the five CLIs: `backfill`, `reconcile:hub`,
+`reconcile:positions`, `enrich:tokens` and `price:reserves`. `migrate` is not among them — it was
+ported in Phase 0, and the Node one is already deleted.
 
 **Gate:** Rust `reconcile:hub` and `reconcile:positions` report zero drift against the fold the
 _TypeScript_ indexer produced. That is the strongest cross-check available anywhere in this migration,
@@ -403,7 +433,7 @@ implementation-specific sections; the protocol analysis is untouched.
 
 Beyond the per-phase gates:
 
-- **Equal test scope, not an equal count.** Every behaviour the 743 specs pin gets a Rust counterpart,
+- **Equal test scope, not an equal count.** Every behaviour the 716 specs pin gets a Rust counterpart,
   but idiomatic Rust will merge some cases into table tests and split others, so the number will move.
   What must not shrink is the coverage — in particular the port contract suites, the
   [four ERC-20 hazards](design-notes.md#four-erc-20-hazards-each-measured), the collapsing-semantics
