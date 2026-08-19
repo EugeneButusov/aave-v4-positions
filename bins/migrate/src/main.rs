@@ -43,7 +43,7 @@ async fn main() -> ExitCode {
 /// ClickHouse first, then Postgres, each reported under its own name so a failure
 /// says which database it was rather than leaving that to be inferred.
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut target = clickhouse::ClickHouse(clickhouse_client::client(&clickhouse_config()));
+    let mut target = clickhouse::ClickHouse(clickhouse_client::client(clickhouse_config()));
     let applied = Runner::new(&schema::union(schema::CLICKHOUSE)?)
         .run_async(&mut target)
         .await?;

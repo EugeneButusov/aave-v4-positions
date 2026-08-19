@@ -19,11 +19,16 @@ pub struct Config {
 }
 
 /// The client every caller in this workspace should use.
+///
+/// Takes the config by value, because the builder keeps what it is handed: its
+/// `impl Into<String>` moves an owned `String` and allocates a fresh one from a
+/// borrow. A caller that wants to keep its config clones visibly, rather than
+/// every caller paying for a copy it cannot see.
 #[must_use]
-pub fn client(config: &Config) -> clickhouse::Client {
+pub fn client(config: Config) -> clickhouse::Client {
     clickhouse::Client::default()
-        .with_url(&config.url)
-        .with_database(&config.database)
-        .with_user(&config.user)
-        .with_password(&config.password)
+        .with_url(config.url)
+        .with_database(config.database)
+        .with_user(config.user)
+        .with_password(config.password)
 }

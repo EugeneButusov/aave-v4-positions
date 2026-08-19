@@ -102,7 +102,7 @@ mod tests {
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
         };
 
-        let admin = client(&config);
+        let admin = client(config.clone());
         for statement in [
             format!("DROP DATABASE IF EXISTS {database}"),
             format!("CREATE DATABASE {database}"),
@@ -110,7 +110,7 @@ mod tests {
             admin.query(&statement).execute().await.unwrap();
         }
 
-        ClickHouse(client(&Config { database, ..config }))
+        ClickHouse(client(Config { database, ..config }))
     }
 
     async fn run(target: &mut ClickHouse, migrations: &[Migration]) -> Result<Vec<String>, String> {
