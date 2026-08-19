@@ -34,7 +34,6 @@
     "viem": "catalog:"
   },
   "devDependencies": {
-    "@nestjs/testing": "catalog:",
-    "@packages/migrations": "workspace:*"
+    "@nestjs/testing": "catalog:"
   }
 }

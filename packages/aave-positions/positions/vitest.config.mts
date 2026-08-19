@@ -10,9 +10,6 @@ export default defineConfig({
         new URL('../../clickhouse/src/index.ts', import.meta.url),
       ),
       '@packages/indexing': fileURLToPath(new URL('../../indexing/src/index.ts', import.meta.url)),
-      '@packages/migrations': fileURLToPath(
-        new URL('../../migrations/src/index.ts', import.meta.url),
-      ),
       '@packages/postgres': fileURLToPath(new URL('../../postgres/src/index.ts', import.meta.url)),
     },
   },

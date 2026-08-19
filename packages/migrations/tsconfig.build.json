@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "rootDir": "src",
-    "tsBuildInfoFile": "./dist/.tsbuildinfo"
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "vitest.config.mts", "**/*.spec.ts"]
-}

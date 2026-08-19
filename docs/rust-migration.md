@@ -47,8 +47,7 @@ repo has had to work around viem: `fallback` hiding which provider served a call
 | `packages/postgres` | 403 | 330 | 13 |
 | `packages/telemetry` | 247 | — | — |
 | `packages/clickhouse` | 213 | — | 12 |
-| `packages/migrations` | 136 | 156 | — |
-| **total** | **14,406** | **10,574** | **1,489** |
+| **total** | **13,390** | **10,418** | **1,489** |
 
 **The 1,489 lines of SQL move unchanged.** Schema, materialized views, projections and the read views
 _are_ the fold — not application code, and not a line of TypeScript. Roughly a tenth of the system is
@@ -87,9 +86,9 @@ bins/
   indexer/                  tokio worker + probe server + five CLIs
 ```
 
-Thirteen crates against twelve packages. `aave-abi` is the one addition, and exists because of
-Risk 1. Two packages have no crate of their own: `packages/migrations` lives inside `bins/migrate`,
-because nothing but that binary ever names a `Migration` and nothing can depend on a binary anyway.
+Thirteen crates against eleven packages. `aave-abi` is the one addition, and exists because of
+Risk 1. `packages/migrations` has no crate of its own and no successor: nothing but `bins/migrate`
+ever names a `Migration`, so it went there and the package was deleted.
 
 **Names are bare, because nothing here is published.** That is the split in the ecosystem: `alloy`,
 `reth`, `revm`, `foundry` and `agave` all prefix their package names because crates.io is one flat

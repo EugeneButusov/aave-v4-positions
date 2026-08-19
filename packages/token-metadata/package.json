@@ -35,7 +35,6 @@
   "devDependencies": {
     "@aave-positions/events": "workspace:*",
     "@aave-positions/positions": "workspace:*",
-    "@nestjs/testing": "catalog:",
-    "@packages/migrations": "workspace:*"
+    "@nestjs/testing": "catalog:"
   }
 }

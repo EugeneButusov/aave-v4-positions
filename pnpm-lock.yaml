@@ -311,9 +311,6 @@ importers:
       '@nestjs/testing':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../../migrations
 
   packages/aave-positions/positions:
     dependencies:
@@ -342,9 +339,6 @@ importers:
       '@nestjs/testing':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../../migrations
 
   packages/clickhouse:
     dependencies:
@@ -357,9 +351,6 @@ importers:
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.9.1
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../migrations
       '@packages/ops':
         specifier: workspace:*
         version: link:../ops
@@ -416,11 +407,6 @@ importers:
       '@opentelemetry/sdk-trace-base':
         specifier: 'catalog:'
         version: 2.10.0(@opentelemetry/api@1.9.1)
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../migrations
-
-  packages/migrations: {}
 
   packages/ops:
     dependencies:
@@ -467,9 +453,6 @@ importers:
       '@opentelemetry/api':
         specifier: 'catalog:'
         version: 1.9.1
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../migrations
       '@packages/ops':
         specifier: workspace:*
         version: link:../ops
@@ -532,9 +515,6 @@ importers:
       '@nestjs/testing':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../migrations
 
   packages/telemetry:
     dependencies:
@@ -620,9 +600,6 @@ importers:
       '@nestjs/testing':
         specifier: 'catalog:'
         version: 11.1.28(@nestjs/common@11.1.28(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.28)(@nestjs/platform-express@11.1.28)
-      '@packages/migrations':
-        specifier: workspace:*
-        version: link:../migrations
 
 packages:
 

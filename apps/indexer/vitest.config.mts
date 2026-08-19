@@ -32,9 +32,6 @@ export default defineConfig({
       '@packages/indexing': fileURLToPath(
         new URL('../../packages/indexing/src/index.ts', import.meta.url),
       ),
-      '@packages/migrations': fileURLToPath(
-        new URL('../../packages/migrations/src/index.ts', import.meta.url),
-      ),
       '@packages/ops': fileURLToPath(new URL('../../packages/ops/src/index.ts', import.meta.url)),
       '@packages/postgres': fileURLToPath(
         new URL('../../packages/postgres/src/index.ts', import.meta.url),
