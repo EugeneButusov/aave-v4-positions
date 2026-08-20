@@ -140,6 +140,7 @@ name = "clickhouse-client"
 version = "0.0.0"
 dependencies = [
  "clickhouse",
+ "tokio",
 ]
 
 [[package]]

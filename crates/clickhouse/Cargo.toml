@@ -9,5 +9,10 @@ publish.workspace = true
 # Only this crate builds against the driver; everyone else goes through it.
 clickhouse = "0.15.1"
 
+[dev-dependencies]
+# `#[tokio::test]`. The driver pulls tokio in regardless; this only asks for the
+# attribute and a current-thread runtime to hang it on.
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+
 [lints]
 workspace = true
