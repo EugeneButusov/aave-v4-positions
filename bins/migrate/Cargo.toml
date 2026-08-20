@@ -22,5 +22,6 @@ tokio = { version = "1.53.1", features = ["macros", "rt"] }
 # Only `completeness`, which is `#[cfg(test)]`, defines an error type.
 thiserror = "2.0.19"
 
+
 [lints]
 workspace = true
