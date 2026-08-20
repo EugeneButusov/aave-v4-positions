@@ -1,5 +1,6 @@
-//! The protocol's fixed-point primitives, transcribed from `aave/aave-v4` at
-//! commit `2524fe4`.
+//! The contracts' math libraries, transcribed from `aave/aave-v4` at commit
+//! `2524fe4` — `WadRayMath`, `PercentageMath`, `MathUtils`, `Premium`, and
+//! OpenZeppelin's `Math` as `SharesMath` reaches it.
 //!
 //! **Rounding is not uniform and the directions are not interchangeable.**
 //! Reconciliation is at zero tolerance (§9.2) — any nonzero drift is a bug, not
@@ -26,19 +27,7 @@
 
 use alloy_primitives::{I256, U256, U512, uint};
 
-use super::{Error, NegativePremium};
-
-/// `MathUtils.RAY` — 1e27.
-pub(crate) const RAY: U256 = uint!(1_000_000_000_000_000_000_000_000_000_U256);
-
-/// `MathUtils.SECONDS_PER_YEAR` — 365 days, leap years ignored.
-pub(crate) const SECONDS_PER_YEAR: U256 = uint!(31_536_000_U256);
-
-/// `SharesMath.VIRTUAL_ASSETS` and `VIRTUAL_SHARES`, both 1e6.
-pub(crate) const VIRTUAL: U256 = uint!(1_000_000_U256);
-
-/// `PercentageMath.PERCENTAGE_FACTOR` — basis points.
-pub(crate) const PERCENTAGE_FACTOR: U256 = uint!(10_000_U256);
+use super::{Error, NegativePremium, RAY};
 
 /// Narrow a widened intermediate back to the `uint256` every quantity here is
 /// on chain.
@@ -128,6 +117,9 @@ pub(crate) fn from_ray_up(a: U256) -> U256 {
 /// `uint256` and a guard, the same shape as [`ray_mul_up`] and for the same
 /// reason: the contract reverts on the product, not on the result.
 pub(crate) fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
+    /// `PercentageMath.PERCENTAGE_FACTOR` — basis points.
+    const PERCENTAGE_FACTOR: U256 = uint!(10_000_U256);
+
     let product = value.checked_mul(bps).ok_or(Error::OutOfRange)?;
 
     Ok(product.wrapping_div(PERCENTAGE_FACTOR))
@@ -150,6 +142,9 @@ pub(crate) fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
 /// valuation time means the caller mixed up two blocks, and every number that
 /// follows would be quietly wrong.
 pub(crate) fn linear_interest(rate: u128, checkpoint_at: u64, at: u64) -> Result<U256, Error> {
+    /// `MathUtils.SECONDS_PER_YEAR` — 365 days, leap years ignored.
+    const SECONDS_PER_YEAR: U256 = uint!(31_536_000_U256);
+
     let elapsed = at
         .checked_sub(checkpoint_at)
         .ok_or(Error::CheckpointAhead {

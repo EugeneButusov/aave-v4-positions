@@ -12,7 +12,7 @@
 //! value outside that range is not a state the protocol can be in, and the
 //! type says so rather than a comment.
 //! **The surface is what a caller outside the crate uses, and no more.** The
-//! fixed-point primitives are a private module — which is the gate, not the
+//! contracts' math libraries are a private module — which is the gate, not the
 //! `pub(crate)` on the items inside it: a path through a private module is
 //! unreachable from a sibling whatever the item says. A caller wanting
 //! `ceil(a * b / RAY)` wants

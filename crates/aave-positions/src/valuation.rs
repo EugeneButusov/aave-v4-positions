@@ -1,19 +1,26 @@
 //! One position's balances, in token units, at an instant the caller names.
 //!
-//! Transcribed from `aave/aave-v4` at commit `2524fe4`, the same source
-//! [`ray`] names. Nothing here reads a database: the inputs are a Hub asset's
+//! Transcribed from `aave/aave-v4` at commit `2524fe4`, the same source the
+//! private `math` module names. Nothing here reads a database: the inputs are a Hub asset's
 //! state and a user's shares, and Phase 2's store is what will fetch them.
 
 mod error;
-mod ray;
+mod math;
 
 use alloy_primitives::{I256, U256, U512, uint};
 
 pub use error::{Error, NegativePremium};
-use ray::{
-    VIRTUAL, from_ray_up, linear_interest, mul_div_down, narrow, percent_mul_down, premium_ray,
-    ray_mul_up,
+use math::{
+    from_ray_up, linear_interest, mul_div_down, narrow, percent_mul_down, premium_ray, ray_mul_up,
 };
+
+/// `1e27` — the unit every index and rate below is scaled in.
+///
+/// Not in [`math`] beside the functions that divide by it, because it is not
+/// theirs: the chain declares it twice, once in `WadRayMath` and once in
+/// `MathUtils`. It is the protocol's unit, and here it is the unit of
+/// [`AssetState::checkpoint_index`] and [`AssetState::drawn_rate`].
+const RAY: U256 = uint!(1_000_000_000_000_000_000_000_000_000_U256);
 
 /// The Hub asset state one valuation reads.
 ///
@@ -40,7 +47,7 @@ pub struct AssetState {
     pub liquidity_fee: u16,
     /// The last `UpdateAsset`'s index — the checkpoint, not the current value.
     pub checkpoint_index: U256,
-    /// `uint96` on chain, which is what makes [`ray::linear_interest`] total.
+    /// `uint96` on chain, which is what makes `linear_interest` total.
     pub drawn_rate: u128,
     /// Unix seconds. `accrue()` sets it to the checkpoint block's timestamp.
     pub checkpoint_at: u64,
@@ -158,6 +165,9 @@ fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256, Err
 /// ratio against manipulation, and the padding is inside the division rather
 /// than applied after it, so it cannot be factored out. Rounds **down**, where
 /// the debt side rounds up.
+/// `SharesMath.VIRTUAL_ASSETS` and `VIRTUAL_SHARES`, both 1e6.
+const VIRTUAL: U256 = uint!(1_000_000_U256);
+
 fn supplied_assets(shares: U256, asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
     let assets = total_added_assets(asset, drawn_index)?
         .checked_add(VIRTUAL)
@@ -177,8 +187,8 @@ fn supplied_assets(shares: U256, asset: &AssetState, drawn_index: U256) -> Resul
 /// extrapolated to the head block, and this is the same computation with the
 /// time named rather than implied.
 ///
-/// The debt side rounds **up** throughout — [`ray_mul_up`] on the drawn part and
-/// [`from_ray_up`] on the premium, each separately, which is what
+/// The debt side rounds **up** throughout — `rayMulUp` on the drawn part and
+/// `fromRayUp` on the premium, each separately, which is what
 /// `Spoke.getUserDebt` does before summing. Rounding the total once instead
 /// would be a wei light.
 pub fn value_position(
@@ -263,7 +273,6 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
-    use super::ray::RAY;
     use super::*;
 
     const HOUR: u64 = 3_600;
