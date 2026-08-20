@@ -19,8 +19,10 @@ use super::math::narrow;
 /// carries 18 + 8 = 26 decimal places, and one dollar is `1e18 × 1e8`. The
 /// contract states the result itself above `toValue`: "1e26 represents 1 USD".
 ///
-/// Exported so a caller dividing by it says what it is doing. Not applied here:
-/// the division is lossy and the wire carries the exact integer (§7.5).
+/// Public because it is the only name for the unit [`to_value`] answers in —
+/// not because anything divides by it. A reader wanting decimals slices
+/// twenty-six digits off the integer instead, since a division loses the tail
+/// past 2^53 and share-scale amounts pass that routinely (§7.5).
 pub const USD: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
 
 /// `SpokeUtils.toValue` — an amount in token units, priced.
