@@ -40,7 +40,8 @@ pub struct AssetState {
     pub liquidity_fee: u16,
     /// The last `UpdateAsset`'s index — the checkpoint, not the current value.
     pub checkpoint_index: U256,
-    pub drawn_rate: U256,
+    /// `uint96` on chain, which is what makes [`ray::linear_interest`] total.
+    pub drawn_rate: u128,
     /// Unix seconds. `accrue()` sets it to the checkpoint block's timestamp.
     pub checkpoint_at: u64,
 }
@@ -241,8 +242,12 @@ pub const USD: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
 pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> {
     const WHAT: &str = "amount * price, normalised to eighteen decimals";
 
-    // The product is exact at 512 bits and only has to fit `uint256` once the
-    // scaling is done, which is the case the `else` branch below exists for.
+    // `SpokeUtils.toValue` is `amount * price * 10 ** (18 - dec)` in plain
+    // checked Solidity, so it reverts on the first multiply. Widening changes
+    // no answer on that path — the scale is at least 1, so a product past
+    // `uint256` makes the result past it too, and both refuse the same inputs.
+    // It is the `else` branch that needs the room, where a division follows and
+    // an intermediate over `uint256` can still come back under it.
     let product: U512 = amount.widening_mul(price);
 
     // The contract writes `10 ** (18 - dec)` and would revert on a token with
@@ -284,8 +289,10 @@ mod tests {
     const T0: u64 = 1_785_000_000;
 
     /// 5% per annum, RAY-scaled, as `drawn_rate` arrives on `UpdateAsset`.
+    const FIVE_PERCENT: u128 = 10u128.pow(27) / 20;
+
     fn five_percent() -> U256 {
-        RAY / U256::from(20)
+        U256::from(FIVE_PERCENT)
     }
 
     fn asset() -> AssetState {
@@ -300,7 +307,7 @@ mod tests {
             realized_fees: U256::ZERO,
             liquidity_fee: 0,
             checkpoint_index: RAY,
-            drawn_rate: five_percent(),
+            drawn_rate: FIVE_PERCENT,
             checkpoint_at: T0,
         }
     }
@@ -368,26 +375,34 @@ mod tests {
         }
 
         #[test]
-        fn the_checkpoint_short_circuit_is_an_optimisation_and_nothing_else() {
-            // No vector can tell the branch from its absence: at
-            // `at == checkpoint_at` the else-branch is
-            // `ray_mul_up(index, RAY)`, which is `index` for every index. So
-            // this asserts the equivalence rather than pretending some test
-            // guards the branch — none does, and none can.
-            //
-            // On chain it is not free. Solidity has no 512-bit intermediate,
-            // so `index * RAY` is where a large index would revert instead.
-            for index in [U256::ZERO, U256::from(1), RAY, U256::MAX] {
+        fn the_checkpoint_short_circuit_is_load_bearing_at_the_top_of_the_range() {
+            // Below `rayMulUp`'s guard the branch is invisible: the else-branch
+            // at `at == checkpoint_at` is `ray_mul_up(index, RAY)`, which is
+            // `index`. That is why deleting it changes nothing in a language
+            // with arbitrary precision, and the design notes record the
+            // TypeScript suite surviving exactly that deletion.
+            for index in [U256::ZERO, U256::from(1), RAY, U256::MAX / RAY] {
                 let state = AssetState {
                     checkpoint_index: index,
                     ..asset()
                 };
 
+                assert_eq!(drawn_index_at(&state, T0), Ok(index));
                 assert_eq!(
-                    drawn_index_at(&state, T0),
-                    ray_mul_up(index, linear_interest(state.drawn_rate, T0, T0).unwrap())
+                    ray_mul_up(index, linear_interest(state.drawn_rate, T0, T0).unwrap()),
+                    Ok(index)
                 );
             }
+
+            // Past the guard it is the difference between an answer and none,
+            // because `index * RAY` is where the contract reverts.
+            let past_the_guard = AssetState {
+                checkpoint_index: U256::MAX,
+                ..asset()
+            };
+
+            assert_eq!(drawn_index_at(&past_the_guard, T0), Ok(U256::MAX));
+            assert!(ray_mul_up(U256::MAX, RAY).is_err());
         }
 
         #[test]

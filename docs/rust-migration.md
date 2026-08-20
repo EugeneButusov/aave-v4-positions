@@ -230,12 +230,41 @@ one function per Solidity function, same rounding, same revert conditions. Three
 `premiumOffsetRay` is `int200` on chain and genuinely negative, so `premium_ray` takes **`I256`** — the
 only signed value in the module.
 
-`a * b / c` goes through a `mul_div_down` / `mul_div_up` helper built on
-[`ruint::widening_mul`](https://docs.rs/ruint/latest/ruint/struct.Uint.html), which is what Solidity's
-`Math.mulDiv` achieves with a 512-bit intermediate and what the
-[Uniswap V3 Rust ports](https://github.com/0xKitsune/uniswap-v3-math) do. Adding
-`#![deny(clippy::arithmetic_side_effects)]` to the crate makes that mechanical rather than a matter of
-discipline.
+**`a * b / c` does not have one strategy, because the contracts do not.** This note originally said
+to put every product through [`ruint::widening_mul`](https://docs.rs/ruint/latest/ruint/struct.Uint.html)
+the way `Math.mulDiv` does. Read at
+[`2524fe4`](https://github.com/aave/aave-v4/tree/2524fe4018a42750300e114f2a8c4355df62a878), the three
+libraries disagree, and the disagreement is the transcription:
+
+| ours | contract | intermediate | gives out when |
+| --- | --- | --- | --- |
+| `mul_div_down` | `Math.mulDiv`, via `SharesMath.toAssetsDown` | 512-bit `mul512` | the **quotient** leaves `uint256` |
+| `ray_mul_up` | `WadRayMath.rayMulUp` | `uint256` | the **product** leaves `uint256` |
+| `percent_mul_down` | `PercentageMath.percentMulDown` | `uint256` | the **product** leaves `uint256` |
+| `linear_interest` | `MathUtils.calculateLinearInterest` | `uint256` | **never** — see below |
+
+Both Aave libraries guard first and revert:
+`if iszero(or(iszero(b), iszero(gt(a, div(not(0), b))))) { revert(0, 0) }`. So widening `ray_mul_up`
+answers where the chain refuses, and narrowing `mul_div_down` refuses where the chain answers —
+wrong in both directions, and the same operands show it:
+`mulDiv(MAX, RAY, RAY)` is `MAX` while `rayMulUp(MAX, RAY)` reverts. A test asserts exactly that
+pair, so the divergence is pinned rather than remembered.
+
+`calculateLinearInterest` takes **`(uint96 rate, uint40 lastUpdateTimestamp)`**, and that is why its
+assembly carries no guard where every neighbour has one: 96 bits times 40 cannot fill 256. The Rust
+carries the same bound as `drawn_rate: u128` — the narrowest Rust integer holding a `uint96` — so the
+function is total apart from the checkpoint-ahead revert, with no overflow arm to test or to reason
+about.
+
+Adding `#![deny(clippy::arithmetic_side_effects)]` to the crate makes all of that deliberate rather
+than a matter of discipline: every operator has to say which of these it is.
+
+**And matching the contract earned back a mutation test.** With everything widened, deleting
+`getDrawnIndex`'s `checkpointAt == at` short-circuit changed no result — `ceil(index · RAY / RAY)` is
+`index` — so the mutant survived, exactly as it does against the TypeScript suite (recorded in
+[the design notes](design-notes.md#verification)). Once `ray_mul_up` reverts where the contract
+reverts, the branch is the difference between `Ok(MAX)` and a refusal for any index above
+`MAX / RAY`, and the mutant dies. Twelve applied to the Rust module, twelve caught.
 
 And **not** `(a / c) * b`. Integer division truncates the fractional part, and in fixed-point the
 fractional part _is_ the value: measured on a real `drawnIndexAt` — `a` =

@@ -10,12 +10,19 @@
 //! chain. [`premium_ray`] is where a negative could arise, and it refuses for
 //! the same reason the contract reverts.
 //!
-//! **Every intermediate is wider than the values it comes from.** A ray times
-//! a ray is 180 bits and a share balance times an index is 210, so a product
-//! goes through a 512-bit intermediate and narrows back with a check — the same
-//! thing Solidity's `Math.mulDiv` achieves, and what the Uniswap V3 Rust ports
-//! do. `#![deny(clippy::arithmetic_side_effects)]` on the crate is what keeps
-//! that mechanical instead of a matter of discipline.
+//! **Each one overflows where its own contract overflows, and the three do not
+//! agree.** `WadRayMath.rayMulUp` and `PercentageMath.percentMulDown` multiply
+//! in `uint256` and revert when the product does not fit, guard first —
+//! `if iszero(or(iszero(b), iszero(gt(a, div(not(0), b))))) { revert }`.
+//! `SharesMath.toAssetsDown` goes through OpenZeppelin's `Math.mulDiv`, which
+//! takes the full 512-bit product and only gives out when the *quotient* would
+//! not fit. So [`mul_div_down`] is the one that widens, and it widens because
+//! that is the transcription: doing it in `uint256` would refuse inputs the
+//! chain accepts, and widening the other two would accept inputs the chain
+//! refuses.
+//!
+//! `#![deny(clippy::arithmetic_side_effects)]` on the crate is what keeps that
+//! deliberate instead of a matter of discipline.
 
 use alloy_primitives::{I256, U256, U512, uint};
 
@@ -33,14 +40,6 @@ pub const VIRTUAL: U256 = uint!(1_000_000_U256);
 /// `PercentageMath.PERCENTAGE_FACTOR` — basis points.
 pub const PERCENTAGE_FACTOR: U256 = uint!(10_000_U256);
 
-/// What [`mul_div`] and [`mul_div_up`] name when their result leaves `uint256`.
-///
-/// One name for both, because a caller cannot predict which of the two steps
-/// gives out first — `ray_mul_up(U256::MAX, RAY + 1)` fails at the narrowing,
-/// not at the ceiling's `+ 1` — and it is the same quantity either way. Callers
-/// that know what the product *means* name it themselves; these do not.
-const PRODUCT: &str = "a * b / denominator";
-
 /// Narrow a widened intermediate back to the `uint256` every quantity here is
 /// on chain.
 ///
@@ -55,19 +54,28 @@ pub(super) fn narrow(value: U512, what: &'static str) -> Result<U256, Error> {
     Ok(value.wrapping_to::<U256>())
 }
 
-/// `a * b / denominator`, floored, over a 512-bit intermediate.
+/// `Math.mulDiv(..., Rounding.Floor)`, as `SharesMath.toAssetsDown` uses it.
 ///
-/// `Math.mulDiv(..., Rounding.Floor)`, and exported under that name as
-/// [`mul_div_down`]; this is the shared body.
+/// **The 512-bit intermediate is the transcription, not a precaution.**
+/// OpenZeppelin's `mulDiv` takes the full product through `mul512` and panics
+/// only when the quotient would leave `uint256`, so computing this in `uint256`
+/// would refuse inputs the chain accepts — a supply side whose
+/// `shares * totalAssets` passes 2²⁵⁶ while the amount it redeems for does not.
 ///
 /// **Not `(a / denominator) * b`.** Integer division truncates the fractional
 /// part, and in fixed-point the fractional part *is* the value: measured on a
 /// real [`super::drawn_index_at`] — `a` = 1008055395294113139752655573, `b` ≈
 /// [`RAY`] — that form comes out 0.7991% low, which would report near-zero
 /// interest on every position.
-fn mul_div(a: U256, b: U256, denominator: U256) -> Result<(U256, bool), Error> {
+///
+/// Headroom on the one call that matters — `mul_div_down(shares,
+/// totalAssets + VIRTUAL, addedShares + VIRTUAL)` in
+/// [`super::supplied_assets`] — is 249 bits against 256, seven to spare. The
+/// tests pin that and the other two widths, so this cannot drift.
+pub fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
     if denominator.is_zero() {
-        // No answer to give, and this is reachable: `mul_div_down` is public.
+        // `mulDiv` panics with `DIVISION_BY_ZERO` here. No answer to give, and
+        // this is public, so a caller can ask.
         return Err(Error::DivideByZero);
     }
 
@@ -75,40 +83,34 @@ fn mul_div(a: U256, b: U256, denominator: U256) -> Result<(U256, bool), Error> {
     // load-bearing rather than decorative: ruint asserts at run time that the
     // result width is exactly the sum of the operands'.
     let product: U512 = a.widening_mul(b);
-    let (quotient, remainder) = product.div_rem(U512::from(denominator));
 
-    Ok((narrow(quotient, PRODUCT)?, !remainder.is_zero()))
-}
-
-/// `Math.mulDiv(..., Rounding.Floor)`, as `SharesMath.toAssetsDown` uses it.
-///
-/// Headroom, measured on the one call that matters — `mul_div_down(shares,
-/// totalAssets + VIRTUAL, addedShares + VIRTUAL)` in
-/// [`super::supplied_assets`] — is **249 bits against 256, so seven to
-/// spare**. That is the narrowest margin in the module, and the reason the
-/// intermediate is widened rather than trusted. The tests pin all three
-/// widths, so this comment cannot drift away from them.
-pub fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
-    Ok(mul_div(a, b, denominator)?.0)
-}
-
-/// The same, rounded up. `Math.mulDiv(..., Rounding.Ceil)`.
-fn mul_div_up(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
-    let (quotient, has_remainder) = mul_div(a, b, denominator)?;
-    if !has_remainder {
-        return Ok(quotient);
-    }
-    quotient
-        .checked_add(U256::from(1))
-        .ok_or(Error::OutOfRange { what: PRODUCT })
+    narrow(
+        product.wrapping_div(U512::from(denominator)),
+        "a * b / denominator",
+    )
 }
 
 /// `WadRayMath.rayMulUp` — `ceil(a * b / RAY)`.
 ///
+/// **In `uint256`, with the product checked before the divide, because that is
+/// what the contract does.** Its guard is `a <= type(uint256).max / b`, and it
+/// reverts there even when `a * b / RAY` would have fit — so widening would
+/// answer where the chain refuses to. [`Error::OutOfRange`] lands on exactly
+/// the inputs that revert.
+///
 /// Headroom: the ray × ray product in [`super::drawn_index_at`] is 180 bits,
 /// leaving 76.
 pub fn ray_mul_up(a: U256, b: U256) -> Result<U256, Error> {
-    mul_div_up(a, b, RAY)
+    let product = a.checked_mul(b).ok_or(Error::OutOfRange {
+        what: "a * b, before the divide by RAY",
+    })?;
+
+    let (quotient, remainder) = product.div_rem(RAY);
+    if remainder.is_zero() {
+        return Ok(quotient);
+    }
+    // The quotient is at most 2²⁵⁶ / 1e27, so the ceiling has room to spare.
+    Ok(quotient.saturating_add(U256::from(1)))
 }
 
 /// `WadRayMath.fromRayUp` — `ceil(a / RAY)`.
@@ -127,32 +129,50 @@ pub fn from_ray_up(a: U256) -> U256 {
 }
 
 /// `PercentageMath.percentMulDown` — `floor(value * bps / 10000)`.
+///
+/// `uint256` and a guard, the same shape as [`ray_mul_up`] and for the same
+/// reason: the contract reverts on the product, not on the result.
 pub fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
-    Ok(mul_div(value, bps, PERCENTAGE_FACTOR)?.0)
+    let product = value.checked_mul(bps).ok_or(Error::OutOfRange {
+        what: "value * bps, before the divide by 10000",
+    })?;
+
+    Ok(product.wrapping_div(PERCENTAGE_FACTOR))
 }
 
 /// `MathUtils.calculateLinearInterest` — `RAY + rate * elapsed / SECONDS_PER_YEAR`.
 ///
 /// Integer division, so the interest term floors before [`RAY`] is added.
 ///
+/// **Nothing here can overflow, and the contract says so with its types.** It
+/// takes `(uint96 rate, uint40 lastUpdateTimestamp)`, which is why its assembly
+/// carries no overflow guard where every neighbour in `WadRayMath` and
+/// `PercentageMath` does: 96 bits times 40 cannot fill 256. `u128` is the
+/// narrowest Rust integer that holds a `uint96`, and even at its own maximum
+/// against a full `u64` the product is 192 bits.
+///
 /// **It takes the two instants, not an elapsed.** That is where the contract
 /// does the subtraction too, and it reverts on the underflow —
 /// [`Error::CheckpointAhead`] is that revert. A checkpoint ahead of the
 /// valuation time means the caller mixed up two blocks, and every number that
 /// follows would be quietly wrong.
-pub fn linear_interest(rate: U256, checkpoint_at: u64, at: u64) -> Result<U256, Error> {
-    let elapsed = at.checked_sub(checkpoint_at).ok_or_else(|| {
-        Error::CheckpointAhead {
-            // Safe by the branch: `checked_sub` only returned `None` because
+pub fn linear_interest(rate: u128, checkpoint_at: u64, at: u64) -> Result<U256, Error> {
+    let elapsed = at
+        .checked_sub(checkpoint_at)
+        .ok_or(Error::CheckpointAhead {
+            // Safe by the branch: `checked_sub` only gave `None` because
             // `checkpoint_at` is the larger.
             seconds: checkpoint_at.saturating_sub(at),
-        }
-    })?;
+        })?;
 
-    let interest = mul_div_down(rate, U256::from(elapsed), SECONDS_PER_YEAR)?;
-    RAY.checked_add(interest).ok_or(Error::OutOfRange {
-        what: "RAY + rate * elapsed / SECONDS_PER_YEAR",
-    })
+    // Saturating rather than checked because 192 bits cannot reach 256, and
+    // `SECONDS_PER_YEAR` is a nonzero constant. Neither can give out; the
+    // crate's lint just will not take an unadorned operator for it.
+    let interest = U256::from(rate)
+        .saturating_mul(U256::from(elapsed))
+        .wrapping_div(SECONDS_PER_YEAR);
+
+    Ok(RAY.saturating_add(interest))
 }
 
 /// `Premium.calculatePremiumRay` — `premiumShares * drawnIndex - premiumOffsetRay`.
@@ -282,13 +302,42 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_quotient_that_would_leave_uint256() {
-        // Exactly at the edge and one step past it, so the boundary is pinned
-        // rather than assumed distant.
-        assert_eq!(ray_mul_up(U256::MAX, RAY), Ok(U256::MAX));
+    fn refuses_a_product_where_the_contract_reverts() {
+        // `rayMulUp`'s guard is `a <= type(uint256).max / b`, and it fires on
+        // the product rather than on the result: `MAX * RAY / RAY` is `MAX` and
+        // would fit, but the chain never gets there.
         assert_eq!(
-            ray_mul_up(U256::MAX, RAY + one()),
-            Err(Error::OutOfRange { what: PRODUCT })
+            ray_mul_up(U256::MAX, RAY),
+            Err(Error::OutOfRange {
+                what: "a * b, before the divide by RAY"
+            })
         );
+
+        // One step under the guard, where it does answer.
+        assert_eq!(ray_mul_up(U256::MAX / RAY, RAY), Ok(U256::MAX / RAY));
+    }
+
+    #[test]
+    fn the_two_libraries_disagree_on_the_same_operands_and_both_are_kept() {
+        // `Math.mulDiv` widens and answers; `WadRayMath.rayMulUp` does not and
+        // reverts. Same `a`, same `b`, same denominator — so the strategy is
+        // per-function rather than a property of this crate, and transcribing
+        // one onto the other would be wrong in whichever direction it went.
+        assert_eq!(mul_div_down(U256::MAX, RAY, RAY), Ok(U256::MAX));
+        assert!(ray_mul_up(U256::MAX, RAY).is_err());
+    }
+
+    #[test]
+    fn linear_interest_cannot_overflow_at_the_far_end_of_its_types() {
+        // `uint96 × uint40` on chain, and its assembly has no guard because of
+        // it. Even a full `u128` against a full `u64` — far past anything the
+        // chain can emit — stays inside `uint256`.
+        assert_eq!(
+            U256::from(u128::MAX)
+                .checked_mul(U256::from(u64::MAX))
+                .map(|p| p.bit_len()),
+            Some(192)
+        );
+        assert!(linear_interest(u128::MAX, 0, u64::MAX).is_ok());
     }
 }
