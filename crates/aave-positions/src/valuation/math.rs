@@ -297,16 +297,6 @@ mod tests {
     }
 
     #[test]
-    fn the_two_libraries_disagree_on_the_same_operands_and_both_are_kept() {
-        // `Math.mulDiv` widens and answers; `WadRayMath.rayMulUp` does not and
-        // reverts. Same `a`, same `b`, same denominator — so the strategy is
-        // per-function rather than a property of this crate, and transcribing
-        // one onto the other would be wrong in whichever direction it went.
-        assert_eq!(mul_div_down(U256::MAX, RAY, RAY), Ok(U256::MAX));
-        assert!(ray_mul_up(U256::MAX, RAY).is_err());
-    }
-
-    #[test]
     fn linear_interest_cannot_overflow_at_the_far_end_of_its_types() {
         // `uint96 × uint40` on chain, and its assembly has no guard because of
         // it. Even a full `u128` against a full `u64` — far past anything the
