@@ -11,18 +11,25 @@ use super::math::narrow;
 
 /// One dollar, in the unit [`to_value`] answers in.
 ///
+/// **The 26 is two decimal conventions multiplied, not a number anyone chose.**
+/// [`to_value`] normalises the amount to `WadRayMath.WAD_DECIMALS = 18` and
+/// multiplies it by a price the oracle reports at
+/// `SpokeUtils.ORACLE_DECIMALS = 8` (`SpokeUtils.sol:13`, and `Spoke`'s
+/// constructor rejects an oracle answering with any other). A Value therefore
+/// carries 18 + 8 = 26 decimal places, and one dollar is `1e18 × 1e8`. The
+/// contract states the result itself above `toValue`: "1e26 represents 1 USD".
+///
 /// Exported so a caller dividing by it says what it is doing. Not applied here:
 /// the division is lossy and the wire carries the exact integer (§7.5).
 pub const USD: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
 
 /// `SpokeUtils.toValue` — an amount in token units, priced.
 ///
-/// **The unit is the protocol's own and is not dollars.** It is an
-/// 18-decimal-normalised amount times an 8-decimal price, so `1e26` represents
-/// one dollar — `SpokeUtils.toValue:28-40` documents that outright, against
-/// `ORACLE_DECIMALS = 8` (§7.1). Served in that unit rather than converted,
-/// because it is what the contract computes in and therefore the only form that
-/// reconciles against `getUserAccountData`.
+/// **The unit is the protocol's own and is not dollars** — see [`USD`] for
+/// where its 26 decimal places come from (§7.1, and `SpokeUtils.toValue:28-40`
+/// on chain). Served in that unit rather than converted, because it is what the
+/// contract computes in and therefore the only form that reconciles against
+/// `getUserAccountData`.
 ///
 /// `decimals` is the **Hub's**, from `AddAsset`, and never the token's own
 /// `decimals()`. The two can disagree — which is a listing audit signal, not a
