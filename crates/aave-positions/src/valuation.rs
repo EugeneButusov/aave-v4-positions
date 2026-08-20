@@ -100,9 +100,7 @@ fn aggregated_owed_ray(asset: &AssetState, drawn_index: U256) -> Result<U256, Er
     let drawn = asset
         .drawn_shares
         .checked_mul(drawn_index)
-        .ok_or(Error::OutOfRange {
-            what: "drawnShares * drawnIndex",
-        })?;
+        .ok_or(Error::OutOfRange)?;
 
     drawn
         .checked_add(premium_ray(
@@ -111,9 +109,7 @@ fn aggregated_owed_ray(asset: &AssetState, drawn_index: U256) -> Result<U256, Er
             drawn_index,
         )?)
         .and_then(|owed| owed.checked_add(asset.deficit_ray))
-        .ok_or(Error::OutOfRange {
-            what: "the aggregated owed",
-        })
+        .ok_or(Error::OutOfRange)
 }
 
 /// `AssetLogic.getUnrealizedFees` — the protocol's cut of interest accrued since
@@ -133,9 +129,7 @@ fn unrealized_fees(asset: &AssetState, drawn_index: U256) -> Result<U256, Error>
     let before = from_ray_up(aggregated_owed_ray(asset, asset.checkpoint_index)?);
 
     percent_mul_down(
-        after.checked_sub(before).ok_or(Error::OutOfRange {
-            what: "the interest accrued since the checkpoint",
-        })?,
+        after.checked_sub(before).ok_or(Error::OutOfRange)?,
         U256::from(asset.liquidity_fee),
     )
 }
@@ -155,9 +149,7 @@ pub fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256,
         .and_then(|total| total.checked_add(owed))
         .and_then(|total| total.checked_sub(asset.realized_fees))
         .and_then(|total| total.checked_sub(fees))
-        .ok_or(Error::OutOfRange {
-            what: "the total added assets",
-        })
+        .ok_or(Error::OutOfRange)
 }
 
 /// `SharesMath.toAssetsDown`, via `previewRemoveByShares` — the supply side.
@@ -169,15 +161,11 @@ pub fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256,
 pub fn supplied_assets(shares: U256, asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
     let assets = total_added_assets(asset, drawn_index)?
         .checked_add(VIRTUAL)
-        .ok_or(Error::OutOfRange {
-            what: "totalAddedAssets + VIRTUAL",
-        })?;
+        .ok_or(Error::OutOfRange)?;
     let shares_out = asset
         .added_shares
         .checked_add(VIRTUAL)
-        .ok_or(Error::OutOfRange {
-            what: "addedShares + VIRTUAL",
-        })?;
+        .ok_or(Error::OutOfRange)?;
 
     mul_div_down(shares, assets, shares_out)
 }
@@ -213,9 +201,7 @@ pub fn value_position(
         premium_debt,
         total_debt: drawn_debt
             .checked_add(premium_debt)
-            .ok_or(Error::OutOfRange {
-                what: "drawnDebt + premiumDebt",
-            })?,
+            .ok_or(Error::OutOfRange)?,
         drawn_index,
     })
 }
@@ -240,8 +226,6 @@ pub const USD: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
 /// correctness problem — and when they do, the Hub's is what the Hub's
 /// arithmetic uses and so what the position is worth to Aave.
 pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> {
-    const WHAT: &str = "amount * price, normalised to eighteen decimals";
-
     // `SpokeUtils.toValue` is `amount * price * 10 ** (18 - dec)` in plain
     // checked Solidity, so it reverts on the first multiply. Widening changes
     // no answer on that path — the scale is at least 1, so a product past
@@ -258,10 +242,8 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
         let exponent = U512::from(18u32.saturating_sub(u32::from(decimals)));
         let scale = U512::from(10)
             .checked_pow(exponent)
-            .ok_or(Error::OutOfRange { what: WHAT })?;
-        product
-            .checked_mul(scale)
-            .ok_or(Error::OutOfRange { what: WHAT })?
+            .ok_or(Error::OutOfRange)?;
+        product.checked_mul(scale).ok_or(Error::OutOfRange)?
     } else {
         let exponent = U512::from(u32::from(decimals).saturating_sub(18));
         match U512::from(10).checked_pow(exponent) {
@@ -272,7 +254,7 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
         }
     };
 
-    narrow(scaled, WHAT)
+    narrow(scaled)
 }
 
 // Same reason as [`ray`]'s: the arithmetic in a vector is the vector, and
@@ -779,19 +761,22 @@ mod tests {
 
         #[test]
         fn refuses_a_share_balance_that_would_leave_uint256() {
-            // One step past the edge: `shares * RAY` needs a 257th bit.
-            let state = AssetState {
-                drawn_shares: U256::MAX / RAY + U256::from(1),
+            // Both sides of the edge, which pins the term that gives out more
+            // firmly than a label on the error would: at `MAX / RAY` the
+            // `drawnShares * drawnIndex` product is the largest that fits, and
+            // one share more needs a 257th bit.
+            let at_the_edge = AssetState {
+                drawn_shares: U256::MAX / RAY,
                 checkpoint_index: RAY,
                 ..asset()
             };
+            let past_it = AssetState {
+                drawn_shares: U256::MAX / RAY + U256::from(1),
+                ..at_the_edge.clone()
+            };
 
-            assert_eq!(
-                total_added_assets(&state, RAY),
-                Err(Error::OutOfRange {
-                    what: "drawnShares * drawnIndex"
-                })
-            );
+            assert!(total_added_assets(&at_the_edge, RAY).is_ok());
+            assert_eq!(total_added_assets(&past_it, RAY), Err(Error::OutOfRange));
         }
 
         #[test]

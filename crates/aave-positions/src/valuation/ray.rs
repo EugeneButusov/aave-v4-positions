@@ -47,9 +47,9 @@ pub const PERCENTAGE_FACTOR: U256 = uint!(10_000_U256);
 /// itself, so `UintTryTo` cannot be named from here — and taking a direct
 /// `ruint` dependency to reach it is exactly the version-skew flaw refinery has
 /// with `time`. The comparison is the check that trait would make.
-pub(super) fn narrow(value: U512, what: &'static str) -> Result<U256, Error> {
+pub(super) fn narrow(value: U512) -> Result<U256, Error> {
     if value > U512::from(U256::MAX) {
-        return Err(Error::OutOfRange { what });
+        return Err(Error::OutOfRange);
     }
     Ok(value.wrapping_to::<U256>())
 }
@@ -84,10 +84,7 @@ pub fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> 
     // result width is exactly the sum of the operands'.
     let product: U512 = a.widening_mul(b);
 
-    narrow(
-        product.wrapping_div(U512::from(denominator)),
-        "a * b / denominator",
-    )
+    narrow(product.wrapping_div(U512::from(denominator)))
 }
 
 /// `WadRayMath.rayMulUp` — `ceil(a * b / RAY)`.
@@ -101,9 +98,7 @@ pub fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> 
 /// Headroom: the ray × ray product in [`super::drawn_index_at`] is 180 bits,
 /// leaving 76.
 pub fn ray_mul_up(a: U256, b: U256) -> Result<U256, Error> {
-    let product = a.checked_mul(b).ok_or(Error::OutOfRange {
-        what: "a * b, before the divide by RAY",
-    })?;
+    let product = a.checked_mul(b).ok_or(Error::OutOfRange)?;
 
     let (quotient, remainder) = product.div_rem(RAY);
     if remainder.is_zero() {
@@ -133,9 +128,7 @@ pub fn from_ray_up(a: U256) -> U256 {
 /// `uint256` and a guard, the same shape as [`ray_mul_up`] and for the same
 /// reason: the contract reverts on the product, not on the result.
 pub fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
-    let product = value.checked_mul(bps).ok_or(Error::OutOfRange {
-        what: "value * bps, before the divide by 10000",
-    })?;
+    let product = value.checked_mul(bps).ok_or(Error::OutOfRange)?;
 
     Ok(product.wrapping_div(PERCENTAGE_FACTOR))
 }
@@ -195,16 +188,12 @@ pub fn premium_ray(
 ) -> Result<U256, Error> {
     let product = premium_shares
         .checked_mul(drawn_index)
-        .ok_or(Error::OutOfRange {
-            what: "premiumShares * drawnIndex",
-        })?;
+        .ok_or(Error::OutOfRange)?;
 
     if premium_offset_ray.is_negative() {
         return product
             .checked_add(premium_offset_ray.unsigned_abs())
-            .ok_or(Error::OutOfRange {
-                what: "premiumShares * drawnIndex - premiumOffsetRay",
-            });
+            .ok_or(Error::OutOfRange);
     }
 
     let offset = premium_offset_ray.into_raw();
@@ -306,12 +295,7 @@ mod tests {
         // `rayMulUp`'s guard is `a <= type(uint256).max / b`, and it fires on
         // the product rather than on the result: `MAX * RAY / RAY` is `MAX` and
         // would fit, but the chain never gets there.
-        assert_eq!(
-            ray_mul_up(U256::MAX, RAY),
-            Err(Error::OutOfRange {
-                what: "a * b, before the divide by RAY"
-            })
-        );
+        assert_eq!(ray_mul_up(U256::MAX, RAY), Err(Error::OutOfRange));
 
         // One step under the guard, where it does answer.
         assert_eq!(ray_mul_up(U256::MAX / RAY, RAY), Ok(U256::MAX / RAY));

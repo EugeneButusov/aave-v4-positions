@@ -12,7 +12,7 @@ use alloy_primitives::{I256, U256};
 /// [`Error::OutOfRange`] has no revert to correspond to, because Solidity's
 /// checked arithmetic stops at the operation rather than reporting which one.
 /// The claim is the same either way — every quantity these formulas touch is a
-/// `uint256` — so the variant names the intermediate that left it.
+/// `uint256`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// The valuation time is before the checkpoint it would extrapolate from.
@@ -33,8 +33,16 @@ pub enum Error {
     DivideByZero,
 
     /// An intermediate left `uint256`, in either direction.
-    #[error("{what} does not fit a uint256")]
-    OutOfRange { what: &'static str },
+    ///
+    /// **No term name, deliberately.** Naming the intermediate meant eleven
+    /// string literals restating the line each sat beside, read by nothing —
+    /// the harness needs the variant, not the term, and neither does a caller.
+    /// The nearest automatic substitute is one frame of `#[track_caller]`
+    /// [`Location`](std::panic::Location), which reports a line inside libcore
+    /// the moment the constructor is passed as a value rather than called, and
+    /// which no test can assert against.
+    #[error("an intermediate does not fit a uint256")]
+    OutOfRange,
 }
 
 /// The operands behind [`Error::NegativePremium`], boxed.

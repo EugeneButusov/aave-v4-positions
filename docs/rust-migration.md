@@ -298,7 +298,11 @@ Where `crates/aave-positions` returns `Error::OutOfRange`, the TypeScript return
 2²⁵⁶ and carries on. Every quantity in these formulas is a `uint256` on chain, so that number was
 never a state the protocol could be in — but the differential gate compares error conditions, so
 the rule belongs written down rather than discovered: **Rust `Err(OutOfRange)` ⟺ the TypeScript's
-result leaves `[0, 2²⁵⁶)`**, and the variant names the intermediate so the harness can say which.
+result leaves `[0, 2²⁵⁶)`**. The variant carries no term name: naming the intermediate cost eleven
+string literals restating the line each sat beside, and nothing read them — not the harness, which
+compares the variant against a magnitude, and not the TypeScript, which cannot say which term left
+`uint256` either. Boundary tests assert both sides of an edge instead, which pins the term that
+gives out more firmly than a label did.
 The other three agree on both sides — a checkpoint ahead of the valuation time, a negative premium,
 and a zero denominator, which `BigInt` division throws on too — and the first two keep the
 TypeScript's exact message text so the comparison is on the string as well as the branch.
