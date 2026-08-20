@@ -5,5 +5,5 @@
 mod client;
 mod error;
 
-pub use client::build_client;
+pub use client::{Client, build_client};
 pub use error::Error;
