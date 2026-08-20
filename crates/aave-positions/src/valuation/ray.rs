@@ -33,6 +33,14 @@ pub const VIRTUAL: U256 = uint!(1_000_000_U256);
 /// `PercentageMath.PERCENTAGE_FACTOR` — basis points.
 pub const PERCENTAGE_FACTOR: U256 = uint!(10_000_U256);
 
+/// What [`mul_div`] and [`mul_div_up`] name when their result leaves `uint256`.
+///
+/// One name for both, because a caller cannot predict which of the two steps
+/// gives out first — `ray_mul_up(U256::MAX, RAY + 1)` fails at the narrowing,
+/// not at the ceiling's `+ 1` — and it is the same quantity either way. Callers
+/// that know what the product *means* name it themselves; these do not.
+const PRODUCT: &str = "a * b / denominator";
+
 /// Narrow a widened intermediate back to the `uint256` every quantity here is
 /// on chain.
 ///
@@ -57,7 +65,7 @@ pub(super) fn narrow(value: U512, what: &'static str) -> Result<U256, Error> {
 /// real [`super::drawn_index_at`] — `a` = 1008055395294113139752655573, `b` ≈
 /// [`RAY`] — that form comes out 0.7991% low, which would report near-zero
 /// interest on every position.
-fn mul_div(a: U256, b: U256, denominator: U256, what: &'static str) -> Result<(U256, bool), Error> {
+fn mul_div(a: U256, b: U256, denominator: U256) -> Result<(U256, bool), Error> {
     if denominator.is_zero() {
         // No answer to give, and this is reachable: `mul_div_down` is public.
         return Err(Error::DivideByZero);
@@ -69,7 +77,7 @@ fn mul_div(a: U256, b: U256, denominator: U256, what: &'static str) -> Result<(U
     let product: U512 = a.widening_mul(b);
     let (quotient, remainder) = product.div_rem(U512::from(denominator));
 
-    Ok((narrow(quotient, what)?, !remainder.is_zero()))
+    Ok((narrow(quotient, PRODUCT)?, !remainder.is_zero()))
 }
 
 /// `Math.mulDiv(..., Rounding.Floor)`, as `SharesMath.toAssetsDown` uses it.
@@ -81,18 +89,18 @@ fn mul_div(a: U256, b: U256, denominator: U256, what: &'static str) -> Result<(U
 /// intermediate is widened rather than trusted. The tests pin all three
 /// widths, so this comment cannot drift away from them.
 pub fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
-    Ok(mul_div(a, b, denominator, "a * b / denominator")?.0)
+    Ok(mul_div(a, b, denominator)?.0)
 }
 
 /// The same, rounded up. `Math.mulDiv(..., Rounding.Ceil)`.
-fn mul_div_up(a: U256, b: U256, denominator: U256, what: &'static str) -> Result<U256, Error> {
-    let (quotient, has_remainder) = mul_div(a, b, denominator, what)?;
+fn mul_div_up(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
+    let (quotient, has_remainder) = mul_div(a, b, denominator)?;
     if !has_remainder {
         return Ok(quotient);
     }
     quotient
         .checked_add(U256::from(1))
-        .ok_or(Error::OutOfRange { what })
+        .ok_or(Error::OutOfRange { what: PRODUCT })
 }
 
 /// `WadRayMath.rayMulUp` — `ceil(a * b / RAY)`.
@@ -100,7 +108,7 @@ fn mul_div_up(a: U256, b: U256, denominator: U256, what: &'static str) -> Result
 /// Headroom: the ray × ray product in [`super::drawn_index_at`] is 180 bits,
 /// leaving 76.
 pub fn ray_mul_up(a: U256, b: U256) -> Result<U256, Error> {
-    mul_div_up(a, b, RAY, "ceil(a * b / RAY)")
+    mul_div_up(a, b, RAY)
 }
 
 /// `WadRayMath.fromRayUp` — `ceil(a / RAY)`.
@@ -120,7 +128,7 @@ pub fn from_ray_up(a: U256) -> U256 {
 
 /// `PercentageMath.percentMulDown` — `floor(value * bps / 10000)`.
 pub fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
-    Ok(mul_div(value, bps, PERCENTAGE_FACTOR, "value * bps / 10000")?.0)
+    Ok(mul_div(value, bps, PERCENTAGE_FACTOR)?.0)
 }
 
 /// `MathUtils.calculateLinearInterest` — `RAY + rate * elapsed / SECONDS_PER_YEAR`.
@@ -280,9 +288,7 @@ mod tests {
         assert_eq!(ray_mul_up(U256::MAX, RAY), Ok(U256::MAX));
         assert_eq!(
             ray_mul_up(U256::MAX, RAY + one()),
-            Err(Error::OutOfRange {
-                what: "ceil(a * b / RAY)"
-            })
+            Err(Error::OutOfRange { what: PRODUCT })
         );
     }
 }
