@@ -138,12 +138,18 @@ time:
 | binary    | links                                                                | **cannot** link                       |
 | --------- | -------------------------------------------------------------------- | ------------------------------------- |
 | `migrate` | `clickhouse-client`, `postgres`, and the schema it embeds           | `alloy`, `axum` — no chain, no socket |
-| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy`, `indexing`, the write paths  |
+| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, `indexing`, the write paths |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
 The third column will be asserted in CI with `cargo tree -i`, so reaching across fails the build
-rather than passing review — from Phase 2, when `bins/api` gives it something to check. Today neither
-`alloy` nor `axum` is in the workspace and the assertion would pass without proving anything. `migrate` is its own crate because its lifecycle differs — it runs before the
+rather than passing review — from Phase 2, when `bins/api` gives it something to check. Today
+neither `axum` nor any of alloy's chain-facing crates is in the workspace and the assertion would
+pass without proving anything. `api`'s row names those crates rather than `alloy` because
+`crates/aave-positions` links `alloy-primitives` for `U256` and `I256`: the prohibition is no chain
+and no socket, and integer types are neither — they are also what the Phase 3 decoders will hand
+over, so sharing them is what keeps a conversion out of the boundary.
+
+`migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
 how [`compose.yaml`](../compose.yaml) treats it. It also owns every migration concept in the
 workspace: the database crates it uses are connectivity and nothing more, so a crate named for a
@@ -244,7 +250,14 @@ Measured headroom, because nothing currently records it:
 | --- | ---: | ---: |
 | `rayMulUp(index, linearInterest(…))` — ray × ray | 180 bits | 76 |
 | `drawnShares * drawnIndex`, in `aggregatedOwedRay` — uint120 × ray | 210 bits | 46 |
-| `mulDivDown(shares, totalAssets, totalShares)` | 248 bits | **8** |
+| `mulDivDown(shares, totalAssets + VIRTUAL, addedShares + VIRTUAL)` | 249 bits | **7** |
+
+The third row was 248 and eight when this was written, which counted `totalAssets` alone; the
+multiply is against `totalAssets + VIRTUAL`, because the ERC-4626 padding is inside the division
+rather than applied after it. One bit, and it is the row with the least to give. All three are now
+assertions rather than prose —
+[`the_three_intermediates_are_the_widths_the_port_notes_record`](../crates/aave-positions/src/valuation.rs)
+measures each with `bit_len`, so this table cannot drift again.
 
 Nothing overflows on realistic values, and the RAY-scaled aggregate never feeds another multiply —
 `aggregatedOwedRay` is consumed by `fromRayUp`, which divides. Write those bounds into the doc
