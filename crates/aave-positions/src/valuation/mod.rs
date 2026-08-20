@@ -15,7 +15,7 @@ mod price;
 use alloy_primitives::{U256, uint};
 
 pub use error::{Error, NegativePremium};
-pub use position::{AssetState, PositionShares, Valuation, value_position};
+pub use position::{AssetState, PositionShares, Valuation};
 pub use price::to_value;
 
 /// `1e27` — the unit every index and rate here is scaled in.

@@ -16,12 +16,11 @@
 //! `valuation` is the only consumer they have or should get, and the private
 //! module already blocks a sibling either way — so the modifier is what keeps
 //! that true if the module's own visibility ever widens. A caller wanting
-//! `ceil(a * b / RAY)` wants
-//! [`valuation::value_position`] instead. [`valuation::to_value`] is `pub`
-//! because pricing is a separate call the API makes;
-//! [`valuation::value_position`] and its three types are `pub` only until
-//! Phase 2's store is their in-crate consumer — narrowing them today makes the
-//! whole module dead code, since nothing but the tests calls it yet.
+//! `ceil(a * b / RAY)` wants [`valuation::PositionShares::value_at`] instead.
+//! [`valuation::to_value`] is `pub` because pricing is a separate call the API
+//! makes; `value_at` and the three types are `pub` only until Phase 2's store
+//! is their in-crate consumer — narrowing them today makes the whole module
+//! dead code, since nothing but the tests calls it yet.
 #![deny(clippy::arithmetic_side_effects)]
 
 pub mod valuation;

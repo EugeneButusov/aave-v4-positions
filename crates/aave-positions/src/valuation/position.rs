@@ -53,7 +53,7 @@ pub struct PositionShares {
     pub premium_offset_ray: I256,
 }
 
-/// What one position is worth, at [`value_position`]'s `at`.
+/// What one position is worth, at [`PositionShares::value_at`]'s `at`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Valuation {
     /// Underlying redeemable for `supplied_shares`, rounded down as the Hub does.
@@ -66,145 +66,147 @@ pub struct Valuation {
     pub drawn_index: U256,
 }
 
-/// `AssetLogic.getDrawnIndex`, extrapolated to an arbitrary time.
-///
-/// The index accrues every second and emits nothing (§5), so a balance is only
-/// meaningful with a time attached. What makes this exact rather than a model is
-/// §5.3: the Hub emits the *settled* index on every accrual, so this applies
-/// linear interest to an authoritative checkpoint instead of reconstructing a
-/// rate curve.
-///
-/// **Two short-circuits, both from the contract and both load-bearing.** The
-/// index does not move when the checkpoint is already at `at`, nor when the
-/// asset owes nothing at all — and the second is on the *asset's* totals, not
-/// the user's, so a user with debt in an otherwise-idle asset still does not
-/// accrue. Skipping either inflates every debt in that asset.
-fn drawn_index_at(asset: &AssetState, at: u64) -> Result<U256, Error> {
-    if asset.checkpoint_at == at {
-        return Ok(asset.checkpoint_index);
-    }
-    if asset.drawn_shares.is_zero() && asset.premium_shares.is_zero() {
-        return Ok(asset.checkpoint_index);
-    }
-
-    ray_mul_up(
-        asset.checkpoint_index,
-        linear_interest(asset.drawn_rate, asset.checkpoint_at, at)?,
-    )
-}
-
-/// `AssetLogic._calculateAggregatedOwedRay` — everything the asset is owed, RAY-scaled.
-fn aggregated_owed_ray(asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
-    let drawn = asset
-        .drawn_shares
-        .checked_mul(drawn_index)
-        .ok_or(Error::OutOfRange)?;
-
-    drawn
-        .checked_add(premium_ray(
-            asset.premium_shares,
-            asset.premium_offset_ray,
-            drawn_index,
-        )?)
-        .and_then(|owed| owed.checked_add(asset.deficit_ray))
-        .ok_or(Error::OutOfRange)
-}
-
-/// `AssetLogic.getUnrealizedFees` — the protocol's cut of interest accrued since
-/// the checkpoint, not yet folded into `realized_fees`.
-///
-/// This is the one term §5.2 states in outline rather than in full, so it is
-/// transcribed rather than reconstructed. Note it is a difference of two
-/// *separately rounded* values — `from_ray_up(after) - from_ray_up(before)` —
-/// and not `from_ray_up(after - before)`, which would differ by a wei whenever
-/// both have a remainder.
-fn unrealized_fees(asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
-    if asset.checkpoint_index == drawn_index || asset.liquidity_fee == 0 {
-        return Ok(U256::ZERO);
-    }
-
-    let after = from_ray_up(aggregated_owed_ray(asset, drawn_index)?);
-    let before = from_ray_up(aggregated_owed_ray(asset, asset.checkpoint_index)?);
-
-    percent_mul_down(
-        after.checked_sub(before).ok_or(Error::OutOfRange)?,
-        U256::from(asset.liquidity_fee),
-    )
-}
-
-/// `AssetLogic.totalAddedAssets` — what the whole supply side is worth.
-///
-/// Suppliers are paid out of accrued debt, so this depends on `drawn_index` and
-/// therefore on time: the supply side is a per-second quantity too, not just the
-/// debt side (§5.2).
-fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
-    let owed = from_ray_up(aggregated_owed_ray(asset, drawn_index)?);
-    let fees = unrealized_fees(asset, drawn_index)?;
-
-    asset
-        .liquidity
-        .checked_add(asset.swept)
-        .and_then(|total| total.checked_add(owed))
-        .and_then(|total| total.checked_sub(asset.realized_fees))
-        .and_then(|total| total.checked_sub(fees))
-        .ok_or(Error::OutOfRange)
-}
-
-/// `SharesMath.toAssetsDown`, via `previewRemoveByShares` — the supply side.
-///
-/// **Not an index.** ERC-4626 virtual assets and shares of `1e6` each pad the
-/// ratio against manipulation, and the padding is inside the division rather
-/// than applied after it, so it cannot be factored out. Rounds **down**, where
-/// the debt side rounds up.
 /// `SharesMath.VIRTUAL_ASSETS` and `VIRTUAL_SHARES`, both 1e6.
 const VIRTUAL: U256 = uint!(1_000_000_U256);
 
-fn supplied_assets(shares: U256, asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
-    let assets = total_added_assets(asset, drawn_index)?
-        .checked_add(VIRTUAL)
-        .ok_or(Error::OutOfRange)?;
-    let shares_out = asset
-        .added_shares
-        .checked_add(VIRTUAL)
-        .ok_or(Error::OutOfRange)?;
+impl AssetState {
+    /// `AssetLogic.getDrawnIndex`, extrapolated to an arbitrary time.
+    ///
+    /// The index accrues every second and emits nothing (§5), so a balance is
+    /// only meaningful with a time attached. What makes this exact rather than
+    /// a model is §5.3: the Hub emits the *settled* index on every accrual, so
+    /// this applies linear interest to an authoritative checkpoint instead of
+    /// reconstructing a rate curve.
+    ///
+    /// **Two short-circuits, both from the contract and both load-bearing.**
+    /// The index does not move when the checkpoint is already at `at`, nor when
+    /// the asset owes nothing at all — and the second is on the *asset's*
+    /// totals, not the user's, so a user with debt in an otherwise-idle asset
+    /// still does not accrue. Skipping either inflates every debt in that
+    /// asset.
+    fn drawn_index_at(&self, at: u64) -> Result<U256, Error> {
+        if self.checkpoint_at == at {
+            return Ok(self.checkpoint_index);
+        }
+        if self.drawn_shares.is_zero() && self.premium_shares.is_zero() {
+            return Ok(self.checkpoint_index);
+        }
 
-    mul_div_down(shares, assets, shares_out)
+        ray_mul_up(
+            self.checkpoint_index,
+            linear_interest(self.drawn_rate, self.checkpoint_at, at)?,
+        )
+    }
+
+    /// `AssetLogic._calculateAggregatedOwedRay` — everything the asset is owed,
+    /// RAY-scaled.
+    fn aggregated_owed_ray(&self, drawn_index: U256) -> Result<U256, Error> {
+        let drawn = self
+            .drawn_shares
+            .checked_mul(drawn_index)
+            .ok_or(Error::OutOfRange)?;
+
+        drawn
+            .checked_add(premium_ray(
+                self.premium_shares,
+                self.premium_offset_ray,
+                drawn_index,
+            )?)
+            .and_then(|owed| owed.checked_add(self.deficit_ray))
+            .ok_or(Error::OutOfRange)
+    }
+
+    /// `AssetLogic.getUnrealizedFees` — the protocol's cut of interest accrued
+    /// since the checkpoint, not yet folded into `realized_fees`.
+    ///
+    /// This is the one term §5.2 states in outline rather than in full, so it is
+    /// transcribed rather than reconstructed. Note it is a difference of two
+    /// *separately rounded* values — `from_ray_up(after) - from_ray_up(before)`
+    /// — and not `from_ray_up(after - before)`, which would differ by a wei
+    /// whenever both have a remainder.
+    fn unrealized_fees(&self, drawn_index: U256) -> Result<U256, Error> {
+        if self.checkpoint_index == drawn_index || self.liquidity_fee == 0 {
+            return Ok(U256::ZERO);
+        }
+
+        let after = from_ray_up(self.aggregated_owed_ray(drawn_index)?);
+        let before = from_ray_up(self.aggregated_owed_ray(self.checkpoint_index)?);
+
+        percent_mul_down(
+            after.checked_sub(before).ok_or(Error::OutOfRange)?,
+            U256::from(self.liquidity_fee),
+        )
+    }
+
+    /// `AssetLogic.totalAddedAssets` — what the whole supply side is worth.
+    ///
+    /// Suppliers are paid out of accrued debt, so this depends on `drawn_index`
+    /// and therefore on time: the supply side is a per-second quantity too, not
+    /// just the debt side (§5.2).
+    fn total_added_assets(&self, drawn_index: U256) -> Result<U256, Error> {
+        let owed = from_ray_up(self.aggregated_owed_ray(drawn_index)?);
+        let fees = self.unrealized_fees(drawn_index)?;
+
+        self.liquidity
+            .checked_add(self.swept)
+            .and_then(|total| total.checked_add(owed))
+            .and_then(|total| total.checked_sub(self.realized_fees))
+            .and_then(|total| total.checked_sub(fees))
+            .ok_or(Error::OutOfRange)
+    }
+
+    /// `SharesMath.toAssetsDown`, via `previewRemoveByShares` — the supply side.
+    ///
+    /// **Not an index.** ERC-4626 virtual assets and shares of `1e6` each pad
+    /// the ratio against manipulation, and the padding is inside the division
+    /// rather than applied after it, so it cannot be factored out. Rounds
+    /// **down**, where the debt side rounds up.
+    fn supplied_assets(&self, shares: U256, drawn_index: U256) -> Result<U256, Error> {
+        let assets = self
+            .total_added_assets(drawn_index)?
+            .checked_add(VIRTUAL)
+            .ok_or(Error::OutOfRange)?;
+        let shares_out = self
+            .added_shares
+            .checked_add(VIRTUAL)
+            .ok_or(Error::OutOfRange)?;
+
+        mul_div_down(shares, assets, shares_out)
+    }
 }
 
-/// One position's balances at `at`, in token units.
-///
-/// `at` is Unix seconds and is the caller's choice, exactly as `block.timestamp`
-/// is the chain's: `getUserDebt` at `latest` is stored shares times an index
-/// extrapolated to the head block, and this is the same computation with the
-/// time named rather than implied.
-///
-/// The debt side rounds **up** throughout — `rayMulUp` on the drawn part and
-/// `fromRayUp` on the premium, each separately, which is what
-/// `Spoke.getUserDebt` does before summing. Rounding the total once instead
-/// would be a wei light.
-pub fn value_position(
-    position: &PositionShares,
-    asset: &AssetState,
-    at: u64,
-) -> Result<Valuation, Error> {
-    let drawn_index = drawn_index_at(asset, at)?;
+impl PositionShares {
+    /// One position's balances at `at`, in token units.
+    ///
+    /// `at` is Unix seconds and is the caller's choice, exactly as
+    /// `block.timestamp` is the chain's: `getUserDebt` at `latest` is stored
+    /// shares times an index extrapolated to the head block, and this is the
+    /// same computation with the time named rather than implied.
+    ///
+    /// The debt side rounds **up** throughout — `rayMulUp` on the drawn part
+    /// and `fromRayUp` on the premium, each separately, which is what
+    /// `Spoke.getUserDebt` does before summing. Rounding the total once instead
+    /// would be a wei light.
+    pub fn value_at(&self, asset: &AssetState, at: u64) -> Result<Valuation, Error> {
+        let drawn_index = asset.drawn_index_at(at)?;
 
-    let drawn_debt = ray_mul_up(position.drawn_shares, drawn_index)?;
-    let premium_debt = from_ray_up(premium_ray(
-        position.premium_shares,
-        position.premium_offset_ray,
-        drawn_index,
-    )?);
+        let drawn_debt = ray_mul_up(self.drawn_shares, drawn_index)?;
+        let premium_debt = from_ray_up(premium_ray(
+            self.premium_shares,
+            self.premium_offset_ray,
+            drawn_index,
+        )?);
 
-    Ok(Valuation {
-        supplied_amount: supplied_assets(position.supplied_shares, asset, drawn_index)?,
-        drawn_debt,
-        premium_debt,
-        total_debt: drawn_debt
-            .checked_add(premium_debt)
-            .ok_or(Error::OutOfRange)?,
-        drawn_index,
-    })
+        Ok(Valuation {
+            supplied_amount: asset.supplied_assets(self.supplied_shares, drawn_index)?,
+            drawn_debt,
+            premium_debt,
+            total_debt: drawn_debt
+                .checked_add(premium_debt)
+                .ok_or(Error::OutOfRange)?,
+            drawn_index,
+        })
+    }
 }
 
 // Same reason as `math`'s: the arithmetic in a vector is the vector, and
@@ -259,10 +261,7 @@ mod tests {
         #[test]
         fn applies_linear_interest_from_the_checkpoint() {
             // 5% for exactly a year, on an index of 1.0.
-            assert_eq!(
-                drawn_index_at(&asset(), T0 + YEAR),
-                Ok(RAY + five_percent())
-            );
+            assert_eq!(asset().drawn_index_at(T0 + YEAR), Ok(RAY + five_percent()));
         }
 
         #[test]
@@ -270,14 +269,14 @@ mod tests {
             // Two years in one step is 10%, not 10.25% — interest is linear
             // between checkpoints and compounds only when one lands (§5.1).
             assert_eq!(
-                drawn_index_at(&asset(), T0 + 2 * YEAR),
+                asset().drawn_index_at(T0 + 2 * YEAR),
                 Ok(RAY + U256::from(2) * five_percent())
             );
         }
 
         #[test]
         fn does_not_move_at_the_checkpoint_itself() {
-            assert_eq!(drawn_index_at(&asset(), T0), Ok(RAY));
+            assert_eq!(asset().drawn_index_at(T0), Ok(RAY));
         }
 
         #[test]
@@ -291,7 +290,7 @@ mod tests {
                 ..asset()
             };
 
-            assert_eq!(drawn_index_at(&idle, T0 + YEAR), Ok(RAY));
+            assert_eq!(idle.drawn_index_at(T0 + YEAR), Ok(RAY));
         }
 
         #[test]
@@ -303,7 +302,7 @@ mod tests {
                 ..asset()
             };
 
-            assert!(drawn_index_at(&premium_only, T0 + YEAR).unwrap() > RAY);
+            assert!(premium_only.drawn_index_at(T0 + YEAR).unwrap() > RAY);
         }
 
         #[test]
@@ -319,7 +318,7 @@ mod tests {
                     ..asset()
                 };
 
-                assert_eq!(drawn_index_at(&state, T0), Ok(index));
+                assert_eq!(state.drawn_index_at(T0), Ok(index));
                 assert_eq!(
                     ray_mul_up(index, linear_interest(state.drawn_rate, T0, T0).unwrap()),
                     Ok(index)
@@ -333,7 +332,7 @@ mod tests {
                 ..asset()
             };
 
-            assert_eq!(drawn_index_at(&past_the_guard, T0), Ok(U256::MAX));
+            assert_eq!(past_the_guard.drawn_index_at(T0), Ok(U256::MAX));
             assert!(ray_mul_up(U256::MAX, RAY).is_err());
         }
 
@@ -342,7 +341,7 @@ mod tests {
             // On chain this reverts. Here it means two different blocks were
             // mixed up, and every number downstream would be quietly wrong.
             assert_eq!(
-                drawn_index_at(&asset(), T0 - 1),
+                asset().drawn_index_at(T0 - 1),
                 Err(Error::CheckpointAhead { seconds: 1 })
             );
         }
@@ -367,7 +366,7 @@ mod tests {
                 ..position()
             };
 
-            let valued = value_position(&held, &state, T0).unwrap();
+            let valued = held.value_at(&state, T0).unwrap();
 
             assert_eq!(valued.drawn_debt, U256::from(2));
             assert_eq!(valued.premium_debt, U256::from(2));
@@ -381,10 +380,8 @@ mod tests {
                 ..position()
             };
 
-            let now = value_position(&held, &asset(), T0).unwrap().total_debt;
-            let later = value_position(&held, &asset(), T0 + YEAR)
-                .unwrap()
-                .total_debt;
+            let now = held.value_at(&asset(), T0).unwrap().total_debt;
+            let later = held.value_at(&asset(), T0 + YEAR).unwrap().total_debt;
 
             // The whole reason a share balance is not a balance (§5).
             assert_eq!(now, U256::from(1_000_000));
@@ -394,9 +391,7 @@ mod tests {
         #[test]
         fn is_zero_for_a_position_with_no_debt() {
             assert_eq!(
-                value_position(&position(), &asset(), T0 + YEAR)
-                    .unwrap()
-                    .total_debt,
+                position().value_at(&asset(), T0 + YEAR).unwrap().total_debt,
                 U256::ZERO
             );
         }
@@ -420,7 +415,7 @@ mod tests {
 
             // An empty asset: shares redeem 1:1 against the padding alone.
             assert_eq!(
-                supplied_assets(U256::from(500), &state, RAY),
+                state.supplied_assets(U256::from(500), RAY),
                 Ok(U256::from(500))
             );
             assert_eq!(VIRTUAL, U256::from(1_000_000));
@@ -437,7 +432,7 @@ mod tests {
             };
 
             // (1 * (1 + 1e6)) / (3 + 1e6) floors to 0 rather than rounding to 1.
-            assert_eq!(supplied_assets(U256::from(1), &state, RAY), Ok(U256::ZERO));
+            assert_eq!(state.supplied_assets(U256::from(1), RAY), Ok(U256::ZERO));
         }
 
         #[test]
@@ -453,7 +448,7 @@ mod tests {
             };
 
             // liquidity + swept + owed − realizedFees = 1000 + 500 + 2000 − 300.
-            assert_eq!(total_added_assets(&state, RAY), Ok(U256::from(3_200)));
+            assert_eq!(state.total_added_assets(RAY), Ok(U256::from(3_200)));
         }
 
         #[test]
@@ -474,8 +469,8 @@ mod tests {
             };
 
             assert_eq!(
-                total_added_assets(&with_deficit, RAY).unwrap()
-                    - total_added_assets(&without, RAY).unwrap(),
+                with_deficit.total_added_assets(RAY).unwrap()
+                    - without.total_added_assets(RAY).unwrap(),
                 U256::from(100)
             );
         }
@@ -490,9 +485,10 @@ mod tests {
                 ..asset()
             };
 
-            let at_checkpoint = total_added_assets(&state, RAY).unwrap();
-            let a_year_on =
-                total_added_assets(&state, drawn_index_at(&state, T0 + YEAR).unwrap()).unwrap();
+            let at_checkpoint = state.total_added_assets(RAY).unwrap();
+            let a_year_on = state
+                .total_added_assets(state.drawn_index_at(T0 + YEAR).unwrap())
+                .unwrap();
 
             // 50,000 of interest accrues; the protocol takes 10% and suppliers
             // get the other 45,000.
@@ -522,7 +518,7 @@ mod tests {
 
             // owed(RAY) = RAY + 1 → 2;  owed(2·RAY+1) = 2·RAY + 2 → 3;  fee = 1.
             assert_eq!(
-                total_added_assets(&state, U256::from(2) * RAY + U256::from(1)),
+                state.total_added_assets(U256::from(2) * RAY + U256::from(1)),
                 Ok(U256::from(3) - U256::from(1))
             );
         }
@@ -537,14 +533,12 @@ mod tests {
 
             // Both short-circuits in getUnrealizedFees: same index, and zero fee.
             assert_eq!(
-                total_added_assets(&state, RAY),
-                total_added_assets(
-                    &AssetState {
-                        liquidity_fee: 0,
-                        ..state.clone()
-                    },
-                    RAY
-                )
+                state.total_added_assets(RAY),
+                AssetState {
+                    liquidity_fee: 0,
+                    ..state.clone()
+                }
+                .total_added_assets(RAY)
             );
         }
 
@@ -560,10 +554,8 @@ mod tests {
                 ..position()
             };
 
-            let now = value_position(&held, &state, T0).unwrap().supplied_amount;
-            let later = value_position(&held, &state, T0 + YEAR)
-                .unwrap()
-                .supplied_amount;
+            let now = held.value_at(&state, T0).unwrap().supplied_amount;
+            let later = held.value_at(&state, T0 + YEAR).unwrap().supplied_amount;
 
             // The supply side is a per-second quantity too, because it is paid
             // out of the debt side (§5.2).
@@ -589,10 +581,7 @@ mod tests {
                 ..asset()
             };
 
-            assert_eq!(
-                value_position(&held, &state, T0).unwrap().drawn_debt,
-                shares
-            );
+            assert_eq!(held.value_at(&state, T0).unwrap().drawn_debt, shares);
         }
     }
 
@@ -616,10 +605,7 @@ mod tests {
                 ..position()
             };
 
-            assert_eq!(
-                value_position(&held, &state, T0).unwrap().drawn_debt,
-                shares
-            );
+            assert_eq!(held.value_at(&state, T0).unwrap().drawn_debt, shares);
         }
 
         #[test]
@@ -638,8 +624,8 @@ mod tests {
                 ..at_the_edge.clone()
             };
 
-            assert!(total_added_assets(&at_the_edge, RAY).is_ok());
-            assert_eq!(total_added_assets(&past_it, RAY), Err(Error::OutOfRange));
+            assert!(at_the_edge.total_added_assets(RAY).is_ok());
+            assert_eq!(past_it.total_added_assets(RAY), Err(Error::OutOfRange));
         }
 
         #[test]
@@ -694,7 +680,7 @@ mod tests {
             };
 
             assert!(big.checked_mul(big + VIRTUAL).is_none());
-            assert_eq!(supplied_assets(big, &state, RAY), Ok(big));
+            assert_eq!(state.supplied_assets(big, RAY), Ok(big));
         }
     }
 }
