@@ -76,16 +76,26 @@ mod tests {
         /// USDC/USD as §7.4.3 records it.
         const USDC_USD: U256 = uint!(99_971_505_U256);
 
-        fn one_dollar() -> U256 {
-            U256::from(100_000_000)
-        }
+        /// An oracle answer of exactly $1.00, at `ORACLE_DECIMALS = 8`.
+        ///
+        /// Named for the price it is, not the value it produces: `USD` is also
+        /// "one dollar" and is 1e26. Both appear in the assertion below, which
+        /// is the point of it — a dollar going in does not look like a dollar
+        /// coming out.
+        const A_DOLLAR_PER_TOKEN: U256 = uint!(100_000_000_U256);
 
         #[test]
         fn puts_one_dollar_at_1e26() {
             // `SpokeUtils.toValue` documents the unit outright: an 18-decimal
-            // amount times an 8-decimal price. One whole USDC at exactly $1 is
-            // one dollar.
-            assert_eq!(to_value(U256::from(1_000_000), 6, one_dollar()), Ok(USD));
+            // amount times an 8-decimal price. One whole USDC genuinely worth
+            // one dollar is what pins `USD` to 1e26 rather than leaving it a
+            // number someone chose:
+            //
+            //   1e6 (one USDC, 6 dp) × 1e8 ($1.00, 8 dp) × 1e12 (6 dp → 18 dp)
+            assert_eq!(
+                to_value(U256::from(1_000_000), 6, A_DOLLAR_PER_TOKEN),
+                Ok(USD)
+            );
         }
 
         #[test]
@@ -93,8 +103,12 @@ mod tests {
             // The same dollar value from two tokens with different decimals. If
             // the exponent were taken from the wrong side these would differ by
             // 1e12.
-            let one_usdc_worth = to_value(U256::from(1_000_000), 6, one_dollar());
-            let one_dai_worth = to_value(uint!(1_000_000_000_000_000_000_U256), 18, one_dollar());
+            let one_usdc_worth = to_value(U256::from(1_000_000), 6, A_DOLLAR_PER_TOKEN);
+            let one_dai_worth = to_value(
+                uint!(1_000_000_000_000_000_000_U256),
+                18,
+                A_DOLLAR_PER_TOKEN,
+            );
 
             assert_eq!(one_usdc_worth, one_dai_worth);
         }
@@ -134,7 +148,11 @@ mod tests {
             // a whole page down with a hypothetical listing — the arithmetic
             // continued, not a different rule.
             assert_eq!(
-                to_value(uint!(100_000_000_000_000_000_000_U256), 20, one_dollar()),
+                to_value(
+                    uint!(100_000_000_000_000_000_000_U256),
+                    20,
+                    A_DOLLAR_PER_TOKEN
+                ),
                 Ok(USD)
             );
         }
