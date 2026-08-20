@@ -1597,10 +1597,19 @@ fields each, zero wei of drift. No ClickHouse, no indexing: this isolates the
 formulas from everything else.
 
 **Eleven mutation tests, each turning its spec red** — every rounding direction,
-the virtual-share padding, both index short-circuits, the separately-rounded fee
-difference, the deficit and swept terms, and the negative-premium throw. The
-eleventh was added _because_ the first pass missed it: the original fee vector
-used values that divide evenly, so both roundings agreed and the mutant survived.
+the virtual-share padding, the zero-shares index short-circuit and the `&&` in
+it, the separately-rounded fee difference, the deficit and swept terms, and the
+negative-premium throw. The eleventh was added _because_ the first pass missed
+it: the original fee vector used values that divide evenly, so both roundings
+agreed and the mutant survived.
+
+**The other index short-circuit is not one of them, and cannot be.** Deleting
+`if (asset.checkpointAt === at)` leaves `rayMulUp(index, linearInterest(rate, 0))`
+= `ceil(index · RAY / RAY)` = `index`, for every index — so no vector separates
+the branch from its absence, and the suite passes with it gone. It is an
+optimisation here. On chain it is not: Solidity has no 512-bit intermediate, so
+`index * RAY` is where a large index would revert instead. Measured while
+porting the module to Rust, against both suites.
 
 What none of that covers is the two being wired together — a reserve resolved to
 the wrong asset, a checkpoint read from the wrong column. That is
