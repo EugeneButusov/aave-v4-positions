@@ -4,14 +4,15 @@ use alloy_primitives::{I256, U256};
 
 /// A valuation that cannot be computed.
 ///
-/// Two of these are the TypeScript's `RangeError`s, kept to the same message
-/// text so the differential harness can compare error conditions and so the
-/// strings still grep. The third has no counterpart, and it is the one place
-/// this is deliberately not a transcription: `bigint` has no width, so where
-/// this returns [`Error::OutOfRange`] the TypeScript returns a number outside
-/// `uint256` and carries on. Every quantity here is a `uint256` on chain, so
-/// that number was never a state the protocol could be in — but saying so is
-/// new, and it is what the widths bought.
+/// [`Error::CheckpointAhead`] and [`Error::NegativePremium`] are the two the
+/// contract reverts on, and they carry the same meaning here that a revert
+/// carries there: not a number for the caller to handle, but a state the
+/// protocol cannot be in.
+///
+/// [`Error::OutOfRange`] has no revert to correspond to, because Solidity's
+/// checked arithmetic stops at the operation rather than reporting which one.
+/// The claim is the same either way — every quantity these formulas touch is a
+/// `uint256` — so the variant names the intermediate that left it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     /// The valuation time is before the checkpoint it would extrapolate from.
@@ -25,7 +26,9 @@ pub enum Error {
     )]
     NegativePremium(Box<NegativePremium>),
 
-    /// A caller passed a zero denominator, which `bigint` division rejects too.
+    /// A caller passed a zero denominator. Unreachable from inside this
+    /// crate, where every denominator is a nonzero constant or
+    /// `added_shares + VIRTUAL`.
     #[error("division by zero")]
     DivideByZero,
 
@@ -42,7 +45,8 @@ pub enum Error {
 /// operator reads when the fold has gone wrong, which is the only way here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NegativePremium {
-    /// How far below zero. The TypeScript prints this with a minus in front.
+    /// How far below zero the premium came out. The message prints it with a
+    /// minus in front, as the signed value it stands for.
     pub shortfall: U256,
     pub shares: U256,
     pub offset: I256,

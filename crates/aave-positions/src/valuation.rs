@@ -21,7 +21,7 @@ use ray::{
 /// touches and nothing else, so a change to the row shape cannot silently alter
 /// a formula.
 ///
-/// **The widths are the column's, not `bigint`'s.** The summed columns are
+/// **The widths are the column's.** The summed columns are
 /// `Int256` on the way out of ClickHouse because they are sums of signed
 /// deltas, and non-negative in aggregate; converting them is the store's job in
 /// Phase 2, not this module's. `premium_offset_ray` is the exception and stays
@@ -369,12 +369,11 @@ mod tests {
 
         #[test]
         fn the_checkpoint_short_circuit_is_an_optimisation_and_nothing_else() {
-            // No vector can tell the branch from its absence, because the
-            // else-branch at `at == checkpoint_at` is
-            // `ray_mul_up(index, RAY)`, which is `index` for every index. The
-            // design notes list this among the eleven mutants each spec kills;
-            // it is one claim too many, and the TypeScript suite survives the
-            // same deletion — measured, not assumed.
+            // No vector can tell the branch from its absence: at
+            // `at == checkpoint_at` the else-branch is
+            // `ray_mul_up(index, RAY)`, which is `index` for every index. So
+            // this asserts the equivalence rather than pretending some test
+            // guards the branch — none does, and none can.
             //
             // On chain it is not free. Solidity has no 512-bit intermediate,
             // so `index * RAY` is where a large index would revert instead.
@@ -737,7 +736,7 @@ mod tests {
         }
     }
 
-    /// What the TypeScript never had to answer, because `bigint` has no width.
+    /// Where these quantities stop, measured rather than assumed.
     mod the_widths {
         use super::*;
 

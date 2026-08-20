@@ -10,12 +10,12 @@
 //! chain. [`premium_ray`] is where a negative could arise, and it refuses for
 //! the same reason the contract reverts.
 //!
-//! **Where the TypeScript had `bigint`, this has a width.** Arbitrary precision
-//! made overflow a non-question there and makes it a question here, so every
-//! product goes through a 512-bit intermediate and narrows back with a check —
-//! the same thing Solidity's `Math.mulDiv` achieves, and what the Uniswap V3
-//! Rust ports do. `#![deny(clippy::arithmetic_side_effects)]` on the crate is
-//! what keeps that mechanical instead of a matter of discipline.
+//! **Every intermediate is wider than the values it comes from.** A ray times
+//! a ray is 180 bits and a share balance times an index is 210, so a product
+//! goes through a 512-bit intermediate and narrows back with a check — the same
+//! thing Solidity's `Math.mulDiv` achieves, and what the Uniswap V3 Rust ports
+//! do. `#![deny(clippy::arithmetic_side_effects)]` on the crate is what keeps
+//! that mechanical instead of a matter of discipline.
 
 use alloy_primitives::{I256, U256, U512, uint};
 
@@ -59,8 +59,7 @@ pub(super) fn narrow(value: U512, what: &'static str) -> Result<U256, Error> {
 /// interest on every position.
 fn mul_div(a: U256, b: U256, denominator: U256, what: &'static str) -> Result<(U256, bool), Error> {
     if denominator.is_zero() {
-        // `(a * b) / 0n` is a `RangeError` in the TypeScript too, for the same
-        // reason: there is no answer to give.
+        // No answer to give, and this is reachable: `mul_div_down` is public.
         return Err(Error::DivideByZero);
     }
 
@@ -80,7 +79,6 @@ fn mul_div(a: U256, b: U256, denominator: U256, what: &'static str) -> Result<(U
 /// [`super::supplied_assets`] — is **249 bits against 256, so seven to
 /// spare**. That is the narrowest margin in the module, and the reason the
 /// intermediate is widened rather than trusted. The tests pin all three
-/// widths, so this comment cannot drift away from them. The tests pin all three
 /// widths, so this comment cannot drift away from them.
 pub fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
     Ok(mul_div(a, b, denominator, "a * b / denominator")?.0)
@@ -129,13 +127,11 @@ pub fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
 ///
 /// Integer division, so the interest term floors before [`RAY`] is added.
 ///
-/// **It takes the two instants, not an elapsed.** The TypeScript took a signed
-/// `elapsedSeconds` and threw below zero; `u64` has no below zero, so the
-/// subtraction moves inside — which is also where the contract has it, and the
-/// contract reverts on the underflow for the same reason this returns
-/// [`Error::CheckpointAhead`]: a checkpoint ahead of the valuation time means
-/// the caller mixed up two blocks and every number that follows would be
-/// quietly wrong.
+/// **It takes the two instants, not an elapsed.** That is where the contract
+/// does the subtraction too, and it reverts on the underflow —
+/// [`Error::CheckpointAhead`] is that revert. A checkpoint ahead of the
+/// valuation time means the caller mixed up two blocks, and every number that
+/// follows would be quietly wrong.
 pub fn linear_interest(rate: U256, checkpoint_at: u64, at: u64) -> Result<U256, Error> {
     let elapsed = at.checked_sub(checkpoint_at).ok_or_else(|| {
         Error::CheckpointAhead {
@@ -185,8 +181,8 @@ pub fn premium_ray(
 
     let offset = premium_offset_ray.into_raw();
     product.checked_sub(offset).ok_or_else(|| {
-        // Reached only when `offset` is the larger, so the shortfall is what
-        // the TypeScript prints with a minus in front of it.
+        // Reached only when `offset` is the larger, so this subtraction is the
+        // magnitude of a negative result rather than a wrap.
         Error::NegativePremium(Box::new(NegativePremium {
             shortfall: offset.wrapping_sub(product),
             shares: premium_shares,
@@ -255,11 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_zero_denominator_as_bigint_division_does() {
-        // `(a * b) / 0n` is a RangeError in the TypeScript. Nothing in this
-        // crate can reach it — every denominator is a nonzero constant or
-        // `added_shares + VIRTUAL` — but `mul_div_down` is public, so the
-        // branch is a caller's to hit.
+    fn refuses_a_zero_denominator() {
+        // Nothing in this crate can reach it — every denominator is a nonzero
+        // constant or `added_shares + VIRTUAL` — but `mul_div_down` is public,
+        // so the branch is a caller's to hit.
         assert_eq!(
             mul_div_down(one(), one(), U256::ZERO),
             Err(Error::DivideByZero)
@@ -269,8 +264,8 @@ mod tests {
     #[test]
     fn the_widened_intermediate_holds_a_product_that_uint256_cannot() {
         // `U256::MAX * 2` has no uint256 to live in, and this is what makes the
-        // 8-bit margin on the supply side survivable: the product is exact at
-        // 512 bits and only the quotient has to fit.
+        // seven-bit margin on the supply side survivable: the product is exact
+        // at 512 bits and only the quotient has to fit.
         assert!(U256::MAX.checked_mul(U256::from(2)).is_none());
         assert_eq!(
             mul_div_down(U256::MAX, U256::from(2), U256::from(2)),

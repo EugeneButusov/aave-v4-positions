@@ -264,6 +264,21 @@ Nothing overflows on realistic values, and the RAY-scaled aggregate never feeds 
 comments anyway. The TypeScript never had to carry them because `BigInt` has none, which is the whole
 reason they are worth stating on the way across.
 
+**Which gives the Rust one failure the TypeScript does not have, and the harness has to know it.**
+Where `crates/aave-positions` returns `Error::OutOfRange`, the TypeScript returns a number past
+2²⁵⁶ and carries on. Every quantity in these formulas is a `uint256` on chain, so that number was
+never a state the protocol could be in — but the differential gate compares error conditions, so
+the rule belongs written down rather than discovered: **Rust `Err(OutOfRange)` ⟺ the TypeScript's
+result leaves `[0, 2²⁵⁶)`**, and the variant names the intermediate so the harness can say which.
+The other three agree on both sides — a checkpoint ahead of the valuation time, a negative premium,
+and a zero denominator, which `BigInt` division throws on too — and the first two keep the
+TypeScript's exact message text so the comparison is on the string as well as the branch.
+
+**The comparison lives here, not in the crate.** `crates/aave-positions` is written against the
+contracts and the ClickHouse column types, and refers to neither the TypeScript nor its specs: the
+port has to stand on its own once the oracle is deleted (Risk 3), and a doc comment naming a
+predecessor is a dangling reference the day that happens.
+
 ### The Postgres driver: `tokio-postgres` + `deadpool-postgres`, not `sqlx`
 
 Rust needs a driver and a pool, which is exactly the role `postgres.js` fills today. `sqlx` is the

@@ -7,9 +7,10 @@
 //! block deliberately leaves `arithmetic_side_effects` off, because a loop
 //! counter is not where silent wrapping costs anything; here it is the whole
 //! point, so the lint lives beside the code it governs. What it buys is that a
-//! product which leaves `uint256` becomes an [`valuation::Error`] rather than a
-//! number, and the widths the TypeScript never had to carry are enforced rather
-//! than described.
+//! product which leaves `uint256` becomes a [`valuation::Error`] rather than a
+//! number: every quantity these formulas touch is a `uint256` on chain, so a
+//! value outside that range is not a state the protocol can be in, and the
+//! type says so rather than a comment.
 #![deny(clippy::arithmetic_side_effects)]
 
 pub mod valuation;
