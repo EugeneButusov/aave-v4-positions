@@ -11,6 +11,14 @@
 //! number: every quantity these formulas touch is a `uint256` on chain, so a
 //! value outside that range is not a state the protocol can be in, and the
 //! type says so rather than a comment.
+//! **The surface is what a caller outside the crate uses, and no more.** The
+//! fixed-point primitives are a private module: `valuation` is their only
+//! consumer, and a caller wanting `ceil(a * b / RAY)` wants
+//! [`valuation::value_position`] instead. [`valuation::to_value`] is `pub`
+//! because pricing is a separate call the API makes;
+//! [`valuation::value_position`] and its three types are `pub` only until
+//! Phase 2's store is their in-crate consumer — narrowing them today makes the
+//! whole module dead code, since nothing but the tests calls it yet.
 #![deny(clippy::arithmetic_side_effects)]
 
 pub mod valuation;

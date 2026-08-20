@@ -5,7 +5,7 @@
 //! state and a user's shares, and Phase 2's store is what will fetch them.
 
 mod error;
-pub mod ray;
+mod ray;
 
 use alloy_primitives::{I256, U256, U512, uint};
 
@@ -81,7 +81,7 @@ pub struct Valuation {
 /// asset owes nothing at all — and the second is on the *asset's* totals, not
 /// the user's, so a user with debt in an otherwise-idle asset still does not
 /// accrue. Skipping either inflates every debt in that asset.
-pub fn drawn_index_at(asset: &AssetState, at: u64) -> Result<U256, Error> {
+fn drawn_index_at(asset: &AssetState, at: u64) -> Result<U256, Error> {
     if asset.checkpoint_at == at {
         return Ok(asset.checkpoint_index);
     }
@@ -139,7 +139,7 @@ fn unrealized_fees(asset: &AssetState, drawn_index: U256) -> Result<U256, Error>
 /// Suppliers are paid out of accrued debt, so this depends on `drawn_index` and
 /// therefore on time: the supply side is a per-second quantity too, not just the
 /// debt side (§5.2).
-pub fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
+fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
     let owed = from_ray_up(aggregated_owed_ray(asset, drawn_index)?);
     let fees = unrealized_fees(asset, drawn_index)?;
 
@@ -158,7 +158,7 @@ pub fn total_added_assets(asset: &AssetState, drawn_index: U256) -> Result<U256,
 /// ratio against manipulation, and the padding is inside the division rather
 /// than applied after it, so it cannot be factored out. Rounds **down**, where
 /// the debt side rounds up.
-pub fn supplied_assets(shares: U256, asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
+fn supplied_assets(shares: U256, asset: &AssetState, drawn_index: U256) -> Result<U256, Error> {
     let assets = total_added_assets(asset, drawn_index)?
         .checked_add(VIRTUAL)
         .ok_or(Error::OutOfRange)?;
