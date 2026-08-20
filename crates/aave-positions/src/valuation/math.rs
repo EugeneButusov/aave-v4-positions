@@ -36,7 +36,7 @@ use super::{Error, NegativePremium, RAY};
 /// itself, so `UintTryTo` cannot be named from here — and taking a direct
 /// `ruint` dependency to reach it is exactly the version-skew flaw refinery has
 /// with `time`. The comparison is the check that trait would make.
-pub(crate) fn narrow(value: U512) -> Result<U256, Error> {
+pub(super) fn narrow(value: U512) -> Result<U256, Error> {
     if value > U512::from(U256::MAX) {
         return Err(Error::OutOfRange);
     }
@@ -61,7 +61,7 @@ pub(crate) fn narrow(value: U512) -> Result<U256, Error> {
 /// totalAssets + VIRTUAL, addedShares + VIRTUAL)` in
 /// [`super::supplied_assets`] — is 249 bits against 256, seven to spare. The
 /// tests pin that and the other two widths, so this cannot drift.
-pub(crate) fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
+pub(super) fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, Error> {
     if denominator.is_zero() {
         // `mulDiv` panics with `DIVISION_BY_ZERO` here. No answer to give, and
         // this is public, so a caller can ask.
@@ -86,7 +86,7 @@ pub(crate) fn mul_div_down(a: U256, b: U256, denominator: U256) -> Result<U256, 
 ///
 /// Headroom: the ray × ray product in [`super::drawn_index_at`] is 180 bits,
 /// leaving 76.
-pub(crate) fn ray_mul_up(a: U256, b: U256) -> Result<U256, Error> {
+pub(super) fn ray_mul_up(a: U256, b: U256) -> Result<U256, Error> {
     let product = a.checked_mul(b).ok_or(Error::OutOfRange)?;
 
     let (quotient, remainder) = product.div_rem(RAY);
@@ -103,7 +103,7 @@ pub(crate) fn ray_mul_up(a: U256, b: U256) -> Result<U256, Error> {
 /// 2¹⁶⁶, so the ceiling's `+ 1` has ninety bits of room and there is nothing
 /// for a caller to handle.
 #[must_use]
-pub(crate) fn from_ray_up(a: U256) -> U256 {
+pub(super) fn from_ray_up(a: U256) -> U256 {
     let (quotient, remainder) = a.div_rem(RAY);
     if remainder.is_zero() {
         quotient
@@ -116,7 +116,7 @@ pub(crate) fn from_ray_up(a: U256) -> U256 {
 ///
 /// `uint256` and a guard, the same shape as [`ray_mul_up`] and for the same
 /// reason: the contract reverts on the product, not on the result.
-pub(crate) fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
+pub(super) fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
     /// `PercentageMath.PERCENTAGE_FACTOR` — basis points.
     const PERCENTAGE_FACTOR: U256 = uint!(10_000_U256);
 
@@ -141,7 +141,7 @@ pub(crate) fn percent_mul_down(value: U256, bps: U256) -> Result<U256, Error> {
 /// [`Error::CheckpointAhead`] is that revert. A checkpoint ahead of the
 /// valuation time means the caller mixed up two blocks, and every number that
 /// follows would be quietly wrong.
-pub(crate) fn linear_interest(rate: u128, checkpoint_at: u64, at: u64) -> Result<U256, Error> {
+pub(super) fn linear_interest(rate: u128, checkpoint_at: u64, at: u64) -> Result<U256, Error> {
     /// `MathUtils.SECONDS_PER_YEAR` — 365 days, leap years ignored.
     const SECONDS_PER_YEAR: U256 = uint!(31_536_000_U256);
 
@@ -176,7 +176,7 @@ pub(crate) fn linear_interest(rate: u128, checkpoint_at: u64, at: u64) -> Result
 /// adding the magnitude keeps every intermediate inside `U256`, where doing the
 /// subtraction in `I256` would need a 257th bit for a product that already uses
 /// 210 of them.
-pub(crate) fn premium_ray(
+pub(super) fn premium_ray(
     premium_shares: U256,
     premium_offset_ray: I256,
     drawn_index: U256,

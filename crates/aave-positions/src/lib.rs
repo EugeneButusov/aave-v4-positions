@@ -12,9 +12,10 @@
 //! value outside that range is not a state the protocol can be in, and the
 //! type says so rather than a comment.
 //! **The surface is what a caller outside the crate uses, and no more.** The
-//! contracts' math libraries are a private module — which is the gate, not the
-//! `pub(crate)` on the items inside it: a path through a private module is
-//! unreachable from a sibling whatever the item says. A caller wanting
+//! contracts' math libraries are a private module, and `pub(super)` inside it:
+//! `valuation` is the only consumer they have or should get, and the private
+//! module already blocks a sibling either way — so the modifier is what keeps
+//! that true if the module's own visibility ever widens. A caller wanting
 //! `ceil(a * b / RAY)` wants
 //! [`valuation::value_position`] instead. [`valuation::to_value`] is `pub`
 //! because pricing is a separate call the API makes;
