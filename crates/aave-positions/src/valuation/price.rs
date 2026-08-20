@@ -4,34 +4,27 @@
 //! takes an amount, the Hub's decimals and an oracle price, and never sees an
 //! `AssetState`. It is also the one function `bins/api` calls directly.
 
-use alloy_primitives::{U256, U512, uint};
+use alloy_primitives::{U256, U512};
 
 use super::Error;
 use super::math::narrow;
 
-/// One dollar, in the unit [`to_value`] answers in.
-///
-/// **The 26 is two decimal conventions multiplied, not a number anyone chose.**
-/// [`to_value`] normalises the amount to `WadRayMath.WAD_DECIMALS = 18` and
-/// multiplies it by a price the oracle reports at
-/// `SpokeUtils.ORACLE_DECIMALS = 8` (`SpokeUtils.sol:13`, and `Spoke`'s
-/// constructor rejects an oracle answering with any other). A Value therefore
-/// carries 18 + 8 = 26 decimal places, and one dollar is `1e18 × 1e8`. The
-/// contract states the result itself above `toValue`: "1e26 represents 1 USD".
-///
-/// Public because it is the only name for the unit [`to_value`] answers in —
-/// not because anything divides by it. A reader wanting decimals slices
-/// twenty-six digits off the integer instead, since a division loses the tail
-/// past 2^53 and share-scale amounts pass that routinely (§7.5).
-pub const USD: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
-
 /// `SpokeUtils.toValue` — an amount in token units, priced.
 ///
-/// **The unit is the protocol's own and is not dollars** — see [`USD`] for
-/// where its 26 decimal places come from (§7.1, and `SpokeUtils.toValue:28-40`
-/// on chain). Served in that unit rather than converted, because it is what the
-/// contract computes in and therefore the only form that reconciles against
-/// `getUserAccountData`.
+/// **The unit is the protocol's own and is not dollars, and its twenty-six
+/// decimal places are two conventions multiplied rather than a number anyone
+/// chose.** The amount is normalised to `WadRayMath.WAD_DECIMALS = 18` and
+/// multiplied by a price the oracle reports at `SpokeUtils.ORACLE_DECIMALS = 8`
+/// (`SpokeUtils.sol:13`, and `Spoke`'s constructor rejects an oracle answering
+/// with any other), so 18 + 8 = 26 and one dollar of Value is `1e18 × 1e8`. The
+/// contract states the result itself above `toValue`: "1e26 represents 1 USD"
+/// (§7.1, `SpokeUtils.toValue:28-40`).
+///
+/// Served in that unit rather than converted, because it is what the contract
+/// computes in and therefore the only form that reconciles against
+/// `getUserAccountData`. A caller rendering it slices twenty-six digits off the
+/// integer rather than dividing, since a division loses the tail past 2^53 and
+/// share-scale amounts pass that routinely (§7.5).
 ///
 /// `decimals` is the **Hub's**, from `AddAsset`, and never the token's own
 /// `decimals()`. The two can disagree — which is a listing audit signal, not a
@@ -75,6 +68,8 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
+    use alloy_primitives::uint;
+
     use super::*;
 
     mod to_value_of {
@@ -85,25 +80,28 @@ mod tests {
         /// USDC/USD as §7.4.3 records it.
         const USDC_USD: U256 = uint!(99_971_505_U256);
 
+        /// One dollar of Value — `1e26`, for the reason [`to_value`] gives.
+        const ONE_DOLLAR: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
+
         /// An oracle answer of exactly $1.00, at `ORACLE_DECIMALS = 8`.
         ///
-        /// Named for the price it is, not the value it produces: `USD` is also
-        /// "one dollar" and is 1e26. Both appear in the assertion below, which
-        /// is the point of it — a dollar going in does not look like a dollar
-        /// coming out.
+        /// Named for the price it is, not the value it produces:
+        /// [`ONE_DOLLAR`] is also "one dollar" and is 1e26. Both appear in the
+        /// assertion below, which is the point of it — a dollar going in does
+        /// not look like a dollar coming out.
         const A_DOLLAR_PER_TOKEN: U256 = uint!(100_000_000_U256);
 
         #[test]
         fn puts_one_dollar_at_1e26() {
             // `SpokeUtils.toValue` documents the unit outright: an 18-decimal
             // amount times an 8-decimal price. One whole USDC genuinely worth
-            // one dollar is what pins `USD` to 1e26 rather than leaving it a
-            // number someone chose:
+            // one dollar is what pins the unit to 1e26 rather than leaving it
+            // a number someone chose:
             //
             //   1e6 (one USDC, 6 dp) × 1e8 ($1.00, 8 dp) × 1e12 (6 dp → 18 dp)
             assert_eq!(
                 to_value(U256::from(1_000_000), 6, A_DOLLAR_PER_TOKEN),
-                Ok(USD)
+                Ok(ONE_DOLLAR)
             );
         }
 
@@ -127,7 +125,7 @@ mod tests {
             // 1 WETH at $1875.22.
             let value = to_value(uint!(1_000_000_000_000_000_000_U256), 18, ETH_USD).unwrap();
 
-            assert_eq!(value / USD, U256::from(1_875));
+            assert_eq!(value / ONE_DOLLAR, U256::from(1_875));
         }
 
         #[test]
@@ -138,7 +136,7 @@ mod tests {
             let value = to_value(U256::from(1_000_000_000), 6, USDC_USD).unwrap();
 
             assert_eq!(value, USDC_USD * uint!(1_000_000_000_000_000_000_000_U256));
-            assert_eq!(value / USD, U256::from(999));
+            assert_eq!(value / ONE_DOLLAR, U256::from(999));
         }
 
         #[test]
@@ -162,7 +160,7 @@ mod tests {
                     20,
                     A_DOLLAR_PER_TOKEN
                 ),
-                Ok(USD)
+                Ok(ONE_DOLLAR)
             );
         }
 
