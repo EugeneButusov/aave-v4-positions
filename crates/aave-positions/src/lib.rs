@@ -12,8 +12,10 @@
 //! value outside that range is not a state the protocol can be in, and the
 //! type says so rather than a comment.
 //! **The surface is what a caller outside the crate uses, and no more.** The
-//! fixed-point primitives are a private module: `valuation` is their only
-//! consumer, and a caller wanting `ceil(a * b / RAY)` wants
+//! fixed-point primitives are a private module — which is the gate, not the
+//! `pub(crate)` on the items inside it: a path through a private module is
+//! unreachable from a sibling whatever the item says. A caller wanting
+//! `ceil(a * b / RAY)` wants
 //! [`valuation::value_position`] instead. [`valuation::to_value`] is `pub`
 //! because pricing is a separate call the API makes;
 //! [`valuation::value_position`] and its three types are `pub` only until
