@@ -1,21 +1,27 @@
 //! One position's balances, in token units, at an instant the caller names.
 //!
-//! Four modules, and the split follows what each answers to. `position` is the
-//! fold's arithmetic and `price` is `SpokeUtils.toValue`; they share no input,
-//! which is why they are not one file. `math` is the contracts' libraries
-//! underneath both, and `error` is what all three refuse with.
+//! The split follows what each part answers to. `asset` is the Hub asset and
+//! the five formulas that hang off it; `position` is a user's shares and the
+//! one call that values them against an asset; `price` is `SpokeUtils.toValue`,
+//! which shares no input with either. `math` is the contracts' libraries
+//! underneath all three, `error` is what they refuse with, and `fixtures` is
+//! the vectors `asset` and `position` both build on.
 //!
-//! This file holds the wiring and the one constant both halves are scaled in.
+//! This file holds the wiring and the one constant they are all scaled in.
 
+mod asset;
 mod error;
+#[cfg(test)]
+mod fixtures;
 mod math;
 mod position;
 mod price;
 
 use alloy_primitives::{U256, uint};
 
+pub use asset::AssetState;
 pub use error::{Error, NegativePremium};
-pub use position::{AssetState, PositionShares, Valuation};
+pub use position::{PositionShares, Valuation};
 pub use price::to_value;
 
 /// `1e27` — the unit every index and rate here is scaled in.
