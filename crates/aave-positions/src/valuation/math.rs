@@ -297,6 +297,52 @@ mod tests {
     }
 
     #[test]
+    fn floors_the_interest_term_before_adding_ray() {
+        // Integer division, and it truncates *before* RAY is added rather than
+        // after: one second at a rate of 1 is worth nothing at all, and it
+        // takes a rate of SECONDS_PER_YEAR before that same second is worth a
+        // single wei.
+        assert_eq!(linear_interest(1, 0, 1), Ok(RAY));
+        assert_eq!(linear_interest(31_536_000, 0, 1), Ok(RAY + one()));
+    }
+
+    #[test]
+    fn applies_the_rate_linearly_and_does_not_compound() {
+        const FIVE_PERCENT: u128 = 10u128.pow(27) / 20;
+        const YEAR: u64 = 31_536_000;
+
+        // Exactly a year is exactly the rate, and two years is twice it —
+        // interest is linear between checkpoints and compounds only when one
+        // lands (§5.1).
+        assert_eq!(
+            linear_interest(FIVE_PERCENT, 0, YEAR),
+            Ok(RAY + U256::from(FIVE_PERCENT))
+        );
+        assert_eq!(
+            linear_interest(FIVE_PERCENT, 0, 2 * YEAR),
+            Ok(RAY + U256::from(2 * FIVE_PERCENT))
+        );
+
+        // And no time is no interest, which is the index the checkpoint holds.
+        assert_eq!(linear_interest(FIVE_PERCENT, 0, 0), Ok(RAY));
+    }
+
+    #[test]
+    fn refuses_a_checkpoint_ahead_and_says_how_far() {
+        // The distance is the number that tells a reader which two blocks got
+        // mixed up, so it has to be measured rather than announced. Asserting
+        // only the one-second case cannot tell a subtraction from a constant.
+        assert_eq!(
+            linear_interest(1, 90, 0),
+            Err(Error::CheckpointAhead { seconds: 90 })
+        );
+        assert_eq!(
+            linear_interest(1, 1, 0),
+            Err(Error::CheckpointAhead { seconds: 1 })
+        );
+    }
+
+    #[test]
     fn linear_interest_cannot_overflow_at_the_far_end_of_its_types() {
         // `uint96 × uint40` on chain, and its assembly has no guard because of
         // it. Even a full `u128` against a full `u64` — far past anything the
