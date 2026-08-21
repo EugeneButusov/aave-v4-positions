@@ -21,6 +21,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.19"
 
 [dev-dependencies]
+# The schema `bins/migrate` applies, so a spec's database is the deployment's
+# rather than a second reading of the same directories.
+migrations.workspace = true
 # `#[tokio::test]`. The driver pulls tokio in regardless; this only asks for the
 # attribute and a current-thread runtime to hang it on.
 tokio = { version = "1.53.1", features = ["macros", "rt"] }

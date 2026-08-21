@@ -42,15 +42,6 @@ pub(super) const USDC: Address = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce360
 /// RAY, where `drawnIndex` starts and the floor it never goes below.
 pub(super) const RAY: &str = "1000000000000000000000000000";
 
-const EVENT_MIGRATIONS: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../packages/aave-positions/events/src/store/clickhouse-migrations"
-);
-const POSITION_MIGRATIONS: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../packages/aave-positions/positions/src/store/clickhouse-migrations"
-);
-
 /// Where a log sat. `spoke` defaults to [`SPOKE`].
 #[derive(Debug, Clone, Copy)]
 pub(super) struct At {
@@ -356,37 +347,18 @@ pub(super) async fn migrated_database(name: &str) -> Client {
         .await
         .unwrap();
 
+    // The corpus `bins/migrate` applies, in its order — not a second reading of
+    // the directories, which could agree with the deployment today and not
+    // tomorrow. No runner: the database was created empty a line ago, so there
+    // is nothing to skip and nothing to record.
     let client = build_client(config(name));
-    for file in migration_files() {
-        client
-            .query(&std::fs::read_to_string(&file).unwrap())
-            .execute()
-            .await
-            .unwrap();
+    for embedded in migrations::CLICKHOUSE
+        .iter()
+        .flat_map(|source| source.files)
+    {
+        client.query(embedded.sql).execute().await.unwrap();
     }
     client
-}
-
-/// Every `.sql` in both directories, ordered by filename **across** them.
-///
-/// Which is what puts the projections after the table they read: `010` beats
-/// `002` wherever each of them lives. Read at run time rather than embedded,
-/// because a second copy of the list `bins/migrate` owns is a second thing to
-/// forget — and a test may read the filesystem where a shipped binary may not.
-///
-/// Not a migration runner. `bins/migrate` is the only one and the only thing
-/// that keeps a ledger; the database above was created empty a line ago, so
-/// there is nothing to skip and nothing to record.
-fn migration_files() -> Vec<std::path::PathBuf> {
-    let mut files: Vec<_> = [EVENT_MIGRATIONS, POSITION_MIGRATIONS]
-        .iter()
-        .flat_map(|directory| std::fs::read_dir(directory).unwrap())
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "sql"))
-        .collect();
-
-    files.sort_by_key(|path| path.file_name().map(std::ffi::OsString::from));
-    files
 }
 
 // --- what every spec starts from -------------------------------------------
