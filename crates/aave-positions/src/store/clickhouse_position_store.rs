@@ -25,9 +25,6 @@ use clickhouse_client::clickhouse::Client;
 use super::row::Row;
 use super::{Error, PositionKey, PositionPage, PositionQuery, PositionStore, sql};
 
-#[cfg(test)]
-mod tests;
-
 /// Reads the folded positions out of ClickHouse.
 #[derive(Clone)]
 pub struct ClickHousePositionStore {
@@ -112,4 +109,119 @@ fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
+}
+
+// The relaxation the valuation modules take: the arithmetic in a vector is the
+// vector, and an instant a test names is clearer added than saturated.
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use super::*;
+    use crate::store::fixtures::{
+        ALICE, At, CHECKPOINT_AT, RAY, SPOKE, YEAR, ask, borrow, list_reserve, seed_five_reserves,
+        store, supply,
+    };
+
+    /// The reason the port carries `#[async_trait]` rather than a plain
+    /// `async fn`.
+    ///
+    /// A compile-time assertion and nothing else: `async fn` in a trait is
+    /// stable and not dyn compatible, so without the macro this line is E0038
+    /// and `bins/api` would have to take a generic parameter instead of the
+    /// `Arc<dyn Trait>` the composition root is designed around.
+    #[test]
+    fn the_port_is_held_as_a_trait_object() {
+        fn held(store: ClickHousePositionStore) -> std::sync::Arc<dyn PositionStore> {
+            std::sync::Arc::new(store)
+        }
+
+        let _ = held;
+    }
+
+    /// The extra row, and the key it turns into.
+    mod where_a_page_stops {
+        use super::*;
+
+        #[tokio::test]
+        async fn reports_no_next_key_when_the_page_is_not_full() {
+            let (store, client) = store("last_page").await;
+            seed_five_reserves(&client).await;
+
+            let full = store
+                .list(&PositionQuery { limit: 5, ..ask() })
+                .await
+                .unwrap();
+            assert_eq!(full.next, None);
+
+            let short = store
+                .list(&PositionQuery { limit: 4, ..ask() })
+                .await
+                .unwrap();
+            assert_eq!(
+                short.next,
+                Some(PositionKey {
+                    spoke: SPOKE,
+                    reserve_id: U256::from(21)
+                })
+            );
+        }
+    }
+
+    /// One time for the whole page, and what it is when nobody names it.
+    mod the_instant {
+        use super::*;
+
+        #[tokio::test]
+        async fn values_every_position_on_a_page_at_one_instant() {
+            let (store, client) = store("one_instant").await;
+            list_reserve(
+                &client,
+                &[
+                    supply(At::block(200), ALICE, "7", "1000"),
+                    borrow(At::block(200).log(1), ALICE, "7", "500"),
+                ],
+            )
+            .await;
+
+            let page = store
+                .list(&PositionQuery {
+                    as_of: Some(CHECKPOINT_AT + YEAR),
+                    ..ask()
+                })
+                .await
+                .unwrap();
+
+            // One instant for the whole page, reported back: an amount without
+            // the moment it was computed at is not reproducible (§12.6).
+            assert_eq!(page.valued_at, CHECKPOINT_AT + YEAR);
+            let indexes: std::collections::BTreeSet<_> = page
+                .items
+                .iter()
+                .map(|item| item.value.as_ref().map(|value| value.drawn_index))
+                .collect();
+            assert_eq!(indexes.len(), 1);
+        }
+
+        #[tokio::test]
+        async fn defaults_to_now_when_no_instant_is_named() {
+            let (store, client) = store("now").await;
+            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
+
+            let before = now();
+            let page = store.list(&ask()).await.unwrap();
+
+            // Which is what the chain does — getUserDebt at `latest`
+            // extrapolates to the head block rather than to the last event.
+            assert!(page.valued_at >= before);
+            assert_ne!(
+                page.items[0]
+                    .value
+                    .as_ref()
+                    .unwrap()
+                    .drawn_index
+                    .to_string(),
+                RAY
+            );
+        }
+    }
 }

@@ -192,3 +192,214 @@ fn seconds(column: &'static str, value: &str) -> Result<u64, Error> {
         value: value.to_owned(),
     })
 }
+
+// The relaxation the valuation modules take: the arithmetic in a vector is the
+// vector, and an instant a test names is clearer added than saturated.
+#[cfg(test)]
+#[allow(clippy::arithmetic_side_effects)]
+mod tests {
+    use alloy_primitives::I256;
+
+    use super::*;
+    use crate::store::fixtures::{
+        ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR, add_asset,
+        add_reserve, append, ask, borrow, index, list_reserve, store, supply,
+    };
+    use crate::store::{PositionQuery, PositionStore};
+
+    /// The two LEFT JOINs, and what a miss on either one reports.
+    mod the_registry {
+        use super::*;
+
+        #[tokio::test]
+        async fn resolves_a_reserve_to_its_hub_asset_and_token() {
+            let (store, client) = store("resolves").await;
+            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
+
+            // reserveId is a per-Spoke index and means nothing on its own (§1).
+            // AddReserve gives it a Hub and an assetId; the Hub's AddAsset gives
+            // that an ERC-20 and its decimals. Neither contract has both halves.
+            let page = store.list(&ask()).await.unwrap();
+            assert_eq!(
+                page.items[0].asset,
+                Some(PositionAsset {
+                    asset_id: U256::from(7),
+                    hub: HUB,
+                    underlying: USDC,
+                    decimals: 6,
+                })
+            );
+        }
+
+        #[tokio::test]
+        async fn reports_none_rather_than_zero_for_a_reserve_it_has_never_seen() {
+            let (store, client) = store("unregistered").await;
+            append(
+                &client,
+                "spoke_events",
+                &[supply(At::block(200), ALICE, "99", "1000")],
+            )
+            .await;
+
+            // A zero here is indistinguishable from a real zero balance. The
+            // position still appears, because its shares are real.
+            let page = store.list(&ask()).await.unwrap();
+            assert_eq!(page.items[0].supplied_shares, I256::try_from(1000).unwrap());
+            assert_eq!(page.items[0].asset, None);
+            assert_eq!(page.items[0].value, None);
+        }
+
+        #[tokio::test]
+        async fn reports_none_when_the_hub_has_listed_the_asset_but_never_checkpointed_it() {
+            let (store, client) = store("uncheckpointed").await;
+            append(&client, "hub_events", &[add_asset(At::block(10), USDC, 6)]).await;
+            append(
+                &client,
+                "spoke_events",
+                &[
+                    add_reserve(At::block(10), "7", "7", HUB),
+                    supply(At::block(200), ALICE, "7", "1000"),
+                ],
+            )
+            .await;
+
+            // No UpdateAsset means no index, and without an index there is no
+            // arithmetic to do — so no number is offered.
+            assert_eq!(store.list(&ask()).await.unwrap().items[0].value, None);
+        }
+    }
+
+    /// Decimal string in, integer out, and nothing lost on the way.
+    mod the_columns {
+        use super::*;
+
+        #[tokio::test]
+        async fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
+            let (store, client) = store("huge_shares").await;
+            index(
+                &client,
+                100,
+                100,
+                &[supply(At::block(100), ALICE, "7", HUGE)],
+            )
+            .await;
+
+            // Not the JSON encoder's defaults: a share balance arriving as a
+            // number has already lost its tail by the time it reaches this
+            // process (§7.5). `toString` in the projection and a 256-bit
+            // integer here are the two halves of keeping it.
+            let page = store.list(&ask()).await.unwrap();
+            assert_eq!(page.items[0].supplied_shares.to_string(), HUGE);
+        }
+
+        #[tokio::test]
+        async fn reports_the_collateral_flag_and_the_event_count() {
+            let (store, client) = store("flags").await;
+            index(
+                &client,
+                100,
+                100,
+                &[supply(At::block(100), ALICE, "7", "500")],
+            )
+            .await;
+
+            let page = store.list(&ask()).await.unwrap();
+            let position = &page.items[0];
+            assert_eq!(position.chain_id, CHAIN_ID);
+            assert_eq!(position.spoke, SPOKE);
+            assert!(!position.using_as_collateral);
+            assert_eq!(position.events, 1);
+        }
+
+        #[tokio::test]
+        async fn carries_an_amount_past_2_53_without_losing_its_tail() {
+            let (store, client) = store("huge_amount").await;
+            list_reserve(&client, &[borrow(At::block(200), ALICE, "7", HUGE)]).await;
+
+            let page = store
+                .list(&PositionQuery {
+                    as_of: Some(CHECKPOINT_AT),
+                    ..ask()
+                })
+                .await
+                .unwrap();
+
+            let value = page.items[0].value.as_ref().unwrap();
+            assert_eq!(value.drawn_debt.to_string(), HUGE);
+        }
+    }
+
+    /// The row put through the valuation.
+    mod the_amounts {
+        use super::*;
+
+        #[tokio::test]
+        async fn turns_supplied_shares_into_a_token_amount() {
+            let (store, client) = store("supplied_amount").await;
+            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
+
+            let page = store
+                .list(&PositionQuery {
+                    as_of: Some(CHECKPOINT_AT),
+                    ..ask()
+                })
+                .await
+                .unwrap();
+
+            // Valued at the checkpoint itself, so the index has not moved: the
+            // asset holds 1,000,000 shares against 1,000,000 of underlying, and
+            // 1,000 shares redeem for 1,000.
+            let value = page.items[0].value.as_ref().unwrap();
+            assert_eq!(value.supplied_amount, U256::from(1000));
+            assert_eq!(value.drawn_index.to_string(), RAY);
+        }
+
+        #[tokio::test]
+        async fn grows_a_debt_with_time_on_a_fixed_share_balance() {
+            let (store, client) = store("accrual").await;
+            list_reserve(&client, &[borrow(At::block(200), ALICE, "7", "1000000")]).await;
+
+            let now = store
+                .list(&PositionQuery {
+                    as_of: Some(CHECKPOINT_AT),
+                    ..ask()
+                })
+                .await
+                .unwrap();
+            let later = store
+                .list(&PositionQuery {
+                    as_of: Some(CHECKPOINT_AT + YEAR),
+                    ..ask()
+                })
+                .await
+                .unwrap();
+
+            // The whole reason a share balance is not a balance (§5): nothing
+            // was indexed between these two reads.
+            assert_eq!(
+                now.items[0].value.as_ref().unwrap().total_debt,
+                U256::from(1_000_000)
+            );
+            assert_eq!(
+                later.items[0].value.as_ref().unwrap().total_debt,
+                U256::from(1_050_000)
+            );
+            assert_eq!(now.items[0].drawn_shares, later.items[0].drawn_shares);
+        }
+
+        #[tokio::test]
+        async fn keeps_the_shares_and_the_flow_beside_the_amount() {
+            let (store, client) = store("cost_basis").await;
+            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
+
+            // Cost basis and current value answer different questions, and the
+            // difference between them is interest — so neither replaces the
+            // other.
+            let page = store.list(&ask()).await.unwrap();
+            let position = &page.items[0];
+            assert_eq!(position.supplied_shares, I256::try_from(1000).unwrap());
+            assert_eq!(position.net_supplied_amount, I256::try_from(1000).unwrap());
+            assert!(position.value.is_some());
+        }
+    }
+}

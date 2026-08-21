@@ -19,6 +19,8 @@ use clickhouse_client::clickhouse::{self, Client};
 use clickhouse_client::{Config, build_client};
 use serde::Serialize;
 
+use super::{ClickHousePositionStore, PositionPage, PositionQuery};
+
 pub(super) const CHAIN_ID: u32 = 1;
 pub(super) const SPOKE: Address = address!("0x94e7a5dcbe816e498b89ab752661904e2f56c485");
 /// The Bluechip Spoke — a second isolated margin account for the same wallet.
@@ -385,4 +387,99 @@ fn migration_files() -> Vec<std::path::PathBuf> {
 
     files.sort_by_key(|path| path.file_name().map(std::ffi::OsString::from));
     files
+}
+
+// --- what every spec starts from -------------------------------------------
+
+/// The block every Hub fixture checkpoints at, and the instant it lands on.
+const CHECKPOINT_BLOCK: u64 = 100;
+pub(super) const CHECKPOINT_AT: u64 = T0 + CHECKPOINT_BLOCK;
+pub(super) const YEAR: u64 = 365 * 24 * 3600;
+/// 5% per annum, RAY-scaled, as `drawnRate` arrives on `UpdateAsset`.
+pub(super) const FIVE_PERCENT: &str = "50000000000000000000000000";
+
+/// A database of this test's own, and a store over it.
+pub(super) async fn store(test: &str) -> (ClickHousePositionStore, Client) {
+    let client = migrated_database(&format!("rust_positions_{test}")).await;
+    (ClickHousePositionStore::new(client.clone()), client)
+}
+
+/// The query every case varies from: this wallet, on this Spoke, now.
+pub(super) fn ask() -> PositionQuery {
+    PositionQuery {
+        chain_id: CHAIN_ID,
+        user: ALICE,
+        spoke: Some(SPOKE),
+        limit: 100,
+        after: None,
+        as_of: None,
+    }
+}
+
+/// What the processor does with a dispatched range: cancel, then write.
+pub(super) async fn index(client: &Client, from: u64, to: u64, batch: &[Event]) {
+    revert(client, "spoke_events", from, to).await;
+    append(client, "spoke_events", batch).await;
+}
+
+/// A reserve that resolves all the way to a token, and a Hub asset with a
+/// checkpoint — the state valuation needs before it can produce a number.
+///
+/// Asset 7 borrows 400,000 of the 1,000,000 supplied, so the index actually
+/// accrues: the short-circuit would hold it at RAY if nothing were drawn.
+pub(super) async fn list_reserve(client: &Client, events: &[Event]) {
+    append(
+        client,
+        "hub_events",
+        &[
+            add_asset(At::block(10), USDC, 6),
+            add(At::block(20), "1000000", "1000000"),
+            draw(At::block(30), "400000", "400000"),
+            update_asset(At::block(CHECKPOINT_BLOCK), RAY, FIVE_PERCENT),
+        ],
+    )
+    .await;
+
+    let mut spoke = vec![add_reserve(At::block(10), "7", "7", HUB)];
+    spoke.extend_from_slice(events);
+    append(client, "spoke_events", &spoke).await;
+}
+
+pub(super) fn reserve_ids(page: &PositionPage) -> Vec<String> {
+    page.items
+        .iter()
+        .map(|item| item.reserve_id.to_string())
+        .collect()
+}
+
+/// Five reserves whose ids are deliberately out of numeric order as text: 13
+/// sorts before 3.
+pub(super) const RESERVES: [&str; 5] = ["3", "7", "13", "21", "34"];
+
+/// One wallet holding all five.
+pub(super) async fn seed_five_reserves(client: &Client) {
+    let batch: Vec<_> = RESERVES
+        .iter()
+        .enumerate()
+        .map(|(position, reserve_id)| {
+            let log = u32::try_from(position).unwrap();
+            supply(At::block(100).log(log), ALICE, reserve_id, "500")
+        })
+        .collect();
+    index(client, 100, 100, &batch).await;
+}
+
+/// The same wallet and the same reserve id on two Spokes, which is two
+/// positions rather than one.
+pub(super) async fn seed_both_spokes(client: &Client) {
+    index(
+        client,
+        100,
+        100,
+        &[
+            supply(At::block(100), ALICE, "7", "500"),
+            supply(At::block(100).log(1).on(SECOND_SPOKE), ALICE, "7", "900"),
+        ],
+    )
+    .await;
 }
