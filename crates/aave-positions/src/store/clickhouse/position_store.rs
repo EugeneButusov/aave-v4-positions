@@ -120,10 +120,8 @@ mod tests {
     use alloy_primitives::U256;
 
     use super::{ClickHousePositionStore, now};
-    use crate::store::clickhouse::fixtures::{
-        ALICE, At, CHECKPOINT_AT, RAY, SPOKE, YEAR, ask, borrow, list_reserve, seed_five_reserves,
-        store, supply,
-    };
+    use crate::store::clickhouse::fixtures::{list_reserve, seed_five_reserves, store};
+    use crate::store::fixtures::{ALICE, At, CHECKPOINT_AT, RAY, SPOKE, YEAR, ask, borrow, supply};
     use crate::store::{PositionKey, PositionQuery, PositionStore};
 
     /// The reason the port carries `#[async_trait]` rather than a plain

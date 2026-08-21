@@ -14,6 +14,8 @@
 
 mod clickhouse;
 mod error;
+#[cfg(test)]
+mod fixtures;
 mod position;
 mod position_store;
 
