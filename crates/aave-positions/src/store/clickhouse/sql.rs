@@ -10,12 +10,8 @@
 
 use alloy_primitives::Address;
 
-/// The page, with `{narrowing}` where the optional Spoke predicate goes.
-///
-/// That slot is not a server parameter and cannot be taken for one: a
-/// ClickHouse parameter carries a type, `{name:Type}`. It is filled before the
-/// statement is sent.
-const STATEMENT: &str = r"SELECT
+/// The page. Every one of them, with nothing substituted before it is sent.
+pub(super) const STATEMENT: &str = r"SELECT
     p.chain_id                      AS chain_id,
     p.user                          AS user,
     p.spoke                         AS spoke,
@@ -72,7 +68,14 @@ FROM (
       -- comparison rather than two branches: a reserve_id-only special
       -- case would silently read a resume point from one Spoke against
       -- another's rows if the two ever disagreed.
-      AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256}){narrowing}
+      AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256})
+      -- A range rather than an optional equality, so this statement has no
+      -- assembled part at all. Equal bounds are equality — measured, same
+      -- granule and the same binary search — and the open pair below is every
+      -- Spoke. `({spoke:String} = '' OR spoke = {spoke:String})`, the other way
+      -- to make it unconditional, prunes the same and drops to generic
+      -- exclusion search.
+      AND spoke BETWEEN {spokeFrom:String} AND {spokeTo:String}
     ORDER BY user, spoke, reserve_id
     -- One more than asked. The extra row's presence is what says there
     -- is a next page; counting the whole result set to find out would
@@ -117,65 +120,102 @@ LEFT JOIN hub_assets_current AS a
 -- before 3 — which then hands the next page a key from the wrong row.
 ORDER BY p.spoke, p.reserve_id";
 
-/// What fills `{narrowing}` when the caller named a Spoke.
-const NARROWED_TO_ONE_SPOKE: &str = "\n      AND spoke = {spoke:String}";
+/// Above every address, so it is the open end of the range.
+///
+/// The column holds `lower(address)` — `0x` and forty hex digits — and
+/// ClickHouse compares strings bytewise, so the highest Unicode scalar sorts
+/// above all of them.
+const ABOVE_EVERY_SPOKE: char = '\u{10FFFF}';
 
-/// The statement for one page.
-pub(super) fn list(spoke: Option<Address>) -> String {
-    let narrowing = if spoke.is_some() {
-        NARROWED_TO_ONE_SPOKE
-    } else {
-        ""
-    };
-
-    STATEMENT.replace("{narrowing}", narrowing)
+/// The bounds `{spokeFrom}` and `{spokeTo}` take: one Spoke twice, or the whole
+/// range.
+pub(super) fn spoke_bounds(spoke: Option<Address>) -> (String, String) {
+    spoke.map_or_else(
+        || (String::new(), ABOVE_EVERY_SPOKE.to_string()),
+        |spoke| {
+            let pinned = spoke.to_string().to_lowercase();
+            (pinned.clone(), pinned)
+        },
+    )
 }
 
-/// The text, before any server sees it. Nothing here opens a connection: this
-/// module builds a string, and what the string does to a database is
-/// [`super::position_store`]'s to prove.
+/// The statement, before any server sees it. Nothing here opens a connection:
+/// this module is a constant and the bounds that go with it, and what they do
+/// to a database is [`super::position_store`]'s to prove.
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
 
-    use super::list;
+    use super::{STATEMENT, spoke_bounds};
 
+    /// Equal bounds are an equality; the open pair is every Spoke. Measured:
+    /// both keep the granule and the binary search that
+    /// `({spoke:String} = '' OR spoke = {spoke:String})` would have cost.
     #[test]
-    fn leaves_no_slot_unfilled() {
-        for statement in [list(None), list(Some(Address::ZERO))] {
-            assert!(!statement.contains("{narrowing}"), "{statement}");
-        }
+    fn pins_one_spoke_by_bounding_the_range_to_it() {
+        let spoke = Address::repeat_byte(0x94);
+        let (from, to) = spoke_bounds(Some(spoke));
+
+        assert_eq!(from, to);
+        assert_eq!(from, spoke.to_string().to_lowercase());
     }
 
     #[test]
-    fn narrows_to_one_spoke_only_when_one_is_named() {
-        assert!(!list(None).contains("AND spoke = {spoke:String}"));
-        assert!(list(Some(Address::ZERO)).contains("AND spoke = {spoke:String}"));
+    fn opens_the_range_when_no_spoke_is_named() {
+        let (from, to) = spoke_bounds(None);
+
+        assert!(from.is_empty());
+        assert!(to.as_str() > "0xffffffffffffffffffffffffffffffffffffffff");
     }
 
     /// One added to the SQL without a matching `param` call is a server error
     /// on the next page, so the set is spelled out rather than counted.
     ///
-    /// Comments are stripped first: the seek's cites `{spoke:String}` while
-    /// explaining the shape it is not, and a parameter the server never sees is
-    /// not one the store has to bind.
+    /// Comments are stripped first: they cite `{spoke:String}` while explaining
+    /// the shape this is not, and a parameter the server never sees is not one
+    /// the store has to bind.
     #[test]
     fn names_only_the_parameters_the_store_binds() {
         assert_eq!(
-            parameters(&list(None)),
-            ["chainId", "user", "afterSpoke", "afterReserve", "limit"]
-        );
-        assert_eq!(
-            parameters(&list(Some(Address::ZERO))),
+            parameters(STATEMENT),
             [
                 "chainId",
                 "user",
                 "afterSpoke",
                 "afterReserve",
-                "spoke",
+                "spokeFrom",
+                "spokeTo",
                 "limit"
             ]
         );
+    }
+
+    /// Unqualified, `reserve_id` binds to the `toString` alias and sorts the
+    /// decimal digits as text, putting 13 before 3 — which hands the next page
+    /// a key from the wrong row.
+    #[test]
+    fn orders_the_page_by_the_source_column_not_the_alias() {
+        assert!(STATEMENT.contains("ORDER BY p.spoke, p.reserve_id"));
+        assert!(!STATEMENT.contains("\nORDER BY p.spoke, reserve_id"));
+    }
+
+    /// A `reserve_id`-only comparison would resume at "> 7" and lose the second
+    /// Spoke's reserve 7, which sorts after the first Spoke's.
+    #[test]
+    fn resumes_on_the_whole_of_what_the_pinned_prefix_leaves_free() {
+        assert!(
+            STATEMENT.contains(
+                "AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256})"
+            )
+        );
+    }
+
+    /// Shares cannot go negative on chain, so a negative fold is drift and
+    /// should surface as a wrong number rather than vanish behind the filter
+    /// that hides closed positions.
+    #[test]
+    fn hides_a_closed_position_without_hiding_a_negative_one() {
+        assert!(STATEMENT.contains("AND (supplied_shares != 0 OR drawn_shares != 0)"));
     }
 
     /// Every `{name:Type}` in the executable half, in the order it appears.
@@ -188,41 +228,5 @@ mod tests {
             .filter_map(|slot| slot.split_once(':'))
             .map(|(name, _)| name)
             .collect()
-    }
-
-    /// Unqualified, `reserve_id` binds to the `toString` alias and sorts
-    /// the decimal digits as text, putting 13 before 3 — which hands the
-    /// next page a key from the wrong row.
-    #[test]
-    fn orders_the_page_by_the_source_column_not_the_alias() {
-        let statement = list(None);
-
-        assert!(
-            statement.contains("ORDER BY p.spoke, p.reserve_id"),
-            "{statement}"
-        );
-        assert!(
-            !statement.contains("\nORDER BY p.spoke, reserve_id"),
-            "{statement}"
-        );
-    }
-
-    /// A `reserve_id`-only comparison would resume at "> 7" and lose the
-    /// second Spoke's reserve 7, which sorts after the first Spoke's.
-    #[test]
-    fn resumes_on_the_whole_of_what_the_pinned_prefix_leaves_free() {
-        assert!(
-            list(None).contains(
-                "AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256})"
-            )
-        );
-    }
-
-    /// Shares cannot go negative on chain, so a negative fold is drift and
-    /// should surface as a wrong number rather than vanish behind the
-    /// filter that hides closed positions.
-    #[test]
-    fn hides_a_closed_position_without_hiding_a_negative_one() {
-        assert!(list(None).contains("AND (supplied_shares != 0 OR drawn_shares != 0)"));
     }
 }

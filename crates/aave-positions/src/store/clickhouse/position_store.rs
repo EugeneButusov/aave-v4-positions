@@ -45,9 +45,10 @@ impl ClickHousePositionStore {
 impl PositionStore for ClickHousePositionStore {
     async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error> {
         let after = query.after.as_ref();
-        let mut pending = self
+        let (spoke_from, spoke_to) = sql::spoke_bounds(query.spoke);
+        let pending = self
             .client
-            .query(&sql::list(query.spoke))
+            .query(sql::STATEMENT)
             .param("chainId", query.chain_id)
             .param("user", lower_case(query.user))
             // One more than asked, so the extra row's presence is what says
@@ -62,11 +63,9 @@ impl PositionStore for ClickHousePositionStore {
             .param(
                 "afterReserve",
                 after.map_or(U256::ZERO, |key| key.reserve_id).to_string(),
-            );
-
-        if let Some(spoke) = query.spoke {
-            pending = pending.param("spoke", lower_case(spoke));
-        }
+            )
+            .param("spokeFrom", spoke_from)
+            .param("spokeTo", spoke_to);
 
         let rows = pending.fetch_all::<Row>().await?;
 
