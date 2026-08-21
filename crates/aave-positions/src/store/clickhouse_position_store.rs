@@ -116,11 +116,14 @@ fn now() -> u64 {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
-    use super::*;
+    use alloy_primitives::U256;
+
+    use super::{ClickHousePositionStore, now};
     use crate::store::fixtures::{
         ALICE, At, CHECKPOINT_AT, RAY, SPOKE, YEAR, ask, borrow, list_reserve, seed_five_reserves,
         store, supply,
     };
+    use crate::store::{PositionKey, PositionQuery, PositionStore};
 
     /// The reason the port carries `#[async_trait]` rather than a plain
     /// `async fn`.
@@ -142,7 +145,9 @@ mod tests {
 
     /// The extra row, and the key it turns into.
     mod where_a_page_stops {
-        use super::*;
+        use super::{
+            PositionKey, PositionQuery, PositionStore, SPOKE, U256, ask, seed_five_reserves, store,
+        };
 
         #[tokio::test]
         async fn reports_no_next_key_when_the_page_is_not_full() {
@@ -171,7 +176,10 @@ mod tests {
 
     /// One time for the whole page, and what it is when nobody names it.
     mod the_instant {
-        use super::*;
+        use super::{
+            ALICE, At, CHECKPOINT_AT, PositionQuery, PositionStore, RAY, YEAR, ask, borrow,
+            list_reserve, now, store, supply,
+        };
 
         #[tokio::test]
         async fn values_every_position_on_a_page_at_one_instant() {

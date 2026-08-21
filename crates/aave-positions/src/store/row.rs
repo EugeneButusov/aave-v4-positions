@@ -218,10 +218,9 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
-    // No `use super::*`. These reach nothing this module defines — they drive
-    // the mapping through `list`, the way a caller does — so the glob would put
-    // eighteen names in scope to use three, and hide that `Row` and the parsers
-    // are never named here.
+    // Nothing this module defines is named below: these drive the mapping
+    // through `PositionStore::list`, the way a caller does, so `Row` and the
+    // parsers are reached only through it.
     use alloy_primitives::{I256, U256};
 
     use crate::store::fixtures::{
@@ -232,7 +231,10 @@ mod tests {
 
     /// The two LEFT JOINs, and what a miss on either one reports.
     mod the_registry {
-        use super::*;
+        use super::{
+            ALICE, At, HUB, I256, PositionAsset, PositionStore, U256, USDC, add_asset, add_reserve,
+            append, ask, list_reserve, store, supply,
+        };
 
         #[tokio::test]
         async fn resolves_a_reserve_to_its_hub_asset_and_token() {
@@ -294,7 +296,10 @@ mod tests {
 
     /// Decimal string in, integer out, and nothing lost on the way.
     mod the_columns {
-        use super::*;
+        use super::{
+            ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUGE, PositionQuery, PositionStore, SPOKE, ask,
+            borrow, index, list_reserve, store, supply,
+        };
 
         #[tokio::test]
         async fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
@@ -354,7 +359,10 @@ mod tests {
 
     /// The row put through the valuation.
     mod the_amounts {
-        use super::*;
+        use super::{
+            ALICE, At, CHECKPOINT_AT, I256, PositionQuery, PositionStore, RAY, U256, YEAR, ask,
+            borrow, list_reserve, store, supply,
+        };
 
         #[tokio::test]
         async fn turns_supplied_shares_into_a_token_amount() {

@@ -153,9 +153,9 @@ pub(super) fn list(spoke: Option<Address>) -> String {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
-    use alloy_primitives::{I256, U256};
+    use alloy_primitives::{Address, I256, U256};
 
-    use super::*;
+    use super::{RESOLVE, list};
     use crate::store::fixtures::{
         ALICE, At, BOB, RESERVES, ROUTER, SECOND_SPOKE, SPOKE, ask, borrow, index, reserve_ids,
         seed_both_spokes, seed_five_reserves, store, supplied_by, supply, withdraw,
@@ -164,7 +164,7 @@ mod tests {
 
     /// The text, before any server sees it.
     mod the_statement {
-        use super::*;
+        use super::{Address, RESOLVE, list};
 
         #[test]
         fn splices_the_seek_where_the_subquery_goes() {
@@ -199,7 +199,10 @@ mod tests {
 
     /// The `WHERE` clause, one predicate at a time.
     mod which_rows_come_back {
-        use super::*;
+        use super::{
+            ALICE, Address, At, BOB, I256, PositionQuery, PositionStore, ROUTER, U256, ask, borrow,
+            index, store, supplied_by, supply, withdraw,
+        };
 
         #[tokio::test]
         async fn returns_one_wallet_on_one_spoke_and_nobody_else() {
@@ -331,7 +334,10 @@ mod tests {
 
     /// What the optional `spoke` predicate narrows, and what it does not.
     mod across_spokes {
-        use super::*;
+        use super::{
+            I256, PositionKey, PositionQuery, PositionStore, SECOND_SPOKE, SPOKE, U256, ask,
+            seed_both_spokes, store,
+        };
 
         #[tokio::test]
         async fn lists_every_spoke_when_none_is_named_each_row_saying_which() {
@@ -431,7 +437,9 @@ mod tests {
 
     /// The `ORDER BY`, and the key the next page starts after.
     mod order_and_resume {
-        use super::*;
+        use super::{
+            PositionQuery, PositionStore, RESERVES, ask, reserve_ids, seed_five_reserves, store,
+        };
 
         #[tokio::test]
         async fn walks_every_position_exactly_once_in_numeric_order() {
