@@ -218,14 +218,17 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
-    use alloy_primitives::I256;
+    // No `use super::*`. These reach nothing this module defines — they drive
+    // the mapping through `list`, the way a caller does — so the glob would put
+    // eighteen names in scope to use three, and hide that `Row` and the parsers
+    // are never named here.
+    use alloy_primitives::{I256, U256};
 
-    use super::*;
     use crate::store::fixtures::{
         ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR, add_asset,
         add_reserve, append, ask, borrow, index, list_reserve, store, supply,
     };
-    use crate::store::{PositionQuery, PositionStore};
+    use crate::store::{PositionAsset, PositionQuery, PositionStore};
 
     /// The two LEFT JOINs, and what a miss on either one reports.
     mod the_registry {
