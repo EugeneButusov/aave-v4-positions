@@ -1,10 +1,8 @@
 //! The statement one page is read with.
 //!
-//! **Two halves, and the seam is the query's own.** The inner seek is a
-//! complete `SELECT` over one wallet's contiguous rows; the outer resolution
-//! joins the registry and the Hub onto whatever it returned. Every server
-//! parameter is in the seek, so the resolution is one literal and the seek is
-//! the only thing assembled.
+//! One literal with one slot. The seek — the paged `SELECT` over one wallet's
+//! rows — is always there, so it is written where it runs rather than spliced
+//! in from a constant that had exactly one possible value.
 //!
 //! No query builder: none of them speaks ClickHouse's `{name:Type}` parameters,
 //! and this SQL has to stay diffable against `clickhouse-position-store.ts`
@@ -12,11 +10,12 @@
 
 use alloy_primitives::Address;
 
-/// The resolution, with `{seek}` where the paged subquery goes.
+/// The page, with `{narrowing}` where the optional Spoke predicate goes.
 ///
-/// Neither slot is a server parameter — those carry a type, `{name:Type}` — and
-/// both are substituted before the statement is sent.
-const RESOLVE: &str = r"SELECT
+/// That slot is not a server parameter and cannot be taken for one: a
+/// ClickHouse parameter carries a type, `{name:Type}`. It is filled before the
+/// statement is sent.
+const STATEMENT: &str = r"SELECT
     p.chain_id                      AS chain_id,
     p.user                          AS user,
     p.spoke                         AS spoke,
@@ -46,7 +45,39 @@ const RESOLVE: &str = r"SELECT
     toString(a.drawn_rate)          AS drawn_rate,
     toString(toUnixTimestamp(a.index_timestamp)) AS checkpoint_at
 FROM (
-{seek}
+-- **One wallet's contiguous rows, and only one clause of this is optional.**
+-- `spoke` narrows by equality when it is given and is absent when it is not,
+-- because `({spoke:String} = '' OR spoke = {spoke:String})` — the shape that
+-- would make this a constant with no slot at all — prunes to the same granule
+-- but drops Search Algorithm: binary search to generic exclusion search, which
+-- is the property the join's comment below cites as evidence.
+--
+-- The resume key needs no slot either. `('', 0)` is below every real key, since
+-- a Spoke address is never the empty string, so the beginning of a listing is a
+-- value rather than a missing predicate. Measured: same condition, same
+-- granule, same binary search as omitting it.
+SELECT *
+FROM user_positions_current
+-- The leading pair of the sorting key, so the scan starts at this
+-- wallet's rows rather than filtering its way to them.
+WHERE chain_id = {chainId:UInt32}
+  AND user = {user:String}
+  -- Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go
+  -- negative on chain, so a negative fold is drift, and it should
+  -- surface as a visibly wrong number for §9 to catch rather than
+  -- vanish behind the filter that hides closed positions.
+  AND (supplied_shares != 0 OR drawn_shares != 0)
+  -- The whole of what the pinned prefix leaves free, compared as a
+  -- pair even when the narrowing below pins the first half. One
+  -- comparison rather than two branches: a reserve_id-only special
+  -- case would silently read a resume point from one Spoke against
+  -- another's rows if the two ever disagreed.
+  AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256}){narrowing}
+ORDER BY user, spoke, reserve_id
+-- One more than asked. The extra row's presence is what says there
+-- is a next page; counting the whole result set to find out would
+-- defeat keyset paging.
+LIMIT {limit:UInt32}
 ) AS p
 -- **A join, not the UNION ALL the collateral flag got.** The two cases
 -- differ structurally, and EXPLAIN indexes = 1 shows how.
@@ -86,42 +117,6 @@ LEFT JOIN hub_assets_current AS a
 -- before 3 — which then hands the next page a key from the wrong row.
 ORDER BY p.spoke, p.reserve_id";
 
-/// The seek: one wallet's contiguous rows, paged.
-///
-/// **`{narrowing}` is the only clause that is not always here, and that was
-/// measured.** `spoke` narrows by equality when it is given and is absent when
-/// it is not, because `({spoke:String} = '' OR spoke = {spoke:String})` — the
-/// shape that would make this a single constant — prunes to the same granule
-/// but drops `Search Algorithm: binary search` to `generic exclusion search`,
-/// which is the property the resolution's comment cites as evidence.
-///
-/// **The resume key needs no slot at all.** `('', 0)` is below every real key,
-/// since a Spoke address is never the empty string — so the beginning of the
-/// listing is a value rather than a missing predicate. Measured: same
-/// condition, same granule, same binary search as omitting it.
-const SEEK: &str = r"SELECT *
-FROM user_positions_current
--- The leading pair of the sorting key, so the scan starts at this
--- wallet's rows rather than filtering its way to them.
-WHERE chain_id = {chainId:UInt32}
-  AND user = {user:String}
-  -- Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go
-  -- negative on chain, so a negative fold is drift, and it should
-  -- surface as a visibly wrong number for §9 to catch rather than
-  -- vanish behind the filter that hides closed positions.
-  AND (supplied_shares != 0 OR drawn_shares != 0)
-  -- The whole of what the pinned prefix leaves free, compared as a
-  -- pair even when the narrowing below pins the first half. One
-  -- comparison rather than two branches: a reserve_id-only special
-  -- case would silently read a resume point from one Spoke against
-  -- another's rows if the two ever disagreed.
-  AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256}){narrowing}
-ORDER BY user, spoke, reserve_id
--- One more than asked. The extra row's presence is what says there
--- is a next page; counting the whole result set to find out would
--- defeat keyset paging.
-LIMIT {limit:UInt32}";
-
 /// What fills `{narrowing}` when the caller named a Spoke.
 const NARROWED_TO_ONE_SPOKE: &str = "\n  AND spoke = {spoke:String}";
 
@@ -133,13 +128,9 @@ pub(super) fn list(spoke: Option<Address>) -> String {
         ""
     };
 
-    RESOLVE
-        .replace("{seek}", SEEK)
-        .replace("{narrowing}", narrowing)
+    STATEMENT.replace("{narrowing}", narrowing)
 }
 
-// The relaxation the valuation modules take: the arithmetic in a vector is the
-// vector, and an instant a test names is clearer added than saturated.
 /// The text, before any server sees it. Nothing here opens a connection: this
 /// module builds a string, and what the string does to a database is
 /// [`super::position_store`]'s to prove.
@@ -147,19 +138,13 @@ pub(super) fn list(spoke: Option<Address>) -> String {
 mod tests {
     use alloy_primitives::Address;
 
-    use super::{RESOLVE, list};
+    use super::list;
 
     #[test]
-    fn splices_the_seek_where_the_subquery_goes() {
-        let statement = list(None);
-
-        assert!(!statement.contains("{seek}"), "{statement}");
-        assert!(!statement.contains("{narrowing}"), "{statement}");
-        assert!(statement.contains("FROM (\nSELECT *"), "{statement}");
-        assert!(
-            statement.contains("LIMIT {limit:UInt32}\n) AS p"),
-            "{statement}"
-        );
+    fn leaves_no_slot_unfilled() {
+        for statement in [list(None), list(Some(Address::ZERO))] {
+            assert!(!statement.contains("{narrowing}"), "{statement}");
+        }
     }
 
     #[test]
@@ -168,12 +153,41 @@ mod tests {
         assert!(list(Some(Address::ZERO)).contains("AND spoke = {spoke:String}"));
     }
 
-    /// Every parameter is inside the seek, which is what lets the
-    /// resolution be one literal rather than a second thing to assemble.
+    /// One added to the SQL without a matching `param` call is a server error
+    /// on the next page, so the set is spelled out rather than counted.
+    ///
+    /// Comments are stripped first: the seek's cites `{spoke:String}` while
+    /// explaining the shape it is not, and a parameter the server never sees is
+    /// not one the store has to bind.
     #[test]
-    fn the_resolution_binds_no_parameters() {
-        assert!(!RESOLVE.replace("{seek}", "").contains(":UInt"));
-        assert!(!RESOLVE.replace("{seek}", "").contains(":String"));
+    fn names_only_the_parameters_the_store_binds() {
+        assert_eq!(
+            parameters(&list(None)),
+            ["chainId", "user", "afterSpoke", "afterReserve", "limit"]
+        );
+        assert_eq!(
+            parameters(&list(Some(Address::ZERO))),
+            [
+                "chainId",
+                "user",
+                "afterSpoke",
+                "afterReserve",
+                "spoke",
+                "limit"
+            ]
+        );
+    }
+
+    /// Every `{name:Type}` in the executable half, in the order it appears.
+    fn parameters(statement: &str) -> Vec<&str> {
+        statement
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("--"))
+            .flat_map(|line| line.split('{').skip(1))
+            .filter_map(|rest| rest.split('}').next())
+            .filter_map(|slot| slot.split_once(':'))
+            .map(|(name, _)| name)
+            .collect()
     }
 
     /// Unqualified, `reserve_id` binds to the `toString` alias and sorts
