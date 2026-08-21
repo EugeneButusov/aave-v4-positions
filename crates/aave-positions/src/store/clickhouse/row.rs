@@ -203,38 +203,71 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
     })
 }
 
-// The relaxation the valuation modules take: the arithmetic in a vector is the
-// vector, and an instant a test names is clearer added than saturated.
+/// The mapping, with no server in it. A `Row` is what ClickHouse sends; these
+/// build one and say what it becomes.
+///
+/// Two of these are unreachable through a query: the fold cannot produce a
+/// column that fails to parse, nor a negative share balance. What a `LEFT JOIN`
+/// miss actually fills a column with is the other way round, and stays a live
+/// case in [`super::super::position_store`].
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use alloy_primitives::{I256, U256};
 
-    use crate::store::clickhouse::harness::{append, index, list_reserve, store};
-    use crate::store::fixtures::{
-        ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR, add_asset,
-        add_reserve, ask, borrow, supply,
-    };
-    use crate::store::{PositionAsset, PositionQuery, PositionStore};
+    use super::Row;
+    use crate::store::Error;
+    use crate::store::fixtures::{ALICE, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR};
 
-    /// The two LEFT JOINs, and what a miss on either one reports.
+    /// One RAY per share, a supply side of exactly 1e6 against 1e6, and nothing
+    /// drawn — so every amount below is the share count and the arithmetic is
+    /// not what is under test.
+    fn row() -> Row {
+        Row {
+            chain_id: 1,
+            user: ALICE.to_string().to_lowercase(),
+            spoke: SPOKE.to_string().to_lowercase(),
+            reserve_id: "7".to_owned(),
+            supplied_shares: "1000".to_owned(),
+            drawn_shares: "0".to_owned(),
+            premium_shares: "0".to_owned(),
+            premium_offset_ray: "0".to_owned(),
+            net_supplied_amount: "1000".to_owned(),
+            net_borrowed_amount: "0".to_owned(),
+            using_as_collateral: 0,
+            events: 1,
+
+            asset_id: "7".to_owned(),
+            hub: HUB.to_string().to_lowercase(),
+            underlying: Some(USDC.to_string().to_lowercase()),
+            decimals: Some(6),
+            liquidity: "1000000".to_owned(),
+            added_shares: "1000000".to_owned(),
+            asset_drawn_shares: "0".to_owned(),
+            swept: "0".to_owned(),
+            asset_premium_shares: "0".to_owned(),
+            asset_premium_offset_ray: "0".to_owned(),
+            deficit_ray: "0".to_owned(),
+            realized_fees: Some("0".to_owned()),
+            liquidity_fee: Some(0),
+            drawn_index: Some(RAY.to_owned()),
+            drawn_rate: Some("0".to_owned()),
+            checkpoint_at: Some(CHECKPOINT_AT.to_string()),
+        }
+    }
+
+    /// The registry and the Hub, and what a column left empty reports.
     mod the_registry {
-        use super::{
-            ALICE, At, HUB, I256, PositionAsset, PositionStore, U256, USDC, add_asset, add_reserve,
-            append, ask, list_reserve, store, supply,
-        };
+        use super::{ALICE, HUB, Row, U256, USDC, row};
+        use crate::store::PositionAsset;
 
-        #[tokio::test]
-        async fn resolves_a_reserve_to_its_hub_asset_and_token() {
-            let (store, client) = store("resolves").await;
-            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
-
+        #[test]
+        fn resolves_the_reserve_from_the_joined_columns() {
             // reserveId is a per-Spoke index and means nothing on its own (§1).
             // AddReserve gives it a Hub and an assetId; the Hub's AddAsset gives
             // that an ERC-20 and its decimals. Neither contract has both halves.
-            let page = store.list(&ask()).await.unwrap();
             assert_eq!(
-                page.items[0].asset,
+                row().to_position(0).unwrap().asset,
                 Some(PositionAsset {
                     asset_id: U256::from(7),
                     hub: HUB,
@@ -244,169 +277,170 @@ mod tests {
             );
         }
 
-        #[tokio::test]
-        async fn reports_none_rather_than_zero_for_a_reserve_it_has_never_seen() {
-            let (store, client) = store("unregistered").await;
-            append(
-                &client,
-                "spoke_events",
-                &[supply(At::block(200), ALICE, "99", "1000")],
-            )
-            .await;
+        /// `underlying` is what says the join missed: it is nullable in
+        /// `hub_assets_current`, where `asset_id` and `hub` are not and come
+        /// back as their defaults.
+        #[test]
+        fn reports_no_asset_when_the_registry_has_not_resolved_the_reserve() {
+            let unresolved = Row {
+                asset_id: "0".to_owned(),
+                hub: String::new(),
+                underlying: None,
+                decimals: None,
+                ..row()
+            };
 
-            // A zero here is indistinguishable from a real zero balance. The
-            // position still appears, because its shares are real.
-            let page = store.list(&ask()).await.unwrap();
-            assert_eq!(page.items[0].supplied_shares, I256::try_from(1000).unwrap());
-            assert_eq!(page.items[0].asset, None);
-            assert_eq!(page.items[0].value, None);
+            let position = unresolved.to_position(0).unwrap();
+            assert_eq!(position.asset, None);
+            assert_eq!(position.user, ALICE);
         }
 
-        #[tokio::test]
-        async fn reports_none_when_the_hub_has_listed_the_asset_but_never_checkpointed_it() {
-            let (store, client) = store("uncheckpointed").await;
-            append(&client, "hub_events", &[add_asset(At::block(10), USDC, 6)]).await;
-            append(
-                &client,
-                "spoke_events",
-                &[
-                    add_reserve(At::block(10), "7", "7", HUB),
-                    supply(At::block(200), ALICE, "7", "1000"),
-                ],
-            )
-            .await;
-
+        #[test]
+        fn reports_no_value_when_the_hub_has_never_checkpointed() {
             // No UpdateAsset means no index, and without an index there is no
             // arithmetic to do — so no number is offered.
-            assert_eq!(store.list(&ask()).await.unwrap().items[0].value, None);
+            let uncheckpointed = Row {
+                drawn_index: None,
+                checkpoint_at: None,
+                ..row()
+            };
+
+            assert_eq!(uncheckpointed.to_position(0).unwrap().value, None);
         }
     }
 
     /// Decimal string in, integer out, and nothing lost on the way.
     mod the_columns {
-        use super::{
-            ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUGE, PositionQuery, PositionStore, SPOKE, ask,
-            borrow, index, list_reserve, store, supply,
-        };
+        use super::{CHECKPOINT_AT, Error, HUGE, Row, row};
 
-        #[tokio::test]
-        async fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
-            let (store, client) = store("huge_shares").await;
-            index(&client, &[supply(At::block(100), ALICE, "7", HUGE)]).await;
+        #[test]
+        fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
+            // A share balance arriving as a JSON number has already lost its
+            // tail by the time it reaches this process (§7.5). `toString` in the
+            // projection and a 256-bit integer here are the two halves of
+            // keeping it.
+            let huge = Row {
+                supplied_shares: HUGE.to_owned(),
+                ..row()
+            };
 
-            // Not the JSON encoder's defaults: a share balance arriving as a
-            // number has already lost its tail by the time it reaches this
-            // process (§7.5). `toString` in the projection and a 256-bit
-            // integer here are the two halves of keeping it.
-            let page = store.list(&ask()).await.unwrap();
-            assert_eq!(page.items[0].supplied_shares.to_string(), HUGE);
+            assert_eq!(
+                huge.to_position(CHECKPOINT_AT)
+                    .unwrap()
+                    .supplied_shares
+                    .to_string(),
+                HUGE
+            );
         }
 
-        #[tokio::test]
-        async fn reports_the_collateral_flag_and_the_event_count() {
-            let (store, client) = store("flags").await;
-            index(&client, &[supply(At::block(100), ALICE, "7", "500")]).await;
+        #[test]
+        fn reports_the_collateral_flag_and_the_event_count() {
+            let flagged = Row {
+                using_as_collateral: 1,
+                events: 4,
+                ..row()
+            };
 
-            let page = store.list(&ask()).await.unwrap();
-            let position = &page.items[0];
-            assert_eq!(position.chain_id, CHAIN_ID);
-            assert_eq!(position.spoke, SPOKE);
-            assert!(!position.using_as_collateral);
-            assert_eq!(position.events, 1);
+            let position = flagged.to_position(CHECKPOINT_AT).unwrap();
+            assert_eq!(position.chain_id, 1);
+            assert!(position.using_as_collateral);
+            assert_eq!(position.events, 4);
+            assert!(
+                !row()
+                    .to_position(CHECKPOINT_AT)
+                    .unwrap()
+                    .using_as_collateral
+            );
         }
 
-        #[tokio::test]
-        async fn carries_an_amount_past_2_53_without_losing_its_tail() {
-            let (store, client) = store("huge_amount").await;
-            list_reserve(&client, &[borrow(At::block(200), ALICE, "7", HUGE)]).await;
+        /// Unreachable from a fold the migrations built — `toInt256` refuses on
+        /// the insert rather than storing something unparseable — so this is
+        /// the only place the refusal is exercised at all.
+        #[test]
+        fn names_the_column_that_did_not_parse() {
+            let corrupt = Row {
+                drawn_shares: "not a number".to_owned(),
+                ..row()
+            };
 
-            let page = store
-                .list(&PositionQuery {
-                    as_of: Some(CHECKPOINT_AT),
-                    ..ask()
-                })
-                .await
-                .unwrap();
-
-            let value = page.items[0].value.as_ref().unwrap();
-            assert_eq!(value.drawn_debt.to_string(), HUGE);
+            let refused = corrupt.to_position(CHECKPOINT_AT).unwrap_err();
+            assert!(
+                matches!(
+                    refused,
+                    Error::Malformed {
+                        column: "drawn_shares",
+                        expected: "int256",
+                        ..
+                    }
+                ),
+                "{refused:?}"
+            );
+            assert_eq!(
+                refused.to_string(),
+                "drawn_shares is not a int256: not a number"
+            );
         }
     }
 
     /// The row put through the valuation.
     mod the_amounts {
-        use super::{
-            ALICE, At, CHECKPOINT_AT, I256, PositionQuery, PositionStore, RAY, U256, YEAR, ask,
-            borrow, list_reserve, store, supply,
-        };
+        use super::{CHECKPOINT_AT, I256, RAY, Row, U256, YEAR, row};
 
-        #[tokio::test]
-        async fn turns_supplied_shares_into_a_token_amount() {
-            let (store, client) = store("supplied_amount").await;
-            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
-
-            let page = store
-                .list(&PositionQuery {
-                    as_of: Some(CHECKPOINT_AT),
-                    ..ask()
-                })
-                .await
-                .unwrap();
-
+        #[test]
+        fn turns_supplied_shares_into_a_token_amount() {
             // Valued at the checkpoint itself, so the index has not moved: the
             // asset holds 1,000,000 shares against 1,000,000 of underlying, and
             // 1,000 shares redeem for 1,000.
-            let value = page.items[0].value.as_ref().unwrap();
+            let value = row().to_position(CHECKPOINT_AT).unwrap().value.unwrap();
+
             assert_eq!(value.supplied_amount, U256::from(1000));
             assert_eq!(value.drawn_index.to_string(), RAY);
         }
 
-        #[tokio::test]
-        async fn grows_a_debt_with_time_on_a_fixed_share_balance() {
-            let (store, client) = store("accrual").await;
-            list_reserve(&client, &[borrow(At::block(200), ALICE, "7", "1000000")]).await;
+        #[test]
+        fn grows_a_debt_with_time_on_a_fixed_share_balance() {
+            // 5% per annum, RAY-scaled, as `drawnRate` arrives on `UpdateAsset`.
+            let borrower = Row {
+                drawn_shares: "1000000".to_owned(),
+                asset_drawn_shares: "1000000".to_owned(),
+                drawn_rate: Some("50000000000000000000000000".to_owned()),
+                ..row()
+            };
 
-            let now = store
-                .list(&PositionQuery {
-                    as_of: Some(CHECKPOINT_AT),
-                    ..ask()
-                })
-                .await
-                .unwrap();
-            let later = store
-                .list(&PositionQuery {
-                    as_of: Some(CHECKPOINT_AT + YEAR),
-                    ..ask()
-                })
-                .await
-                .unwrap();
+            // The whole reason a share balance is not a balance (§5): the row
+            // is the same one both times.
+            let now = borrower.to_position(CHECKPOINT_AT).unwrap();
+            let later = borrower.to_position(CHECKPOINT_AT + YEAR).unwrap();
 
-            // The whole reason a share balance is not a balance (§5): nothing
-            // was indexed between these two reads.
-            assert_eq!(
-                now.items[0].value.as_ref().unwrap().total_debt,
-                U256::from(1_000_000)
-            );
-            assert_eq!(
-                later.items[0].value.as_ref().unwrap().total_debt,
-                U256::from(1_050_000)
-            );
-            assert_eq!(now.items[0].drawn_shares, later.items[0].drawn_shares);
+            assert_eq!(now.value.unwrap().total_debt, U256::from(1_000_000));
+            assert_eq!(later.value.unwrap().total_debt, U256::from(1_050_000));
+            assert_eq!(now.drawn_shares, later.drawn_shares);
         }
 
-        #[tokio::test]
-        async fn keeps_the_shares_and_the_flow_beside_the_amount() {
-            let (store, client) = store("cost_basis").await;
-            list_reserve(&client, &[supply(At::block(200), ALICE, "7", "1000")]).await;
-
+        #[test]
+        fn keeps_the_shares_and_the_flow_beside_the_amount() {
             // Cost basis and current value answer different questions, and the
             // difference between them is interest — so neither replaces the
             // other.
-            let page = store.list(&ask()).await.unwrap();
-            let position = &page.items[0];
+            let position = row().to_position(CHECKPOINT_AT).unwrap();
+
             assert_eq!(position.supplied_shares, I256::try_from(1000).unwrap());
             assert_eq!(position.net_supplied_amount, I256::try_from(1000).unwrap());
             assert!(position.value.is_some());
+        }
+
+        /// Shares cannot go negative on chain, so no query can produce this —
+        /// and a fold that has means the row is worth reporting anyway.
+        #[test]
+        fn refuses_to_value_a_negative_balance_but_still_reports_it() {
+            let drifted = Row {
+                supplied_shares: "-5".to_owned(),
+                ..row()
+            };
+
+            let position = drifted.to_position(CHECKPOINT_AT).unwrap();
+            assert_eq!(position.supplied_shares, I256::try_from(-5).unwrap());
+            assert_eq!(position.value, None);
         }
     }
 }

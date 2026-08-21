@@ -121,7 +121,7 @@ mod tests {
 
     use super::{ClickHousePositionStore, now};
     use crate::store::clickhouse::harness::{
-        index, list_reserve, seed_both_spokes, seed_five_reserves, store,
+        append, index, list_reserve, seed_both_spokes, seed_five_reserves, store,
     };
     use crate::store::fixtures::{
         ALICE, At, BOB, CHECKPOINT_AT, RAY, RESERVES, ROUTER, SECOND_SPOKE, SPOKE, YEAR, ask,
@@ -508,6 +508,30 @@ mod tests {
 
             assert_eq!(reserve_ids(&first), ["3", "7"]);
             assert_eq!(reserve_ids(&second), ["13", "21"]);
+        }
+    }
+
+    /// What a `LEFT JOIN` miss actually fills a column with, which only a real
+    /// one can say.
+    mod the_registry {
+        use super::{ALICE, At, I256, PositionStore, append, ask, store, supply};
+
+        #[tokio::test]
+        async fn reports_none_rather_than_zero_for_a_reserve_it_has_never_seen() {
+            let (store, client) = store("unregistered").await;
+            append(
+                &client,
+                "spoke_events",
+                &[supply(At::block(200), ALICE, "99", "1000")],
+            )
+            .await;
+
+            // A zero here is indistinguishable from a real zero balance. The
+            // position still appears, because its shares are real.
+            let page = store.list(&ask()).await.unwrap();
+            assert_eq!(page.items[0].supplied_shares, I256::try_from(1000).unwrap());
+            assert_eq!(page.items[0].asset, None);
+            assert_eq!(page.items[0].value, None);
         }
     }
 }
