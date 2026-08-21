@@ -5,9 +5,11 @@
 //! appended events — there is no ingestion path here to keep in step with one,
 //! and a reorg repairs the projection without this module learning of it.
 //!
-//! The split follows what each part answers to. `position` is what a caller
-//! gets back, `query` is what it asks for, `position_store` is the ClickHouse
-//! adapter that turns one into the other, and `error` is what it refuses with.
+//! The split follows what each part answers to. `query` is what a caller asks
+//! for and `position` is what it gets back; `sql` is the statement between
+//! them, `row` is what the server sends and what it means, `position_store` is
+//! the adapter that runs one and returns the other, and `error` is what it
+//! refuses with.
 
 mod error;
 #[cfg(test)]
@@ -15,6 +17,8 @@ mod fixtures;
 mod position;
 mod position_store;
 mod query;
+mod row;
+mod sql;
 
 pub use error::Error;
 pub use position::{Position, PositionAsset};
