@@ -521,11 +521,11 @@ stays anyway, because these files are also meant to be pasted into a console.
 
 Each package owns the migrations for the tables it defines — the `spoke_events` and `hub_events`
 ledgers and their views belong to the events package, the projections over it to the positions package, the cursor and header window to
-`@packages/indexing` — and `bins/migrate/src/schema.rs` names the directories that deploy together.
+`@packages/indexing` — and `crates/migrations` names the directories that deploy together.
 That
 cross-directory ordering is load-bearing rather than tidy: the projections read a table another
 package creates, and `010 > 002` is the entire guarantee that they are created after it. The order is
-now literal — the arrays in `schema.rs`, written by ordinal across directories rather than grouped by
+now literal — the arrays in `crates/migrations`, written by ordinal across directories rather than grouped by
 package — so nothing sorts at run time and nothing rejects a collision at run time either. What was a
 runtime guard is now the `each_union_ascends` test, which asserts ascending non-repeating versions
 per database union against the real corpus. A constant cannot drift between compiling and running,
@@ -1816,7 +1816,7 @@ The two that exist are the worked examples — [`packages/token-metadata`](../pa
 1. **A listing source**: one query that answers _what do we need this for_ (which underlyings are
    listed, which reserves exist). It reads the indexer's tables but is not part of the fold.
 2. **A store port and a Postgres adapter**, plus a migration in the package's own directory —
-   registered in `bins/migrate/src/schema.rs`, which is the one central place that has to learn about
+   registered in `crates/migrations`, which is the one central place that has to learn about
    it, and a `check_complete` test fails the build if you forget.
 3. **A reader port and its adapter** for wherever the data actually comes from — a contract call, an
    HTTP API, a file.

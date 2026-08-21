@@ -1,59 +1,13 @@
-//! Every `.sql` file this deployment applies, embedded at compile time.
+//! The event ledgers and the folds over them.
 //!
-//! **Two lists, never one.** The ordinals are unique within a database and not
-//! across them — `001_spoke_events` and `001_indexer_cursor` both exist — so
-//! concatenating these would collide, and then try to apply Postgres DDL to
-//! ClickHouse.
-//!
-//! Grouped by the directory each came from, rather than flattened, because a
-//! group is what a crate will own once Phase 3 and 4 create them: `events` takes
-//! the first block, `positions` the second, and this file shrinks each time. The
-//! directory travels with its list so a test can hold the two to each other.
-//!
-//! The paths reach into `packages/` because the TypeScript runner reads the same
-//! files. They come in here when `packages/` goes in Phase 5.
+//! Thirty-five files, and the ordinals run across the directories rather than
+//! within them: `010` beats `002` wherever each lives, which is what puts a
+//! projection after the table it reads.
 
-use refinery_core::{Error, Migration};
-
-/// One `.sql` file, and the two names it goes by.
-pub(crate) struct Embedded {
-    /// The basename without `.sql`, which is what the directory calls it. Only
-    /// the completeness test reads this.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) file: &'static str,
-    /// What refinery calls it. Its parser requires `V{version}__{name}`, and
-    /// the version has to be an integer, so `012_position_supply` becomes
-    /// `V12__position_supply` — same order, refinery's spelling.
-    pub(crate) label: &'static str,
-    /// The whole file, sent as it stands. One statement per file, so nothing
-    /// here has to be taken apart before it reaches a server.
-    pub(crate) sql: &'static str,
-}
-
-/// One future crate's worth of schema, and where it is read from.
-pub(crate) struct Source {
-    /// Relative to this crate's manifest, which is what a test's cwd is.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) directory: &'static str,
-    pub(crate) files: &'static [Embedded],
-}
-
-/// Flattens the groups into the migration set refinery is handed.
-///
-/// # Errors
-///
-/// Propagates refinery's parse error if a label is not `V{version}__{name}` —
-/// which would be a typo in this file, caught the first time it runs.
-pub(crate) fn union(sources: &[Source]) -> Result<Vec<Migration>, Error> {
-    sources
-        .iter()
-        .flat_map(|source| source.files)
-        .map(|embedded| Migration::unapplied(embedded.label, embedded.sql))
-        .collect()
-}
+use crate::{Embedded, Source};
 
 /// The ClickHouse schema: the two append-only ledgers and the folds over them.
-pub(crate) const CLICKHOUSE: &[Source] = &[
+pub const CLICKHOUSE: &[Source] = &[
     // the Spoke and Hub event ledgers
     Source {
         directory: "../../packages/aave-positions/events/src/store/clickhouse-migrations",
@@ -310,50 +264,5 @@ pub(crate) const CLICKHOUSE: &[Source] = &[
                 ),
             },
         ],
-    },
-];
-
-/// The Postgres schema: the indexer's own position, and the two enrichment
-/// dimensions.
-pub(crate) const POSTGRES: &[Source] = &[
-    // the indexer's own position
-    Source {
-        directory: "../../packages/indexing/src/postgres-migrations",
-        files: &[
-            Embedded {
-                file: "001_indexer_cursor",
-                label: "V1__indexer_cursor",
-                sql: include_str!(
-                    "../../../packages/indexing/src/postgres-migrations/001_indexer_cursor.sql"
-                ),
-            },
-            Embedded {
-                file: "002_indexer_block_headers",
-                label: "V2__indexer_block_headers",
-                sql: include_str!(
-                    "../../../packages/indexing/src/postgres-migrations/002_indexer_block_headers.sql"
-                ),
-            },
-        ],
-    },
-    // ERC-20 symbol and name
-    Source {
-        directory: "../../packages/token-metadata/src/migrations",
-        files: &[Embedded {
-            file: "010_token_metadata",
-            label: "V10__token_metadata",
-            sql: include_str!(
-                "../../../packages/token-metadata/src/migrations/010_token_metadata.sql"
-            ),
-        }],
-    },
-    // the Spoke oracle
-    Source {
-        directory: "../../packages/prices/src/migrations",
-        files: &[Embedded {
-            file: "011_reserve_prices",
-            label: "V11__reserve_prices",
-            sql: include_str!("../../../packages/prices/src/migrations/011_reserve_prices.sql"),
-        }],
     },
 ];
