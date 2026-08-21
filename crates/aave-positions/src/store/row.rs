@@ -20,7 +20,12 @@ use crate::valuation::{AssetState, PositionShares, Valuation};
 /// so an unresolved reserve arrives as `"0"` and `""` rather than as nothing.
 /// What actually says the join missed is `underlying`, which is nullable in
 /// `hub_assets_current` and therefore null when there is no right-hand row.
-#[derive(Debug, clickhouse::Row, Deserialize)]
+/// Both derives are load-bearing and neither substitutes for the other:
+/// `clickhouse::Row` supplies the column names and count that
+/// `RowBinaryWithNamesAndTypes` validates against the server's schema, and
+/// `Deserialize` does the decoding. `fetch_all` wants `RowRead`, which is
+/// `for<'a> Row<Value<'a>: Deserialize<'a>>` — dropping either is E0277.
+#[derive(clickhouse::Row, Deserialize)]
 pub(super) struct Row {
     chain_id: u32,
     user: String,

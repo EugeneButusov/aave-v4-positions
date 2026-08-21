@@ -210,7 +210,7 @@ pub(super) fn update_asset(at: At, drawn_index: &str, drawn_rate: &str) -> Event
 
 /// One row of either ledger. Both have the same shape, which is why the
 /// TypeScript shares one write path between them.
-#[derive(Debug, clickhouse::Row, Serialize)]
+#[derive(clickhouse::Row, Serialize)]
 struct LedgerRow<'a> {
     chain_id: u32,
     address: String,
