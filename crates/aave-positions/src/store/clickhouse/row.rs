@@ -292,13 +292,7 @@ mod tests {
         #[tokio::test]
         async fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
             let (store, client) = store("huge_shares").await;
-            index(
-                &client,
-                100,
-                100,
-                &[supply(At::block(100), ALICE, "7", HUGE)],
-            )
-            .await;
+            index(&client, &[supply(At::block(100), ALICE, "7", HUGE)]).await;
 
             // Not the JSON encoder's defaults: a share balance arriving as a
             // number has already lost its tail by the time it reaches this
@@ -311,13 +305,7 @@ mod tests {
         #[tokio::test]
         async fn reports_the_collateral_flag_and_the_event_count() {
             let (store, client) = store("flags").await;
-            index(
-                &client,
-                100,
-                100,
-                &[supply(At::block(100), ALICE, "7", "500")],
-            )
-            .await;
+            index(&client, &[supply(At::block(100), ALICE, "7", "500")]).await;
 
             let page = store.list(&ask()).await.unwrap();
             let position = &page.items[0];

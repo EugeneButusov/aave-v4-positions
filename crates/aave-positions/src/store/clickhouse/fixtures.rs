@@ -51,13 +51,8 @@ struct LedgerRow<'a> {
     sign: i8,
 }
 
-/// One stamp per batch, monotonic rather than the wall clock.
-///
-/// It only has to differ between successive states of the same log. The
-/// TypeScript uses `Date.now()`, which is safe there because two dispatches of
-/// one range are separated by at least an RPC round trip — and is not safe
-/// here, where a test reverts and re-appends inside the same millisecond and
-/// the engine would then see the replacement as a third row of the pair.
+/// One stamp per batch. Half of the ledger's pairing key, so a row needs one
+/// even where nothing here writes the other half.
 fn next_version() -> u64 {
     static VERSION: AtomicU64 = AtomicU64::new(0);
 
@@ -106,32 +101,6 @@ pub(super) async fn append(client: &Client, table: &str, events: &[Event]) {
             .unwrap();
     }
     insert.end().await.unwrap();
-}
-
-/// Copies the live rows of a range back in with the sign flipped.
-///
-/// Server-side `INSERT … SELECT` rather than reading rows out and writing them
-/// back: the retraction has to reproduce every column and the original version
-/// for the engine to pair it, and selecting from the view is the only way to be
-/// sure it does.
-pub(super) async fn revert(client: &Client, table: &str, from: u64, to: u64) {
-    const COLUMNS: &str = "chain_id, address, block_number, log_index, block_hash, \
-         block_timestamp, tx_hash, tx_index, event_name, topic1, topic2, topic3, body, data";
-
-    client
-        .query(&format!(
-            "INSERT INTO {table} ({COLUMNS}, version, sign)
-             SELECT {COLUMNS}, version, -1
-             FROM {table}_current
-             WHERE chain_id = {{chainId:UInt32}}
-               AND block_number BETWEEN {{fromBlock:UInt64}} AND {{toBlock:UInt64}}"
-        ))
-        .param("chainId", CHAIN_ID)
-        .param("fromBlock", from)
-        .param("toBlock", to)
-        .execute()
-        .await
-        .unwrap();
 }
 
 // --- the database -----------------------------------------------------------
@@ -197,9 +166,14 @@ pub(super) async fn store(test: &str) -> (ClickHousePositionStore, Client) {
     (ClickHousePositionStore::new(client.clone()), client)
 }
 
-/// What the processor does with a dispatched range: cancel, then write.
-pub(super) async fn index(client: &Client, from: u64, to: u64, batch: &[Event]) {
-    revert(client, "spoke_events", from, to).await;
+/// A dispatched range, as the processor leaves it.
+///
+/// Append only. The TypeScript's `index` reverts the range first, because a
+/// re-dispatch has to cancel what the last one wrote — and here every test
+/// reads a database created empty a moment earlier, so a retraction has
+/// nothing to cancel and the ledger's other half stays with the crate that
+/// will own it.
+pub(super) async fn index(client: &Client, batch: &[Event]) {
     append(client, "spoke_events", batch).await;
 }
 
@@ -236,7 +210,7 @@ pub(super) async fn seed_five_reserves(client: &Client) {
             supply(At::block(100).log(log), ALICE, reserve_id, "500")
         })
         .collect();
-    index(client, 100, 100, &batch).await;
+    index(client, &batch).await;
 }
 
 /// The same wallet and the same reserve id on two Spokes, which is two
@@ -244,8 +218,6 @@ pub(super) async fn seed_five_reserves(client: &Client) {
 pub(super) async fn seed_both_spokes(client: &Client) {
     index(
         client,
-        100,
-        100,
         &[
             supply(At::block(100), ALICE, "7", "500"),
             supply(At::block(100).log(1).on(SECOND_SPOKE), ALICE, "7", "900"),

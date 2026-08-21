@@ -201,8 +201,6 @@ mod tests {
             let (store, client) = store("one_wallet").await;
             index(
                 &client,
-                100,
-                100,
                 &[
                     supply(At::block(100), ALICE, "7", "500"),
                     supply(At::block(100).log(1), BOB, "7", "900"),
@@ -222,13 +220,7 @@ mod tests {
         #[tokio::test]
         async fn matches_a_checksummed_address_against_the_lower_cased_fold() {
             let (store, client) = store("checksummed").await;
-            index(
-                &client,
-                100,
-                100,
-                &[supply(At::block(100), ALICE, "7", "500")],
-            )
-            .await;
+            index(&client, &[supply(At::block(100), ALICE, "7", "500")]).await;
 
             // The caller reads a checksummed address off a block explorer; the
             // fold stores it lower-cased. `Address` renders checksummed, so
@@ -243,13 +235,7 @@ mod tests {
         #[tokio::test]
         async fn finds_nothing_on_a_spoke_the_wallet_has_never_touched() {
             let (store, client) = store("untouched_spoke").await;
-            index(
-                &client,
-                100,
-                100,
-                &[supply(At::block(100), ALICE, "7", "500")],
-            )
-            .await;
+            index(&client, &[supply(At::block(100), ALICE, "7", "500")]).await;
 
             let elsewhere = PositionQuery {
                 spoke: Some(Address::repeat_byte(0x11)),
@@ -263,8 +249,6 @@ mod tests {
             let (store, client) = store("router").await;
             index(
                 &client,
-                100,
-                100,
                 &[supplied_by(At::block(100), ROUTER, ALICE, "7", "500")],
             )
             .await;
@@ -284,8 +268,6 @@ mod tests {
             let (store, client) = store("closed").await;
             index(
                 &client,
-                100,
-                200,
                 &[
                     supply(At::block(100), ALICE, "7", "500"),
                     withdraw(At::block(200), ALICE, "7", "500"),
@@ -308,13 +290,7 @@ mod tests {
         #[tokio::test]
         async fn keeps_a_debt_only_position_with_no_supply_behind_it() {
             let (store, client) = store("debt_only").await;
-            index(
-                &client,
-                100,
-                100,
-                &[borrow(At::block(100), ALICE, "13", "400")],
-            )
-            .await;
+            index(&client, &[borrow(At::block(100), ALICE, "13", "400")]).await;
 
             let page = store.list(&ask()).await.unwrap();
             assert_eq!(page.items.len(), 1);
