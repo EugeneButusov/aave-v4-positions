@@ -20,11 +20,6 @@ use crate::valuation::{AssetState, PositionShares, Valuation};
 /// so an unresolved reserve arrives as `"0"` and `""` rather than as nothing.
 /// What actually says the join missed is `underlying`, which is nullable in
 /// `hub_assets_current` and therefore null when there is no right-hand row.
-/// Both derives are load-bearing and neither substitutes for the other:
-/// `clickhouse::Row` supplies the column names and count that
-/// `RowBinaryWithNamesAndTypes` validates against the server's schema, and
-/// `Deserialize` does the decoding. `fetch_all` wants `RowRead`, which is
-/// `for<'a> Row<Value<'a>: Deserialize<'a>>` — dropping either is E0277.
 #[derive(clickhouse::Row, Deserialize)]
 pub(super) struct Row {
     chain_id: u32,
@@ -161,13 +156,11 @@ fn non_negative(value: I256) -> Option<U256> {
     (!value.is_negative()).then(|| value.into_raw())
 }
 
-/// **`FromStr` is twenty bytes of hex and no checksum**, which is what this
-/// wants: the column is lower-cased by the projection, so EIP-55 validation
-/// would reject the very thing the fold stores.
-/// [`Address::parse_checksummed`] is the strict one and is not it. What it does
-/// reject is an empty string — which is what a `LEFT JOIN` miss puts in a
-/// non-nullable column, so an unresolved reserve fails here rather than
-/// reporting the zero address.
+/// Not [`Address::parse_checksummed`]: the column is lower-cased by the
+/// projection, so EIP-55 validation would reject what the fold stores. The
+/// empty string a `LEFT JOIN` miss leaves in a non-nullable column does fail
+/// here, which is what keeps an unresolved reserve from reporting the zero
+/// address.
 fn parse_address(column: &'static str, value: &str) -> Result<Address, Error> {
     value.parse::<Address>().map_err(|_| Error::Malformed {
         column,
@@ -176,11 +169,8 @@ fn parse_address(column: &'static str, value: &str) -> Result<Address, Error> {
     })
 }
 
-/// **Radix 10 explicitly, and its sibling below the same way.** ruint's
-/// `FromStr` honours a base prefix — `U256::from_str("0x10")` is 16, and
-/// `I256`'s does the same — so a column that somehow held `0x…` would parse to
-/// a number rather than fail. Unreachable, since `toString` over an `Int256`
-/// renders decimal, but the two parsers should not disagree about it.
+/// Radix 10, and `from_dec_str` below for the same reason: ruint's `FromStr`
+/// honours a base prefix, so `0x10` would parse as 16 rather than fail.
 fn parse_unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
     U256::from_str_radix(value, 10).map_err(|_| Error::Malformed {
         column,
@@ -218,9 +208,6 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
-    // Nothing this module defines is named below: these drive the mapping
-    // through `PositionStore::list`, the way a caller does, so `Row` and the
-    // parsers are reached only through it.
     use alloy_primitives::{I256, U256};
 
     use crate::store::fixtures::{

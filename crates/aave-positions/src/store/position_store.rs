@@ -8,11 +8,8 @@
 //! `async fn list` is E0038, and the compiler's own advice is to use the
 //! concrete type instead. A boxed future per page is the price of the seam.
 //!
-//! **No `Send + Sync` supertraits yet.** They are not what makes this dyn
-//! compatible — measured, an implementation compiles without them — and they
-//! buy nothing until something erases the type: `Arc<T>` is `Send + Sync` only
-//! when `T` is, which is what axum's `State` will require. Nothing holds one
-//! that way today, so the bound goes on when its consumer does.
+//! No `Send + Sync` supertraits until something holds one as state and needs
+//! them.
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;

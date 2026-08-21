@@ -3,28 +3,19 @@
 //! **Two halves, and the seam is the query's own.** The inner seek is a
 //! complete `SELECT` over one wallet's contiguous rows; the outer resolution
 //! joins the registry and the Hub onto whatever it returned. Every server
-//! parameter is in the seek — the resolution binds none — which is why the
-//! resolution can be one literal and the seek is the only thing assembled.
+//! parameter is in the seek, so the resolution is one literal and the seek is
+//! the only thing assembled.
 //!
-//! **Two literals and two slots**, so both halves read as the SQL they are and
-//! nothing is concatenated a clause at a time.
-//!
-//! No query builder, and the ecosystem is the reason rather than taste.
-//! `sea-query` is the mature one — 34M downloads — and speaks MySQL, Postgres
-//! and SQLite, with `?`/`$N` placeholders rather than ClickHouse's
-//! `{name:Type}`. `sql-builder` has not been released since 2020. The one crate
-//! that does target ClickHouse, `sqlbuilder`, is at 0.1.0 with no users. And
-//! the point of this SQL is that it is diffable against
-//! `clickhouse-position-store.ts` line for line, with the `EXPLAIN` output that
-//! justifies each shape sitting beside it — a builder emits neither.
+//! No query builder: none of them speaks ClickHouse's `{name:Type}` parameters,
+//! and this SQL has to stay diffable against `clickhouse-position-store.ts`
+//! with the `EXPLAIN` findings beside the shapes they justify.
 
 use alloy_primitives::Address;
 
 /// The resolution, with `{seek}` where the paged subquery goes.
 ///
-/// Neither slot is a server parameter, and neither can be mistaken for one: a
-/// ClickHouse parameter carries a type, `{name:Type}`. Both are substituted
-/// before the statement is sent.
+/// Neither slot is a server parameter — those carry a type, `{name:Type}` — and
+/// both are substituted before the statement is sent.
 const RESOLVE: &str = r"
         SELECT
             p.chain_id                      AS chain_id,
