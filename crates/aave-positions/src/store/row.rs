@@ -161,14 +161,26 @@ fn non_negative(value: I256) -> Option<U256> {
     (!value.is_negative()).then(|| value.into_raw())
 }
 
+/// **`FromStr` is twenty bytes of hex and no checksum**, which is what this
+/// wants: the column is lower-cased by the projection, so EIP-55 validation
+/// would reject the very thing the fold stores.
+/// [`Address::parse_checksummed`] is the strict one and is not it. What it does
+/// reject is an empty string — which is what a `LEFT JOIN` miss puts in a
+/// non-nullable column, so an unresolved reserve fails here rather than
+/// reporting the zero address.
 fn parse_address(column: &'static str, value: &str) -> Result<Address, Error> {
-    value.parse().map_err(|_| Error::Malformed {
+    value.parse::<Address>().map_err(|_| Error::Malformed {
         column,
         expected: "20-byte address",
         value: value.to_owned(),
     })
 }
 
+/// **Radix 10 explicitly, and its sibling below the same way.** ruint's
+/// `FromStr` honours a base prefix — `U256::from_str("0x10")` is 16, and
+/// `I256`'s does the same — so a column that somehow held `0x…` would parse to
+/// a number rather than fail. Unreachable, since `toString` over an `Int256`
+/// renders decimal, but the two parsers should not disagree about it.
 fn parse_unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
     U256::from_str_radix(value, 10).map_err(|_| Error::Malformed {
         column,
@@ -178,7 +190,7 @@ fn parse_unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
 }
 
 fn parse_signed(column: &'static str, value: &str) -> Result<I256, Error> {
-    value.parse().map_err(|_| Error::Malformed {
+    I256::from_dec_str(value).map_err(|_| Error::Malformed {
         column,
         expected: "int256",
         value: value.to_owned(),
@@ -186,7 +198,7 @@ fn parse_signed(column: &'static str, value: &str) -> Result<I256, Error> {
 }
 
 fn parse_rate(value: &str) -> Result<u128, Error> {
-    value.parse().map_err(|_| Error::Malformed {
+    value.parse::<u128>().map_err(|_| Error::Malformed {
         column: "drawn_rate",
         expected: "uint96",
         value: value.to_owned(),
@@ -194,7 +206,7 @@ fn parse_rate(value: &str) -> Result<u128, Error> {
 }
 
 fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
-    value.parse().map_err(|_| Error::Malformed {
+    value.parse::<u64>().map_err(|_| Error::Malformed {
         column,
         expected: "unix seconds",
         value: value.to_owned(),
