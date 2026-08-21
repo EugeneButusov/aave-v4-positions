@@ -78,9 +78,9 @@ FROM (
 -- LEFT, because a position must survive a reserve the registry has not
 -- seen. The nulls that produces are reported as nulls rather than zeros.
 LEFT JOIN spoke_reserves_current AS r
-       ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
+    ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
 LEFT JOIN hub_assets_current AS a
-       ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
+    ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
 -- Qualified, and it has to be. Unqualified, reserve_id binds to the
 -- toString alias above and sorts the decimal digits as text, putting 13
 -- before 3 — which then hands the next page a key from the wrong row.
@@ -99,31 +99,31 @@ ORDER BY p.spoke, p.reserve_id";
 /// since a Spoke address is never the empty string — so the beginning of the
 /// listing is a value rather than a missing predicate. Measured: same
 /// condition, same granule, same binary search as omitting it.
-const SEEK: &str = r"    SELECT *
-    FROM user_positions_current
-    -- The leading pair of the sorting key, so the scan starts at this
-    -- wallet's rows rather than filtering its way to them.
-    WHERE chain_id = {chainId:UInt32}
-      AND user = {user:String}
-      -- Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go
-      -- negative on chain, so a negative fold is drift, and it should
-      -- surface as a visibly wrong number for §9 to catch rather than
-      -- vanish behind the filter that hides closed positions.
-      AND (supplied_shares != 0 OR drawn_shares != 0)
-      -- The whole of what the pinned prefix leaves free, compared as a
-      -- pair even when the narrowing below pins the first half. One
-      -- comparison rather than two branches: a reserve_id-only special
-      -- case would silently read a resume point from one Spoke against
-      -- another's rows if the two ever disagreed.
-      AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256}){narrowing}
-    ORDER BY user, spoke, reserve_id
-    -- One more than asked. The extra row's presence is what says there
-    -- is a next page; counting the whole result set to find out would
-    -- defeat keyset paging.
-    LIMIT {limit:UInt32}";
+const SEEK: &str = r"SELECT *
+FROM user_positions_current
+-- The leading pair of the sorting key, so the scan starts at this
+-- wallet's rows rather than filtering its way to them.
+WHERE chain_id = {chainId:UInt32}
+  AND user = {user:String}
+  -- Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go
+  -- negative on chain, so a negative fold is drift, and it should
+  -- surface as a visibly wrong number for §9 to catch rather than
+  -- vanish behind the filter that hides closed positions.
+  AND (supplied_shares != 0 OR drawn_shares != 0)
+  -- The whole of what the pinned prefix leaves free, compared as a
+  -- pair even when the narrowing below pins the first half. One
+  -- comparison rather than two branches: a reserve_id-only special
+  -- case would silently read a resume point from one Spoke against
+  -- another's rows if the two ever disagreed.
+  AND (spoke, reserve_id) > ({afterSpoke:String}, {afterReserve:UInt256}){narrowing}
+ORDER BY user, spoke, reserve_id
+-- One more than asked. The extra row's presence is what says there
+-- is a next page; counting the whole result set to find out would
+-- defeat keyset paging.
+LIMIT {limit:UInt32}";
 
 /// What fills `{narrowing}` when the caller named a Spoke.
-const NARROWED_TO_ONE_SPOKE: &str = "\n      AND spoke = {spoke:String}";
+const NARROWED_TO_ONE_SPOKE: &str = "\n  AND spoke = {spoke:String}";
 
 /// The statement for one page.
 pub(super) fn list(spoke: Option<Address>) -> String {
@@ -155,7 +155,7 @@ mod tests {
 
         assert!(!statement.contains("{seek}"), "{statement}");
         assert!(!statement.contains("{narrowing}"), "{statement}");
-        assert!(statement.contains("FROM (\n    SELECT *"), "{statement}");
+        assert!(statement.contains("FROM (\nSELECT *"), "{statement}");
         assert!(
             statement.contains("LIMIT {limit:UInt32}\n) AS p"),
             "{statement}"
