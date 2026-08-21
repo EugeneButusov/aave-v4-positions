@@ -79,21 +79,33 @@ crates/
   ops/                      HealthIndicator trait, probe router, graceful drain
   clickhouse/               client   ← package `clickhouse-client`
   postgres/                 connect
+  migrations/               every `.sql` this deployment applies, embedded
   indexing/                 loop, ports + alloy adapters, reorg, cursor, backfill
   aave-events/              decoders, two append-only ledgers
   aave-positions/           folds, read stores, valuation (the math)
   token-metadata/           enrichment: ERC-20 symbol/name
   prices/                   enrichment: the Spoke oracle
 bins/
-  migrate/                  refinery, its ClickHouse adapter, the schema,
-                            and the only DDL in the system
+  migrate/                  refinery, its ClickHouse adapter, and the only
+                            DDL in the system
   api/                      axum
   indexer/                  tokio worker + probe server + five CLIs
 ```
 
-Thirteen crates against eleven packages. `aave-abi` is the one addition, and exists because of
-Risk 1. `packages/migrations` has no crate of its own and no successor: nothing but `bins/migrate`
-ever names a `Migration`, so it went there and the package was deleted.
+Fourteen crates against eleven packages. `aave-abi` is one addition, and exists because of Risk 1.
+
+`crates/migrations` is the other, and it came back. Phase 0 folded the corpus into `bins/migrate`
+on the grounds that nothing else would ever name a `Migration`. That holds only while the migrator
+is the sole reader, and it stops holding at the first store spec that wants a migrated database —
+at which point the schema exists twice: embedded in the binary, and read off the same directories
+at test time. **The crate holds the files and nothing else.** It has no dependencies, because a
+migration's *meaning* is still the migrator's: `union`, refinery and the ClickHouse adapter did
+not move.
+
+Its group-per-directory shape survives, but not the plan behind it — the groups were to go into the
+crates that own the code, and that would make `bins/migrate` link the read store, `alloy` and all,
+to reach a table of string literals. Cargo links crates rather than modules, and a binary that
+exists to issue DDL should not have to.
 
 **Names are bare, because nothing here is published.** That is the split in the ecosystem: `alloy`,
 `reth`, `revm`, `foundry` and `agave` all prefix their package names because crates.io is one flat
@@ -137,7 +149,7 @@ time:
 
 | binary    | links                                                                | **cannot** link                       |
 | --------- | -------------------------------------------------------------------- | ------------------------------------- |
-| `migrate` | `clickhouse-client`, `postgres`, and the schema it embeds           | `alloy`, `axum` — no chain, no socket |
+| `migrate` | `clickhouse-client`, `postgres`, `migrations`                        | `alloy`, `axum` — no chain, no socket |
 | `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, `indexing`, the write paths |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
@@ -356,7 +368,8 @@ lines against the 169 a second hand-rolled runner would have cost, and thirty-fi
 migrations are ClickHouse, so the alternative was refinery for four files and hand-rolled for the rest.
 
 The ledger becomes refinery's — `refinery_schema_history`, keyed on an integer version — so the ids
-are relabelled `V12__position_supply` where the file stays `012_position_supply.sql`; `schema.rs`
+are relabelled `V12__position_supply` where the file stays `012_position_supply.sql`;
+`crates/migrations`
 carries both names.
 
 **One statement per `.sql` file, so nothing parses SQL.** ClickHouse's HTTP interface refuses a
@@ -379,7 +392,7 @@ each, and the file is named for the object it creates.
 `readdir` at startup, which only worked because `pnpm deploy` copied them next to the compiled output;
 a binary shipped on its own has nothing to read. Every Rust migration tool embeds at compile time —
 `sqlx::migrate!`, `diesel_migrations`, `refinery` — and the reason diesel gives is precisely this one,
-that it is what lets you ship a single executable. So `bins/migrate/src/schema.rs` declares every
+that it is what lets you ship a single executable. So `crates/migrations` declares every
 file with **one `include_str!` each, written by hand**, grouped by the directory it came from — the
 crate that will own each group once Phases 3 and 4 create them. Not
 `include_dir!`, whose proc macro cannot register a rebuild dependency on stable and would happily ship

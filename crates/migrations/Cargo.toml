@@ -1,0 +1,17 @@
+[package]
+name = "migrations"
+description = "Every .sql file this deployment applies, embedded at compile time"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# No `[dependencies]`, and that is the point. This is the corpus, not a runner:
+# `bins/migrate` adds refinery on top of it and `aave-positions` reads it to
+# build a scratch database, so anything a migration *means* lives with them.
+
+[dev-dependencies]
+# Only the completeness test, which is `#[cfg(test)]`, defines an error type.
+thiserror = "2.0.19"
+
+[lints]
+workspace = true

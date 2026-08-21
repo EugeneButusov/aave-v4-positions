@@ -1698,11 +1698,18 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "clickhouse-client",
+ "migrations",
  "postgres",
  "refinery-core",
- "thiserror",
  "time",
  "tokio",
+]
+
+[[package]]
+name = "migrations"
+version = "0.0.0"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]

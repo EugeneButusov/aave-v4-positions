@@ -10,14 +10,28 @@
 //! the only part that had to be written.
 
 mod clickhouse;
-mod schema;
-
-#[cfg(test)]
-mod completeness;
 
 use std::process::ExitCode;
 
-use refinery_core::{Report, Runner};
+use migrations::Source;
+use refinery_core::{Error, Migration, Report, Runner};
+
+/// Flattens the groups into the migration set refinery is handed.
+///
+/// The one thing here that has to know what a migration *means*, which is why
+/// it did not go to `migrations` with the files.
+///
+/// # Errors
+///
+/// Propagates refinery's parse error if a label is not `V{version}__{name}` —
+/// which would be a typo in the corpus, caught the first time it runs.
+fn union(sources: &[Source]) -> Result<Vec<Migration>, Error> {
+    sources
+        .iter()
+        .flat_map(|source| source.files)
+        .map(|embedded| Migration::unapplied(embedded.label, embedded.sql))
+        .collect()
+}
 
 /// `current_thread`, because there is no concurrency here to serve: one
 /// connection per database and a strictly sequential walk through the statements.
@@ -44,13 +58,13 @@ async fn main() -> ExitCode {
 /// says which database it was rather than leaving that to be inferred.
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut target = clickhouse::ClickHouse(clickhouse_client::build_client(clickhouse_config()));
-    let applied = Runner::new(&schema::union(schema::CLICKHOUSE)?)
+    let applied = Runner::new(&union(migrations::CLICKHOUSE)?)
         .run_async(&mut target)
         .await?;
     report("clickhouse", &applied);
 
     let mut target = postgres::build_client(&env("POSTGRES_URL", POSTGRES_URL)).await?;
-    let applied = Runner::new(&schema::union(schema::POSTGRES)?)
+    let applied = Runner::new(&union(migrations::POSTGRES)?)
         .run_async(&mut target)
         .await?;
     report("postgres", &applied);
@@ -96,9 +110,10 @@ fn env(key: &str, fallback: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::schema::{CLICKHOUSE, POSTGRES, union};
+    use super::union;
+    use migrations::{CLICKHOUSE, POSTGRES};
 
-    /// Every label parses as `V{version}__{name}`. A typo in schema.rs fails here
+    /// Every label parses as `V{version}__{name}`. A typo in the corpus fails here
     /// rather than at deploy time.
     #[test]
     fn both_unions_parse() {
