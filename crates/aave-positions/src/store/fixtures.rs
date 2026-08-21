@@ -3,7 +3,7 @@
 //! Nothing here writes anything anywhere: these are Aave's shapes — a decoded
 //! log, the addresses it names, the page key a caller asks with — and they read
 //! the same whichever store is under test. What puts them into a database is
-//! [`super::clickhouse::fixtures`].
+//! [`super::clickhouse::harness`].
 
 use alloy_primitives::{Address, address};
 

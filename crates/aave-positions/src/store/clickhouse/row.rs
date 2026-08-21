@@ -210,7 +210,7 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
 mod tests {
     use alloy_primitives::{I256, U256};
 
-    use crate::store::clickhouse::fixtures::{append, index, list_reserve, store};
+    use crate::store::clickhouse::harness::{append, index, list_reserve, store};
     use crate::store::fixtures::{
         ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR, add_asset,
         add_reserve, ask, borrow, supply,

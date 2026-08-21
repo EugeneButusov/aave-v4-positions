@@ -1,4 +1,7 @@
-//! A migrated database, and the ledgers the store reads.
+//! A migrated database, a store over it, and the events put into it.
+//!
+//! Not fixtures — those are [`crate::store::fixtures`], and they are data. This
+//! is what stands a scenario up.
 //!
 //! **Seeded through the fold, not around it.** These append decoded events and
 //! let the materialized views do the work, which is what makes the specs store
@@ -10,9 +13,6 @@
 //! belong to a crate that does not exist yet. It is two statements — an insert,
 //! and a sign-flipped copy — and both are what the ledger's own migration
 //! documents.
-//!
-//! What the events *are* is [`crate::store::fixtures`]. This is only what puts
-//! them into ClickHouse.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};

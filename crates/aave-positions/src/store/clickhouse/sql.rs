@@ -147,7 +147,7 @@ mod tests {
     use alloy_primitives::{Address, I256, U256};
 
     use super::{RESOLVE, list};
-    use crate::store::clickhouse::fixtures::{index, seed_both_spokes, seed_five_reserves, store};
+    use crate::store::clickhouse::harness::{index, seed_both_spokes, seed_five_reserves, store};
     use crate::store::fixtures::{
         ALICE, At, BOB, RESERVES, ROUTER, SECOND_SPOKE, SPOKE, ask, borrow, reserve_ids,
         supplied_by, supply, withdraw,

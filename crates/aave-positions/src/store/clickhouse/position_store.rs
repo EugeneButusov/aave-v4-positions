@@ -120,7 +120,7 @@ mod tests {
     use alloy_primitives::U256;
 
     use super::{ClickHousePositionStore, now};
-    use crate::store::clickhouse::fixtures::{list_reserve, seed_five_reserves, store};
+    use crate::store::clickhouse::harness::{list_reserve, seed_five_reserves, store};
     use crate::store::fixtures::{ALICE, At, CHECKPOINT_AT, RAY, SPOKE, YEAR, ask, borrow, supply};
     use crate::store::{PositionKey, PositionQuery, PositionStore};
 
