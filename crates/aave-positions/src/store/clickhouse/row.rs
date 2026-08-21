@@ -9,7 +9,7 @@ use alloy_primitives::{Address, I256, U256};
 use clickhouse_client::clickhouse;
 use serde::Deserialize;
 
-use super::{Error, Position, PositionAsset};
+use crate::store::{Error, Position, PositionAsset};
 use crate::valuation::{AssetState, PositionShares, Valuation};
 
 /// One row as ClickHouse renders it.
@@ -210,7 +210,7 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
 mod tests {
     use alloy_primitives::{I256, U256};
 
-    use crate::store::fixtures::{
+    use crate::store::clickhouse::fixtures::{
         ALICE, At, CHAIN_ID, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR, add_asset,
         add_reserve, append, ask, borrow, index, list_reserve, store, supply,
     };

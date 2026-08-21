@@ -19,7 +19,8 @@ use clickhouse_client::clickhouse::{self, Client};
 use clickhouse_client::{Config, build_client};
 use serde::Serialize;
 
-use super::{ClickHousePositionStore, PositionPage, PositionQuery};
+use super::ClickHousePositionStore;
+use crate::store::{PositionPage, PositionQuery};
 
 pub(super) const CHAIN_ID: u32 = 1;
 pub(super) const SPOKE: Address = address!("0x94e7a5dcbe816e498b89ab752661904e2f56c485");

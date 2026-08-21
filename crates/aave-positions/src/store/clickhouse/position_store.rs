@@ -23,7 +23,8 @@ use async_trait::async_trait;
 use clickhouse_client::clickhouse::Client;
 
 use super::row::Row;
-use super::{Error, PositionKey, PositionPage, PositionQuery, PositionStore, sql};
+use super::sql;
+use crate::store::{Error, PositionKey, PositionPage, PositionQuery, PositionStore};
 
 /// Reads the folded positions out of ClickHouse.
 #[derive(Clone)]
@@ -119,7 +120,7 @@ mod tests {
     use alloy_primitives::U256;
 
     use super::{ClickHousePositionStore, now};
-    use crate::store::fixtures::{
+    use crate::store::clickhouse::fixtures::{
         ALICE, At, CHECKPOINT_AT, RAY, SPOKE, YEAR, ask, borrow, list_reserve, seed_five_reserves,
         store, supply,
     };
