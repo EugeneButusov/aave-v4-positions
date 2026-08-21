@@ -172,7 +172,7 @@ graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 
 | today | Rust | note |
 | --- | --- | --- |
-| NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become `Arc<dyn Trait + Send + Sync>` — trait objects rather than generics, so the composition root reads like the module graph it replaces |
+| NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become `Arc<dyn Trait + Send + Sync>` — trait objects rather than generics, so the composition root reads like the module graph it replaces. An async port therefore carries `#[async_trait]`: `async fn` in a trait is stable and still not dyn compatible, measured on 1.96, and a boxed future per call is the price of the seam |
 | `@nestjs/platform-express` | `axum` + `tower-http` | |
 | `@nestjs/swagger` | `utoipa` + `utoipa-swagger-ui` | derive-based, so it maps onto the hand-decorated DTOs directly; the OpenAPI drift guard ports as a test over the generated document |
 | `zod` | `serde` + `garde`; `figment` for env | five files. Abort-on-invalid-config is preserved |

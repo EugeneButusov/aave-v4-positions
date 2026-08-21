@@ -10,6 +10,10 @@ publish.workspace = true
 # `AddressHashMap` and friends, which nothing here names. `std` is what
 # `thiserror`'s `Error` impl and the `Display` on these integers want.
 alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
+# `async fn` in a trait is stable and still not dyn compatible — measured on
+# 1.96: `Arc<dyn PositionStore>` is E0038. The composition root wants trait
+# objects rather than generics, so the port pays a boxed future per call.
+async-trait = "0.1.92"
 clickhouse-client.workspace = true
 # `derive` alone: `clickhouse::Row` is a derive over a `Deserialize` impl, and
 # the row structs here are the only thing that needs one.

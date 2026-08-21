@@ -1,116 +1,94 @@
-//! Reads the folded positions out of ClickHouse.
+//! The port: what a read asks for, what it gets back, and the one method
+//! between them.
 //!
-//! Three shapes worth explaining, because all three are deliberate:
-//!
-//! **`chain_id` and `user` are required and bound**, which is the leading pair
-//! of the sorting key. That is what makes a page a seek into one wallet's
-//! contiguous rows rather than a filter over everyone's. `spoke` narrows
-//! further when it is given, and its absence costs nothing: the prefix that
-//! does the seeking is already pinned without it.
-//!
-//! **The resume point is the whole of what the prefix leaves free** —
-//! `(spoke, reserve_id)`, and `('', 0)` is the beginning of the listing rather
-//! than a missing predicate. See [`super::sql`].
-//!
-//! **Every wide integer is `toString`-ed in SQL.** These columns are 256-bit
-//! and the amounts routinely pass 2^53; a share balance that arrives as a
-//! number has already lost its tail by the time it reaches this process (§7.5).
-
-use std::time::{SystemTime, UNIX_EPOCH};
+//! `bins/api` holds this as `Arc<dyn PositionStore>` rather than a generic, so
+//! the composition root reads like the module graph it replaces — which is why
+//! it carries `#[async_trait]`. `async fn` in a trait is stable and still not
+//! dyn compatible: measured on 1.96, `Arc<dyn PositionStore>` over a plain
+//! `async fn list` is E0038, and the compiler's own advice is to use the
+//! concrete type instead. A boxed future per page is the price of the seam.
 
 use alloy_primitives::{Address, U256};
-use clickhouse_client::clickhouse::Client;
+use async_trait::async_trait;
 
-use super::row::Row;
-use super::{Error, PositionKey, PositionPage, PositionQuery, sql};
+use super::{Error, Position};
 
-#[cfg(test)]
-mod tests;
-
-/// Reads the folded positions out of ClickHouse.
-#[derive(Clone)]
-pub struct ClickHousePositionStore {
-    client: Client,
+/// Where a page stopped: the sorting key below `(chain_id, user)`, and nothing
+/// else.
+///
+/// A plain key rather than an opaque token. Signing one so a caller cannot
+/// forge or carry it between listings is a property of *publishing* it, not of
+/// paging, and it lives with whoever publishes it — for the HTTP API, in
+/// `bins/api`. Nothing in this crate holds a signing key or knows what a cursor
+/// looks like.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionKey {
+    pub spoke: Address,
+    pub reserve_id: U256,
 }
 
-impl ClickHousePositionStore {
-    /// Takes the client by value: `clickhouse::Client` is an `Arc` inside, so a
-    /// caller sharing one clones it visibly.
-    #[must_use]
-    pub fn new(client: Client) -> Self {
-        Self { client }
-    }
-
-    /// One wallet's open positions, valued at one instant.
+/// One wallet's positions, on one Spoke or on all of them.
+///
+/// **`user` is required**, which makes this a lookup rather than a scan: with
+/// `chain_id` it is the leading pair of the sorting key, so pinning it turns
+/// every page into a seek into contiguous rows.
+///
+/// **`spoke` is optional, and what it narrows is the listing, never the
+/// arithmetic.** A Spoke is an isolated margin account with its own collateral
+/// factors, oracle and health factor (§12.3), so *summing* across two of them
+/// is wrong in the one direction that matters — it hides an imminent
+/// liquidation behind unrelated collateral. Listing them together is fine,
+/// because every row names the Spoke it came from. Nothing here is aggregated,
+/// and anything that ever aggregates must do it per Spoke.
+///
+/// Cross-wallet questions ("largest open positions") are analytics over the
+/// same view, not a mode of this port.
+#[derive(Debug, Clone)]
+pub struct PositionQuery {
+    pub chain_id: u32,
+    pub user: Address,
+    /// `None` lists every Spoke this wallet has touched.
+    pub spoke: Option<Address>,
+    pub limit: u32,
+    /// Resume point, already verified by whoever owns the wire format.
+    pub after: Option<PositionKey>,
+    /// Unix seconds to value the page at. `None` is now.
     ///
-    /// **Only open positions.** §12.1: a position exists while its shares are
-    /// non-zero. A closed one keeps its row and its event count, and is
-    /// filtered out here rather than deleted anywhere.
-    pub async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error> {
-        let after = query.after.as_ref();
-        let mut pending = self
-            .client
-            .query(&sql::list(query.spoke))
-            .param("chainId", query.chain_id)
-            .param("user", lower_case(query.user))
-            // One more than asked, so the extra row's presence is what says
-            // there is a next page.
-            .param("limit", u64::from(query.limit).saturating_add(1))
-            // Absent means the beginning, and the beginning is a key: no Spoke
-            // address is the empty string, so `('', 0)` is below every row.
-            .param(
-                "afterSpoke",
-                after.map(|key| lower_case(key.spoke)).unwrap_or_default(),
-            )
-            .param(
-                "afterReserve",
-                after.map_or(U256::ZERO, |key| key.reserve_id).to_string(),
-            );
-
-        if let Some(spoke) = query.spoke {
-            pending = pending.param("spoke", lower_case(spoke));
-        }
-
-        let rows = pending.fetch_all::<Row>().await?;
-
-        // One instant for the whole page, so two positions in one response
-        // cannot disagree about what time it is — and reported back, because an
-        // amount without the moment it was computed at is not reproducible
-        // (§12.6).
-        let valued_at = query.as_of.unwrap_or_else(now);
-
-        let limit = usize::try_from(query.limit).unwrap_or(usize::MAX);
-        let full = rows.len() > limit;
-        let items = rows
-            .iter()
-            .take(limit)
-            .map(|row| row.position(valued_at))
-            .collect::<Result<Vec<_>, Error>>()?;
-
-        let next = full
-            .then(|| items.last())
-            .flatten()
-            .map(|last| PositionKey {
-                spoke: last.spoke,
-                reserve_id: last.reserve_id,
-            });
-
-        Ok(PositionPage {
-            items,
-            valued_at,
-            next,
-        })
-    }
+    /// Amounts are a per-second quantity — the Hub's index accrues continuously
+    /// and emits nothing (§5) — so "now" is a real choice rather than an
+    /// absence of one, and it is the same choice the chain makes:
+    /// `getUserDebt` at `latest` is stored shares times an index extrapolated
+    /// to the head block. Naming it explicitly is what makes a response
+    /// reproducible, and what lets reconciliation pin both sides to one block.
+    ///
+    /// The shares are as of whatever the indexer has folded, which is not the
+    /// same clock. [`PositionPage::valued_at`] reports this one so the two are
+    /// not silently conflated.
+    pub as_of: Option<u64>,
 }
 
-/// Lower-cased, because the fold stores addresses that way and a caller reading
-/// a checksummed one off a block explorer should not have to know that.
-fn lower_case(address: Address) -> String {
-    address.to_string().to_lowercase()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PositionPage {
+    pub items: Vec<Position>,
+    /// Unix seconds every amount on this page was computed at — one instant for
+    /// the whole page, so two positions in it cannot disagree about the time.
+    pub valued_at: u64,
+    /// `None` on the last page. Absence is the end, not an empty key.
+    pub next: Option<PositionKey>,
 }
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
+/// Reads the folded positions.
+///
+/// **Read-only by construction.** The fold is materialized views over the
+/// event ledger, so positions advance because the indexer appended events —
+/// there is no ingestion path here to keep in step with one, and a reorg
+/// repairs the projection without an implementation of this learning of it.
+///
+/// **Only open positions.** §12.1: a position exists while its shares are
+/// non-zero. A closed one keeps its row and its event count, and is filtered
+/// out by the implementation rather than deleted anywhere.
+#[async_trait]
+pub trait PositionStore: Send + Sync {
+    /// One wallet's open positions, valued at one instant.
+    async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error>;
 }

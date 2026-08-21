@@ -18,6 +18,21 @@ use crate::store::fixtures::{
     update_asset, withdraw,
 };
 
+/// The reason the port carries `#[async_trait]` rather than a plain `async fn`.
+///
+/// A compile-time assertion and nothing else: `async fn` in a trait is stable
+/// and not dyn compatible, so without the macro this line is E0038 and
+/// `bins/api` would have to take a generic parameter instead of the
+/// `Arc<dyn Trait>` the composition root is designed around.
+#[test]
+fn the_port_is_held_as_a_trait_object() {
+    fn held(store: ClickHousePositionStore) -> std::sync::Arc<dyn PositionStore> {
+        std::sync::Arc::new(store)
+    }
+
+    let _ = held;
+}
+
 /// The block every Hub fixture checkpoints at, and the instant it lands on.
 const CHECKPOINT_BLOCK: u64 = 100;
 const CHECKPOINT_AT: u64 = T0 + CHECKPOINT_BLOCK;
