@@ -128,7 +128,9 @@ mod tests {
     /// A compile-time assertion and nothing else: `async fn` in a trait is
     /// stable and not dyn compatible, so without the macro this line is E0038
     /// and `bins/api` would have to take a generic parameter instead of the
-    /// `Arc<dyn Trait>` the composition root is designed around.
+    /// `Arc<dyn Trait>` the composition root is designed around. It needs no
+    /// `Send + Sync` on the port — that is a separate requirement, and it
+    /// arrives with the axum state that has it.
     #[test]
     fn the_port_is_held_as_a_trait_object() {
         fn held(store: ClickHousePositionStore) -> std::sync::Arc<dyn PositionStore> {

@@ -1,12 +1,18 @@
 //! The port: what a read asks for, what it gets back, and the one method
 //! between them.
 //!
-//! `bins/api` holds this as `Arc<dyn PositionStore>` rather than a generic, so
-//! the composition root reads like the module graph it replaces — which is why
-//! it carries `#[async_trait]`. `async fn` in a trait is stable and still not
-//! dyn compatible: measured on 1.96, `Arc<dyn PositionStore>` over a plain
+//! `bins/api` will hold this as `Arc<dyn PositionStore>` rather than a generic,
+//! so the composition root reads like the module graph it replaces — which is
+//! why it carries `#[async_trait]`. `async fn` in a trait is stable and still
+//! not dyn compatible: measured on 1.96, `Arc<dyn PositionStore>` over a plain
 //! `async fn list` is E0038, and the compiler's own advice is to use the
 //! concrete type instead. A boxed future per page is the price of the seam.
+//!
+//! **No `Send + Sync` supertraits yet.** They are not what makes this dyn
+//! compatible — measured, an implementation compiles without them — and they
+//! buy nothing until something erases the type: `Arc<T>` is `Send + Sync` only
+//! when `T` is, which is what axum's `State` will require. Nothing holds one
+//! that way today, so the bound goes on when its consumer does.
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
@@ -88,7 +94,7 @@ pub struct PositionPage {
 /// non-zero. A closed one keeps its row and its event count, and is filtered
 /// out by the implementation rather than deleted anywhere.
 #[async_trait]
-pub trait PositionStore: Send + Sync {
+pub trait PositionStore {
     /// One wallet's open positions, valued at one instant.
     async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error>;
 }
