@@ -7,7 +7,7 @@ use crate::valuation;
 pub enum Error {
     /// The server refused the query, or the connection did.
     #[error("the position query failed")]
-    Query(#[from] clickhouse_client::clickhouse::error::Error),
+    QueryFailed(#[from] clickhouse_client::clickhouse::error::Error),
 
     /// A column held something its type says it cannot.
     ///
@@ -30,5 +30,5 @@ pub enum Error {
     /// that a number is missing: a checkpoint ahead of `as_of`, or a premium
     /// the fold has driven below zero.
     #[error("a position on this page cannot be valued")]
-    Valuation(#[from] valuation::Error),
+    ValuationFailed(#[from] valuation::Error),
 }
