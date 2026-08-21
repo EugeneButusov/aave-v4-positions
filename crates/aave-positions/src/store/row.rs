@@ -56,35 +56,35 @@ pub(super) struct Row {
 
 impl Row {
     /// The row as a position, valued at `at`.
-    pub(super) fn position(&self, at: u64) -> Result<Position, Error> {
+    pub(super) fn to_position(&self, at: u64) -> Result<Position, Error> {
         Ok(Position {
             chain_id: self.chain_id,
-            user: address("user", &self.user)?,
-            spoke: address("spoke", &self.spoke)?,
-            reserve_id: unsigned("reserve_id", &self.reserve_id)?,
-            supplied_shares: signed("supplied_shares", &self.supplied_shares)?,
-            drawn_shares: signed("drawn_shares", &self.drawn_shares)?,
-            premium_shares: signed("premium_shares", &self.premium_shares)?,
-            premium_offset_ray: signed("premium_offset_ray", &self.premium_offset_ray)?,
-            net_supplied_amount: signed("net_supplied_amount", &self.net_supplied_amount)?,
-            net_borrowed_amount: signed("net_borrowed_amount", &self.net_borrowed_amount)?,
+            user: parse_address("user", &self.user)?,
+            spoke: parse_address("spoke", &self.spoke)?,
+            reserve_id: parse_unsigned("reserve_id", &self.reserve_id)?,
+            supplied_shares: parse_signed("supplied_shares", &self.supplied_shares)?,
+            drawn_shares: parse_signed("drawn_shares", &self.drawn_shares)?,
+            premium_shares: parse_signed("premium_shares", &self.premium_shares)?,
+            premium_offset_ray: parse_signed("premium_offset_ray", &self.premium_offset_ray)?,
+            net_supplied_amount: parse_signed("net_supplied_amount", &self.net_supplied_amount)?,
+            net_borrowed_amount: parse_signed("net_borrowed_amount", &self.net_borrowed_amount)?,
             using_as_collateral: self.using_as_collateral == 1,
             events: self.events,
-            asset: self.asset()?,
-            value: self.value(at)?,
+            asset: self.to_asset()?,
+            value: self.to_valuation(at)?,
         })
     }
 
     /// The resolved reserve, or `None` if the registry has not seen it.
-    fn asset(&self) -> Result<Option<PositionAsset>, Error> {
+    fn to_asset(&self) -> Result<Option<PositionAsset>, Error> {
         let (Some(underlying), Some(decimals)) = (self.underlying.as_deref(), self.decimals) else {
             return Ok(None);
         };
 
         Ok(Some(PositionAsset {
-            asset_id: unsigned("asset_id", &self.asset_id)?,
-            hub: address("hub", &self.hub)?,
-            underlying: address("underlying", underlying)?,
+            asset_id: parse_unsigned("asset_id", &self.asset_id)?,
+            hub: parse_address("hub", &self.hub)?,
+            underlying: parse_address("underlying", underlying)?,
             decimals,
         }))
     }
@@ -96,8 +96,8 @@ impl Row {
     /// and the row still reports the signed balance that says so. Valuing it is
     /// what cannot be done: `U256` holds no such number, and a negative debt is
     /// not something a caller can act on either.
-    fn value(&self, at: u64) -> Result<Option<Valuation>, Error> {
-        let (Some(state), Some(shares)) = (self.asset_state()?, self.shares()?) else {
+    fn to_valuation(&self, at: u64) -> Result<Option<Valuation>, Error> {
+        let (Some(state), Some(shares)) = (self.to_asset_state()?, self.to_shares()?) else {
             return Ok(None);
         };
 
@@ -105,7 +105,7 @@ impl Row {
     }
 
     /// The Hub state a valuation needs, or `None` if any of it is missing.
-    fn asset_state(&self) -> Result<Option<AssetState>, Error> {
+    fn to_asset_state(&self) -> Result<Option<AssetState>, Error> {
         let (Some(checkpoint_index), Some(checkpoint_at)) =
             (self.drawn_index.as_deref(), self.checkpoint_at.as_deref())
         else {
@@ -113,29 +113,32 @@ impl Row {
         };
 
         Ok(Some(AssetState {
-            liquidity: unsigned("liquidity", &self.liquidity)?,
-            added_shares: unsigned("added_shares", &self.added_shares)?,
-            drawn_shares: unsigned("asset_drawn_shares", &self.asset_drawn_shares)?,
-            swept: unsigned("swept", &self.swept)?,
-            premium_shares: unsigned("asset_premium_shares", &self.asset_premium_shares)?,
-            premium_offset_ray: signed("asset_premium_offset_ray", &self.asset_premium_offset_ray)?,
-            deficit_ray: unsigned("deficit_ray", &self.deficit_ray)?,
-            realized_fees: unsigned(
+            liquidity: parse_unsigned("liquidity", &self.liquidity)?,
+            added_shares: parse_unsigned("added_shares", &self.added_shares)?,
+            drawn_shares: parse_unsigned("asset_drawn_shares", &self.asset_drawn_shares)?,
+            swept: parse_unsigned("swept", &self.swept)?,
+            premium_shares: parse_unsigned("asset_premium_shares", &self.asset_premium_shares)?,
+            premium_offset_ray: parse_signed(
+                "asset_premium_offset_ray",
+                &self.asset_premium_offset_ray,
+            )?,
+            deficit_ray: parse_unsigned("deficit_ray", &self.deficit_ray)?,
+            realized_fees: parse_unsigned(
                 "realized_fees",
                 self.realized_fees.as_deref().unwrap_or("0"),
             )?,
             liquidity_fee: self.liquidity_fee.unwrap_or(0),
-            checkpoint_index: unsigned("drawn_index", checkpoint_index)?,
-            drawn_rate: rate(self.drawn_rate.as_deref().unwrap_or("0"))?,
-            checkpoint_at: seconds("checkpoint_at", checkpoint_at)?,
+            checkpoint_index: parse_unsigned("drawn_index", checkpoint_index)?,
+            drawn_rate: parse_rate(self.drawn_rate.as_deref().unwrap_or("0"))?,
+            checkpoint_at: parse_seconds("checkpoint_at", checkpoint_at)?,
         }))
     }
 
-    fn shares(&self) -> Result<Option<PositionShares>, Error> {
+    fn to_shares(&self) -> Result<Option<PositionShares>, Error> {
         let (Some(supplied_shares), Some(drawn_shares), Some(premium_shares)) = (
-            non_negative(signed("supplied_shares", &self.supplied_shares)?),
-            non_negative(signed("drawn_shares", &self.drawn_shares)?),
-            non_negative(signed("premium_shares", &self.premium_shares)?),
+            non_negative(parse_signed("supplied_shares", &self.supplied_shares)?),
+            non_negative(parse_signed("drawn_shares", &self.drawn_shares)?),
+            non_negative(parse_signed("premium_shares", &self.premium_shares)?),
         ) else {
             return Ok(None);
         };
@@ -144,7 +147,7 @@ impl Row {
             supplied_shares,
             drawn_shares,
             premium_shares,
-            premium_offset_ray: signed("premium_offset_ray", &self.premium_offset_ray)?,
+            premium_offset_ray: parse_signed("premium_offset_ray", &self.premium_offset_ray)?,
         }))
     }
 }
@@ -153,7 +156,7 @@ fn non_negative(value: I256) -> Option<U256> {
     (!value.is_negative()).then(|| value.into_raw())
 }
 
-fn address(column: &'static str, value: &str) -> Result<Address, Error> {
+fn parse_address(column: &'static str, value: &str) -> Result<Address, Error> {
     value.parse().map_err(|_| Error::Malformed {
         column,
         expected: "20-byte address",
@@ -161,7 +164,7 @@ fn address(column: &'static str, value: &str) -> Result<Address, Error> {
     })
 }
 
-fn unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
+fn parse_unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
     U256::from_str_radix(value, 10).map_err(|_| Error::Malformed {
         column,
         expected: "uint256",
@@ -169,7 +172,7 @@ fn unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
     })
 }
 
-fn signed(column: &'static str, value: &str) -> Result<I256, Error> {
+fn parse_signed(column: &'static str, value: &str) -> Result<I256, Error> {
     value.parse().map_err(|_| Error::Malformed {
         column,
         expected: "int256",
@@ -177,7 +180,7 @@ fn signed(column: &'static str, value: &str) -> Result<I256, Error> {
     })
 }
 
-fn rate(value: &str) -> Result<u128, Error> {
+fn parse_rate(value: &str) -> Result<u128, Error> {
     value.parse().map_err(|_| Error::Malformed {
         column: "drawn_rate",
         expected: "uint96",
@@ -185,7 +188,7 @@ fn rate(value: &str) -> Result<u128, Error> {
     })
 }
 
-fn seconds(column: &'static str, value: &str) -> Result<u64, Error> {
+fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
     value.parse().map_err(|_| Error::Malformed {
         column,
         expected: "unix seconds",

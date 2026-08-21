@@ -80,7 +80,7 @@ impl PositionStore for ClickHousePositionStore {
         let items = rows
             .iter()
             .take(limit)
-            .map(|row| row.position(valued_at))
+            .map(|row| row.to_position(valued_at))
             .collect::<Result<Vec<_>, Error>>()?;
 
         let next = full
