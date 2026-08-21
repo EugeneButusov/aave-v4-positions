@@ -1,6 +1,6 @@
 [package]
 name = "aave-positions"
-description = "The valuation arithmetic, transcribed from the contracts"
+description = "The valuation arithmetic, transcribed from the contracts, and the read store over the fold"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
@@ -10,7 +10,16 @@ publish.workspace = true
 # `AddressHashMap` and friends, which nothing here names. `std` is what
 # `thiserror`'s `Error` impl and the `Display` on these integers want.
 alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
+clickhouse-client.workspace = true
+# `derive` alone: `clickhouse::Row` is a derive over a `Deserialize` impl, and
+# the row structs here are the only thing that needs one.
+serde = { version = "1.0.229", features = ["derive"] }
 thiserror = "2.0.19"
+
+[dev-dependencies]
+# `#[tokio::test]`. The driver pulls tokio in regardless; this only asks for the
+# attribute and a current-thread runtime to hang it on.
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
 
 [lints]
 workspace = true

@@ -13,11 +13,11 @@ use super::math::{from_ray_up, premium_ray, ray_mul_up};
 
 /// One user's shares in one reserve.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PositionShares {
-    pub supplied_shares: U256,
-    pub drawn_shares: U256,
-    pub premium_shares: U256,
-    pub premium_offset_ray: I256,
+pub(crate) struct PositionShares {
+    pub(crate) supplied_shares: U256,
+    pub(crate) drawn_shares: U256,
+    pub(crate) premium_shares: U256,
+    pub(crate) premium_offset_ray: I256,
 }
 
 /// What one position is worth, at [`PositionShares::value_at`]'s `at`.
@@ -45,7 +45,7 @@ impl PositionShares {
     /// and `fromRayUp` on the premium, each separately, which is what
     /// `Spoke.getUserDebt` does before summing. Rounding the total once instead
     /// would be a wei light.
-    pub fn value_at(&self, asset: &AssetState, at: u64) -> Result<Valuation, Error> {
+    pub(crate) fn value_at(&self, asset: &AssetState, at: u64) -> Result<Valuation, Error> {
         let drawn_index = asset.drawn_index_at(at)?;
 
         let drawn_debt = ray_mul_up(self.drawn_shares, drawn_index)?;
