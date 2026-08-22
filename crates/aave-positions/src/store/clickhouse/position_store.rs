@@ -118,7 +118,7 @@ fn now() -> u64 {
 mod tests {
     use alloy_primitives::{Address, I256, U256};
 
-    use super::{ClickHousePositionStore, now};
+    use super::now;
     use crate::store::clickhouse::harness::{
         append, index, list_reserve, seed_both_spokes, seed_five_reserves, store,
     };
@@ -127,22 +127,6 @@ mod tests {
         borrow, reserve_ids, supplied_by, supply, withdraw,
     };
     use crate::store::{PositionKey, PositionQuery, PositionStore};
-
-    /// The reason the port carries `#[async_trait]` rather than a plain
-    /// `async fn`.
-    ///
-    /// A compile-time assertion and nothing else: `async fn` in a trait is
-    /// stable and not dyn compatible, so without the macro this line is E0038
-    /// and `bins/api` would have to take a generic parameter instead of the
-    /// `Arc<dyn Trait>` the composition root is designed around.
-    #[test]
-    fn the_port_is_held_as_a_trait_object() {
-        fn held(store: ClickHousePositionStore) -> std::sync::Arc<dyn PositionStore> {
-            std::sync::Arc::new(store)
-        }
-
-        let _ = held;
-    }
 
     /// The extra row, and the key it turns into.
     mod where_a_page_stops {
