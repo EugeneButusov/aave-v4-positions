@@ -1,8 +1,9 @@
 //! The statement one page is read with.
 //!
-//! One literal with one slot. The seek — the paged `SELECT` over one wallet's
-//! rows — is always there, so it is written where it runs rather than spliced
-//! in from a constant that had exactly one possible value.
+//! One literal with nothing substituted. Both clauses that read like they
+//! should be optional — the Spoke filter and the resume key — have
+//! unconditional shapes that measure the same as omitting them, so there is no
+//! assembled part and no branch that only one caller takes.
 //!
 //! No query builder: none of them speaks ClickHouse's `{name:Type}` parameters,
 //! and this SQL has to stay diffable against `clickhouse-position-store.ts`
@@ -41,14 +42,7 @@ pub(super) const STATEMENT: &str = r"SELECT
     toString(a.drawn_rate)          AS drawn_rate,
     toString(toUnixTimestamp(a.index_timestamp)) AS checkpoint_at
 FROM (
-    -- **One wallet's contiguous rows, and only one clause of this is optional.**
-    -- `spoke` narrows by equality when it is given and is absent when it is not,
-    -- because `({spoke:String} = '' OR spoke = {spoke:String})` — the shape that
-    -- would make this a constant with no slot at all — prunes to the same granule
-    -- but drops Search Algorithm: binary search to generic exclusion search, which
-    -- is the property the join's comment below cites as evidence.
-    --
-    -- The resume key needs no slot either. `('', 0)` is below every real key, since
+    -- **One wallet's contiguous rows.** `('', 0)` is below every real key, since
     -- a Spoke address is never the empty string, so the beginning of a listing is a
     -- value rather than a missing predicate. Measured: same condition, same
     -- granule, same binary search as omitting it.

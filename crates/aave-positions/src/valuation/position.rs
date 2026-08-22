@@ -20,7 +20,7 @@ pub(crate) struct PositionShares {
     pub(crate) premium_offset_ray: I256,
 }
 
-/// What one position is worth, at [`PositionShares::value_at`]'s `at`.
+/// What one position is worth, at `PositionShares::value_at`'s `at`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Valuation {
     /// Underlying redeemable for `supplied_shares`, rounded down as the Hub does.
