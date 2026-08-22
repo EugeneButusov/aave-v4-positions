@@ -172,7 +172,7 @@ graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 
 | today | Rust | note |
 | --- | --- | --- |
-| NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become `Arc<dyn Trait + Send + Sync>` — trait objects rather than generics, so the composition root reads like the module graph it replaces |
+| NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become `Arc<dyn Trait + Send + Sync>` — trait objects rather than generics, so the composition root reads like the module graph it replaces. An async port therefore carries `#[async_trait]`: `async fn` in a trait is stable and still not dyn compatible, measured on 1.96, and a boxed future per call is the price of the seam |
 | `@nestjs/platform-express` | `axum` + `tower-http` | |
 | `@nestjs/swagger` | `utoipa` + `utoipa-swagger-ui` | derive-based, so it maps onto the hand-decorated DTOs directly; the OpenAPI drift guard ports as a test over the generated document |
 | `zod` | `serde` + `garde`; `figment` for env | five files. Abort-on-invalid-config is preserved |
@@ -305,19 +305,21 @@ Nothing overflows on realistic values, and the RAY-scaled aggregate never feeds 
 comments anyway. The TypeScript never had to carry them because `BigInt` has none, which is the whole
 reason they are worth stating on the way across.
 
-**Which gives the Rust one failure the TypeScript does not have, and the harness has to know it.**
-Where `crates/aave-positions` returns `Error::OutOfRange`, the TypeScript returns a number past
-2²⁵⁶ and carries on. Every quantity in these formulas is a `uint256` on chain, so that number was
-never a state the protocol could be in — but the differential gate compares error conditions, so
-the rule belongs written down rather than discovered: **Rust `Err(OutOfRange)` ⟺ the TypeScript's
-result leaves `[0, 2²⁵⁶)`**. The variant carries no term name: naming the intermediate cost eleven
-string literals restating the line each sat beside, and nothing read them — not the harness, which
-compares the variant against a magnitude, and not the TypeScript, which cannot say which term left
-`uint256` either. Boundary tests assert both sides of an edge instead, which pins the term that
+**Which gives the Rust one failure the TypeScript does not have, and the two-deployment gate has to
+know it.** Where `crates/aave-positions` returns `Error::OutOfRange`, the TypeScript returns a number
+past 2²⁵⁶ and carries on. Every quantity in these formulas is a `uint256` on chain, so that number
+was never a state the protocol could be in, and no fold the migrations build can reach it — but a
+gate that compares two services compares their failures too, so the rule belongs written down rather
+than discovered: **Rust `Err(OutOfRange)` ⟺ the TypeScript's result leaves `[0, 2²⁵⁶)`**. The variant
+carries no term name: naming the intermediate cost eleven string literals restating the line each sat
+beside, and nothing read them — not a caller, and not the TypeScript, which cannot say which term
+left `uint256` either. Boundary tests assert both sides of an edge instead, which pins the term that
 gives out more firmly than a label did.
 The other three agree on both sides — a checkpoint ahead of the valuation time, a negative premium,
 and a zero denominator, which `BigInt` division throws on too — and the first two keep the
-TypeScript's exact message text so the comparison is on the string as well as the branch.
+TypeScript's exact message text so the comparison is on the string as well as the branch. All three
+leave the store as an error rather than an unvalued position, which is what the TypeScript does by
+not catching them: `asOf` set earlier than an asset's checkpoint is a 500 on both sides.
 
 **The comparison lives here, not in the crate.** `crates/aave-positions` is written against the
 contracts and the ClickHouse column types, and refers to neither the TypeScript nor its specs: the
@@ -443,24 +445,52 @@ services quietly became the migrate image.
 
 ### Phase 1 — the arithmetic
 
-`aave-positions::valuation` and `::ray` only. No storage, no wiring.
+`aave-positions::valuation` only — `ray` went in with it as a private `math` module. No storage, no
+wiring. Landed in [#44](https://github.com/EugeneButusov/aave-v4-positions/pull/44): seven math
+primitives, five `AssetLogic` methods, `to_value`, 42 tests, and the twelve mutants the design notes
+name all caught.
 
-**Gate:** a `proptest` differential harness driving the TypeScript implementation — a thin `node`
-process over stdin/stdout — and the Rust one over randomised inputs across the whole domain,
-asserting bit-identical output _and_ identical error conditions, including the deliberate throws on a
-negative premium and on a checkpoint ahead of the valuation time. Seed it to search for the overflow
-boundary rather than assume it is distant: inputs at and beyond `uint120` shares and 2^128
-`totalAssets`, asserting `Err` exactly where the widened arithmetic says it must come. Plus the 36/36
-chain reconciliation reproduced in Rust.
+**Gate: the two deployments, at the end of the phase.** One validation script running the same tests
+against the TypeScript service and the Rust one. Not a `node` subprocess inside the crate, and not a
+per-layer oracle — the comparison that matters is the one a caller can see, and building a second one
+underneath it costs a harness that has to be deleted the day `apps/api` is (Risk 3).
+
+**And the TypeScript could not have adjudicated the overflow boundary anyway**, which the earlier
+plan for this gate assumed it could. `ray.ts`'s `rayMulUp` is `const product = a * b` in unguarded
+`bigint`; `WadRayMath.rayMulUp` is
+`if iszero(or(iszero(b), iszero(gt(a, div(not(0), b))))) { revert }`. On `rayMulUp(MAX, RAY)` the
+TypeScript answers and the chain refuses, so "assert `Err` exactly where the widened arithmetic says
+it must come" had no oracle to assert against. The Rust matches the contract instead, and
+[`refuses_a_product_where_the_contract_reverts`](../crates/aave-positions/src/valuation/math.rs) pins
+the divergence from the source rather than from a peer implementation.
+
+The 36/36 chain reconciliation is not reproduced here either. It never existed as code — it is a
+measurement recorded in [the design notes](design-notes.md#verification), of the kind every
+`**[verified]**` in [the protocol analysis](aave-v4-protocol-analysis.md) stands for. What checks the
+arithmetic against the chain in Rust is `reconcile:positions`, in Phase 4, where the fold and the
+wiring are in the picture too.
 
 This phase must not be rushed; everything downstream inherits it.
 
 ### Phase 2 — the read API, then ship it
 
-`bins/api` on axum, the `PositionStore` ClickHouse adapter, `HubAssetStore`, the read halves of
+`bins/api` on axum, the `PositionStore` ClickHouse adapter, the read halves of
 `token-metadata` and `prices`, cursor signing, request validation, utoipa. Plus `telemetry` and
 `ops`, which arrive here because this is the first long-lived process: one needs a `main` that
 initialises OTLP, the other a probe router and a drain.
+
+**`HubAssetStore` is not here — it moved to Phase 4**, with `reconcile:hub`, which is its only caller
+anywhere in the workspace. `apps/api` serves one route,
+`GET /v1/chains/:chainId/users/:user/positions`, and never asks for a Hub asset; the position store's
+own query joins `hub_assets_current` for the dimension it needs. Porting the adapter alongside it
+would have been a public surface with nothing calling it.
+
+**The store returns integers, not decimal strings.** The TypeScript renders every wide value as a
+string because JSON is its only output; `ClickHousePositionStore` hands back `U256` and `I256` and
+lets the DTO own the wire format, which is one parse rather than two and one place for it to be
+wrong. The `toString(...)` casts stay in the SQL — the columns are 256-bit and a JSON number has lost
+its tail before the process sees it (§7.5) — and the share columns stay **signed**, because each is a
+sum of `Int256` deltas and a negative one is drift that §9 catches by seeing it.
 
 **Gate, and it has to happen before anything is deleted:** both APIs pointed at the same ClickHouse
 and Postgres, and a replay harness issuing several hundred requests — every wallet in the fold, every
@@ -490,7 +520,8 @@ of difference. Plus the reorg harness driven through every window shape the loop
 
 The `token-metadata` and `prices` write paths, then the five CLIs: `backfill`, `reconcile:hub`,
 `reconcile:positions`, `enrich:tokens` and `price:reserves`. `migrate` is not among them — it was
-ported in Phase 0, and the Node one is already deleted.
+ported in Phase 0, and the Node one is already deleted. `HubAssetStore` arrives here rather than in
+Phase 2, because `reconcile:hub` is the only thing that reads it.
 
 **Gate:** Rust `reconcile:hub` and `reconcile:positions` report zero drift against the fold the
 _TypeScript_ indexer produced. That is the strongest cross-check available anywhere in this migration,

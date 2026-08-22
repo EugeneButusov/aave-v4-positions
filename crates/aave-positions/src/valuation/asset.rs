@@ -23,23 +23,23 @@ use super::math::{
 /// Phase 2, not this module's. `premium_offset_ray` is the exception and stays
 /// signed, because it genuinely is.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssetState {
-    pub liquidity: U256,
-    pub added_shares: U256,
-    pub drawn_shares: U256,
-    pub swept: U256,
-    pub premium_shares: U256,
-    pub premium_offset_ray: I256,
-    pub deficit_ray: U256,
-    pub realized_fees: U256,
+pub(crate) struct AssetState {
+    pub(crate) liquidity: U256,
+    pub(crate) added_shares: U256,
+    pub(crate) drawn_shares: U256,
+    pub(crate) swept: U256,
+    pub(crate) premium_shares: U256,
+    pub(crate) premium_offset_ray: I256,
+    pub(crate) deficit_ray: U256,
+    pub(crate) realized_fees: U256,
     /// Basis points, as `UpdateAssetConfig` carries it — `Nullable(UInt16)`.
-    pub liquidity_fee: u16,
+    pub(crate) liquidity_fee: u16,
     /// The last `UpdateAsset`'s index — the checkpoint, not the current value.
-    pub checkpoint_index: U256,
+    pub(crate) checkpoint_index: U256,
     /// `uint96` on chain, which is what makes `linear_interest` total.
-    pub drawn_rate: u128,
+    pub(crate) drawn_rate: u128,
     /// Unix seconds. `accrue()` sets it to the checkpoint block's timestamp.
-    pub checkpoint_at: u64,
+    pub(crate) checkpoint_at: u64,
 }
 
 /// `SharesMath.VIRTUAL_ASSETS` and `VIRTUAL_SHARES`, both 1e6.
