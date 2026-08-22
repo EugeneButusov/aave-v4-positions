@@ -144,43 +144,40 @@ pub(super) fn add_reserve(at: At, reserve_id: &str, asset_id: &str, hub: Address
 
 // --- the Hub ledger ---------------------------------------------------------
 
-/// The asset every Hub fixture below moves.
-const ASSET: &str = "7";
-
-pub(super) fn add_asset(at: At, underlying: Address, decimals: u8) -> Event {
+pub(super) fn add_asset(at: At, asset_id: &str, underlying: Address, decimals: u8) -> Event {
     hub_event(
         "AddAsset",
         at,
-        format!(r#"{{"assetId":"{ASSET}","underlying":"{underlying}","decimals":{decimals}}}"#),
+        format!(r#"{{"assetId":"{asset_id}","underlying":"{underlying}","decimals":{decimals}}}"#),
     )
 }
 
-pub(super) fn add(at: At, shares: &str, amount: &str) -> Event {
+pub(super) fn add(at: At, asset_id: &str, shares: &str, amount: &str) -> Event {
     hub_event(
         "Add",
         at,
         format!(
-            r#"{{"assetId":"{ASSET}","spoke":"{SPOKE}","shares":"{shares}","amount":"{amount}"}}"#
+            r#"{{"assetId":"{asset_id}","spoke":"{SPOKE}","shares":"{shares}","amount":"{amount}"}}"#
         ),
     )
 }
 
-pub(super) fn draw(at: At, drawn_shares: &str, drawn_amount: &str) -> Event {
+pub(super) fn draw(at: At, asset_id: &str, drawn_shares: &str, drawn_amount: &str) -> Event {
     hub_event(
         "Draw",
         at,
         format!(
-            r#"{{"assetId":"{ASSET}","spoke":"{SPOKE}","drawnShares":"{drawn_shares}","drawnAmount":"{drawn_amount}"}}"#
+            r#"{{"assetId":"{asset_id}","spoke":"{SPOKE}","drawnShares":"{drawn_shares}","drawnAmount":"{drawn_amount}"}}"#
         ),
     )
 }
 
-pub(super) fn update_asset(at: At, drawn_index: &str, drawn_rate: &str) -> Event {
+pub(super) fn update_asset(at: At, asset_id: &str, drawn_index: &str, drawn_rate: &str) -> Event {
     hub_event(
         "UpdateAsset",
         at,
         format!(
-            r#"{{"assetId":"{ASSET}","drawnIndex":"{drawn_index}","drawnRate":"{drawn_rate}","accruedFees":"0"}}"#
+            r#"{{"assetId":"{asset_id}","drawnIndex":"{drawn_index}","drawnRate":"{drawn_rate}","accruedFees":"0"}}"#
         ),
     )
 }
@@ -210,7 +207,3 @@ pub(super) fn reserve_ids(page: &PositionPage) -> Vec<String> {
         .map(|item| item.reserve_id.to_string())
         .collect()
 }
-
-/// Five reserves whose ids are deliberately out of numeric order as text: 13
-/// sorts before 3.
-pub(super) const RESERVES: [&str; 5] = ["3", "7", "13", "21", "34"];

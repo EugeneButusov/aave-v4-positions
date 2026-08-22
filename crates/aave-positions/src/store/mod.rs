@@ -13,6 +13,8 @@
 //! parameter lives inside it.
 
 mod clickhouse;
+#[cfg(test)]
+mod contract;
 mod error;
 #[cfg(test)]
 mod fixtures;

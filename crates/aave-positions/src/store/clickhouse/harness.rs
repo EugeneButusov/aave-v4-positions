@@ -22,10 +22,7 @@ use clickhouse_client::{Config, build_client};
 use serde::Serialize;
 
 use super::ClickHousePositionStore;
-use crate::store::fixtures::{
-    ALICE, At, CHAIN_ID, CHECKPOINT_BLOCK, Event, FIVE_PERCENT, HUB, RAY, RESERVES, SECOND_SPOKE,
-    USDC, add, add_asset, add_reserve, draw, supply, update_asset,
-};
+use crate::store::fixtures::{CHAIN_ID, Event};
 
 // --- the write path ---------------------------------------------------------
 
@@ -175,53 +172,4 @@ pub(super) async fn store(test: &str) -> (ClickHousePositionStore, Client) {
 /// will own it.
 pub(super) async fn index(client: &Client, batch: &[Event]) {
     append(client, "spoke_events", batch).await;
-}
-
-/// A reserve that resolves all the way to a token, and a Hub asset with a
-/// checkpoint — the state valuation needs before it can produce a number.
-///
-/// Asset 7 borrows 400,000 of the 1,000,000 supplied, so the index actually
-/// accrues: the short-circuit would hold it at RAY if nothing were drawn.
-pub(super) async fn list_reserve(client: &Client, events: &[Event]) {
-    append(
-        client,
-        "hub_events",
-        &[
-            add_asset(At::block(10), USDC, 6),
-            add(At::block(20), "1000000", "1000000"),
-            draw(At::block(30), "400000", "400000"),
-            update_asset(At::block(CHECKPOINT_BLOCK), RAY, FIVE_PERCENT),
-        ],
-    )
-    .await;
-
-    let mut spoke = vec![add_reserve(At::block(10), "7", "7", HUB)];
-    spoke.extend_from_slice(events);
-    append(client, "spoke_events", &spoke).await;
-}
-
-/// One wallet holding all five.
-pub(super) async fn seed_five_reserves(client: &Client) {
-    let batch: Vec<_> = RESERVES
-        .iter()
-        .enumerate()
-        .map(|(position, reserve_id)| {
-            let log = u32::try_from(position).unwrap();
-            supply(At::block(100).log(log), ALICE, reserve_id, "500")
-        })
-        .collect();
-    index(client, &batch).await;
-}
-
-/// The same wallet and the same reserve id on two Spokes, which is two
-/// positions rather than one.
-pub(super) async fn seed_both_spokes(client: &Client) {
-    index(
-        client,
-        &[
-            supply(At::block(100), ALICE, "7", "500"),
-            supply(At::block(100).log(1).on(SECOND_SPOKE), ALICE, "7", "900"),
-        ],
-    )
-    .await;
 }
