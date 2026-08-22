@@ -129,12 +129,12 @@ mod tests {
     use crate::store::{PositionQuery, PositionStore};
 
     /// This store, standing up its own database, as the contract wants it.
-    struct ClickHouse {
+    struct ClickHouseFixture {
         store: ClickHousePositionStore,
         client: Client,
     }
 
-    impl Fixture for ClickHouse {
+    impl Fixture for ClickHouseFixture {
         type Store = ClickHousePositionStore;
 
         async fn fresh(case: &str) -> Self {
@@ -216,7 +216,7 @@ mod tests {
         }
     }
 
-    position_store_contract!(ClickHouse);
+    position_store_contract!(ClickHouseFixture);
 
     /// What the contract cannot ask for, because a [`Held`] has already lost
     /// it: the fold's own behaviour, observed through this store.
