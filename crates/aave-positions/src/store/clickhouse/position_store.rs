@@ -311,7 +311,7 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn hides_a_closed_one_but_keeps_its_history() {
+        async fn hides_a_position_whose_shares_have_netted_to_zero() {
             let (store, client) = store("closed").await;
             index(
                 &client,
@@ -322,16 +322,10 @@ mod tests {
             )
             .await;
 
-            // §12.1: a position exists while its shares are non-zero. Its
-            // history does not stop having happened, so the row and its event
-            // count stay.
+            // §12.1: a position exists while its shares are non-zero. That the
+            // row and its event count survive being closed is the fold's, and
+            // is asserted where the fold is.
             assert!(store.list(&ask()).await.unwrap().items.is_empty());
-            let events: i64 = client
-                .query("SELECT sum(events) FROM user_positions")
-                .fetch_one()
-                .await
-                .unwrap();
-            assert_eq!(events, 2);
         }
 
         #[tokio::test]
