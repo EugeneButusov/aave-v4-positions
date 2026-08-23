@@ -11,6 +11,26 @@
 //! **Every error at once, not the first.** That is what `z.prettifyError` buys
 //! the service this replaces: a deployment with three variables wrong learns all
 //! three on the first boot instead of one per crash loop.
+//!
+//! **Which is why this is hand-rolled, and the reason is measured.** The two
+//! candidates were `clap`'s derive with `env =` on each field — what
+//! `meilisearch` and `influxdb3` do, and by volume the ecosystem's default — and
+//! `figment`, whose `Error` documents itself as possibly holding more than one.
+//! Given `API_PORT=0`, `API_HOST=nowhere` and `SHUTDOWN_GRACE_SECONDS=600`, both
+//! report exactly one: `figment`'s `count()` is 1 because serde stops at the
+//! first bad field, and `clap` exits on the first it reaches. Neither can say
+//! all three, so neither preserves the behaviour under a migration whose whole
+//! rule is not changing behaviour.
+//!
+//! The shape below is [linkerd2-proxy's](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/src/env.rs),
+//! arrived at independently and for the same reason — its `parse_config` says
+//! "parse all the environment variables … defer returning any errors until all
+//! of them have been parsed", and it takes its input through a trait so a test
+//! can hand it a map instead of the process environment. It spends 1090 lines on
+//! that; this spends a tenth of it on ten variables.
+//!
+//! `clap` still arrives with Phase 4's five CLIs, where the argument parsing is
+//! the point. This binary takes no arguments.
 
 use std::collections::HashMap;
 use std::fmt;

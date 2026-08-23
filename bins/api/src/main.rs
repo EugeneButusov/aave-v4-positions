@@ -45,6 +45,14 @@ async fn main() -> ExitCode {
 }
 
 async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
+    // A local-development convenience and nothing more: every deployed
+    // environment injects variables directly, and the image carries no file for
+    // this to find. Ignoring the error is the normal case, not a swallowed
+    // failure. It does not override a variable that is already set, which is
+    // also what `@nestjs/config` does with the same file — the repo's own
+    // `cp .env.example .env` workflow depends on both halves.
+    let _ = dotenvy::dotenv();
+
     let config = Config::from_env()?;
     logging::init(config.level, config.pretty);
 

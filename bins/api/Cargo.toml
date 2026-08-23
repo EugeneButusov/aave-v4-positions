@@ -11,6 +11,10 @@ ops.workspace = true
 postgres.workspace = true
 
 axum = "0.8.9"
+# Reads a local `.env` if there is one, as `@nestjs/config` does for the service
+# this replaces. Not a configuration library — see `config.rs` for why there
+# isn't one.
+dotenvy = "0.15.7"
 # `macros` for `#[tokio::main]` and the `join!` the readiness probe uses, `net`
 # for the listener, `rt-multi-thread` because this one serves concurrently
 # where `migrate` walks a list, and `sync` for the test that stands in for a
