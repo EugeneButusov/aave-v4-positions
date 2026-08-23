@@ -156,6 +156,58 @@ services:
       retries: 3
       start_period: 15s
 
+  # The Rust API, beside the Node one rather than instead of it. Phase 2's gate
+  # points both at the same databases and compares what they answer, which needs
+  # both running; it takes `api`'s name and port at cutover, once apps/api is
+  # deleted.
+  #
+  # Serving probes only for now, which is the whole of what this image does.
+  api-rust:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    restart: unless-stopped
+    # Must exceed SHUTDOWN_GRACE_SECONDS, or Docker SIGKILLs the container
+    # mid-drain and the readiness-first shutdown never completes.
+    stop_grace_period: 20s
+    # No `init`. The Node images want a reaper because node is a poor PID 1;
+    # this is one static binary that spawns nothing and takes SIGTERM itself.
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # One JSON object per line, as the Node service emits.
+      LOG_PRETTY: 'false'
+      SHUTDOWN_GRACE_SECONDS: '5'
+      API_HOST: 0.0.0.0
+      API_PORT: '3000'
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_DATABASE: aave
+      CLICKHOUSE_USER: aave
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
+      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
+      # Deliberately none of POSITIONS_CURSOR_SECRET, the staleness thresholds
+      # or the OTEL_* group: this process reads none of them yet, and setting a
+      # variable nothing honours is how a deployment comes to believe it is
+      # configured.
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - '${API_RUST_PORT:-3001}:3000'
+    healthcheck:
+      # busybox `wget` is already in the base image, and it exits 1 on a 503 —
+      # verified against BusyBox 1.37.0 rather than assumed, because a probe
+      # that always exits 0 is worse than no probe.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:3000/health/ready']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
   indexer:
     build:
       context: .

@@ -66,6 +66,18 @@ tokens — `ChainClient`, `LogReader`, `Erc20MetadataReader`, `CursorStore`, `Bl
 set. The hexagonal shape [the design notes](design-notes.md#layout) argue for is what makes this a
 port rather than a rewrite.
 
+**Sixteen of them, as it turns out.** `HealthIndicator` was never a boundary to an external system —
+it is an extension point for a report — and the shape it has today is DI machinery: an interface, a
+multi-provider token, and a service that resolves the array. Rust has nothing to resolve it with, and
+nothing in the ecosystem stands in: the one widely-used health crate on crates.io is `tonic-health`,
+which exists because gRPC standardises a health *protocol*. Every Rust service surveyed hand-rolls the
+handler over its concrete collaborators — [Quickwit](https://github.com/quickwit-oss/quickwit/blob/main/quickwit/quickwit-serve/src/health_check_api/handler.rs)
+passes them in as arguments, [linkerd2-proxy](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/admin/src/server/readiness.rs)
+makes readiness a thirty-line type rather than a service. So `crates/ops` keeps the report, which is a
+wire contract callers read, and drops the resolution: a binary passes one closure naming its
+dependencies, and the two `ping`s behind it live on the crates that own those connections, where the
+indexer will find them.
+
 ## Target layout
 
 A Cargo workspace at the repo root, beside the pnpm one. [`compose.yaml`](../compose.yaml),
@@ -76,7 +88,7 @@ Cargo.toml                  workspace
 crates/
   aave-abi/                 vendored ABI JSON + sol! bindings + addresses   ← new, see Risk 1
   telemetry/                OTLP init for traces, metrics, logs
-  ops/                      HealthIndicator trait, probe router, graceful drain
+  ops/                      the probe report, its router, and the graceful drain
   clickhouse/               client   ← package `clickhouse-client`
   postgres/                 connect
   migrations/               every `.sql` this deployment applies, embedded
@@ -502,6 +514,18 @@ gone, so the recorded request/response pairs become the regression suite that re
 Rust API, soak, then delete `apps/api` in its own PR. The remaining `packages/*` stay — the
 TypeScript indexer still needs them, and only the ones it has stopped needing go early, as
 `packages/migrations` did in Phase 0.
+
+**Landed so far.** [#45](https://github.com/EugeneButusov/aave-v4-positions/pull/45): the
+`PositionStore` port and its ClickHouse adapter, with the port's specs as an executable contract every
+implementation runs. Then `crates/ops` and `bins/api` — the process before it serves anything: config
+parsed once and every error at once, JSON logs, `/health/live` and `/health/ready`, the
+readiness-first drain, an image and an `api-rust` compose service beside the Node one. The four probe
+bodies were captured off the running TypeScript service rather than read from its DTO classes, which
+is how the 503 turned out to be the report verbatim with no framework envelope — a shape no
+TypeScript test pins.
+
+Left: `crates/telemetry`; the read halves of `token-metadata` and `prices` plus `SyncStatusStore`; and
+the route itself — DTOs, decimal scaling, cursor signing, validation, utoipa.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 

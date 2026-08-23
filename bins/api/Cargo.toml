@@ -1,0 +1,30 @@
+[package]
+name = "api"
+description = "Serves the read API"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+clickhouse-client.workspace = true
+ops.workspace = true
+postgres.workspace = true
+
+axum = "0.8.9"
+# `macros` for `#[tokio::main]` and the `join!` the readiness probe uses, `net`
+# for the listener, `rt-multi-thread` because this one serves concurrently
+# where `migrate` walks a list, and `sync` for the test that stands in for a
+# signal.
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "sync"] }
+# `ServiceBuilder`, so the two request-id layers are ordered where a reader can
+# see it rather than by the direction `Router::layer` happens to compose.
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.0", features = ["request-id"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json"] }
+# Validates the two database URLs at boot, which is what `z.url()` does today.
+# Already in the tree; naming it directly is what makes the check ours.
+url = "2.5.8"
+
+[lints]
+workspace = true
