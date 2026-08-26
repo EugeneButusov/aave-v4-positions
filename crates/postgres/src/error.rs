@@ -1,12 +1,6 @@
 /// What connecting can fail at.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("could not connect to Postgres")]
-    ConnectFailed {
-        #[source]
-        source: tokio_postgres::Error,
-    },
-
     #[error("could not parse the Postgres URL")]
     BadUrl {
         #[source]
@@ -19,8 +13,8 @@ pub enum Error {
         source: deadpool_postgres::BuildError,
     },
 
-    #[error("no connection available from the pool")]
-    Unavailable {
+    #[error("could not connect to Postgres")]
+    ConnectFailed {
         #[source]
         source: deadpool_postgres::PoolError,
     },

@@ -151,8 +151,11 @@ The single exception is `crates/clickhouse`, whose package is **`clickhouse-clie
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
 ([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a
 client factory rather than "ClickHouse" anyway. It was to be a probe as well; probes went to Phase 2
-with `ops`, so today it is `Config` and `build_client` and nothing else. `crates/postgres` needs no such dodge: the
-driver here is `tokio-postgres`, not `postgres`.
+with `ops`, and arrived there — so today it is `Config`, `build_client` and the `ping` a readiness
+check runs. `crates/postgres` needs no such dodge: the driver here is `tokio-postgres`, not
+`postgres`. It has one way in, `build_pool` and a `connection` taken from it, including for the
+one-shot migrator: a job that wants a single connection takes a single connection, and a second
+constructor handing out a bare client was a second thing to keep in step.
 
 **Each binary is a boundary, not just an entry point.** In Node the image is the artifact and
 `migrate.js` ships beside `main.js` in a tree where viem is one `require` away, so "the migration tool
