@@ -23,7 +23,7 @@ tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "s
 # `ServiceBuilder`, so the two request-id layers are ordered where a reader can
 # see it rather than by the direction `Router::layer` happens to compose.
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.7.0", features = ["request-id"] }
+tower-http = { version = "0.7.0", features = ["catch-panic", "request-id"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json"] }
 # Validates the two database URLs at boot, which is what `z.url()` does today.
