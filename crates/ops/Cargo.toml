@@ -1,0 +1,31 @@
+[package]
+name = "ops"
+description = "Probes, and the drain a rolling update needs"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The router is returned rather than served, so this crate takes no position on
+# the listener — but it does name `Router`, which is axum's, so the version is
+# shared with whoever merges it.
+axum = "0.8.9"
+serde = { version = "1.0.229", features = ["derive"] }
+# `signal` for the drain and `time` for the window it holds. No `rt`: a library
+# that started its own runtime would take the choice away from the binary.
+tokio = { version = "1.53.1", features = ["signal", "time"] }
+# One line, when the drain starts. Without it the stream is silent for the whole
+# grace window, which is exactly when someone is reading it.
+tracing = "0.1.44"
+
+[dev-dependencies]
+serde_json = "1.0.145"
+thiserror = "2.0.19"
+# `test-util` is what makes the drain's ordering test deterministic: paused time
+# advances on command rather than by sleeping and hoping.
+tokio = { version = "1.53.1", features = ["macros", "rt", "test-util", "time"] }
+# `oneshot` drives the router in-process, so the probe cases need no port.
+tower = { version = "0.5.3", features = ["util"] }
+
+[lints]
+workspace = true

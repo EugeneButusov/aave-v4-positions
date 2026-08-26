@@ -1,11 +1,14 @@
 # syntax=docker/dockerfile:1
 
-# Three targets. `migrate` is the Rust binary that applies the schema; `runtime`
-# is either Node service, chosen with APP=api or APP=indexer.
+# Four targets. `migrate` and `api` are Rust binaries — the one that applies the
+# schema and the one that serves reads; `runtime` is either Node service, chosen
+# with APP=api or APP=indexer.
 #
 # **Every consumer names its target.** `runtime` is last so a bare `docker build`
 # still produces a service image, but compose says which one it wants either way
 # — appending a stage must not be able to change what an existing service is.
+# #41 is what that rule was learned from: the Rust stages went on the end and
+# both Node services quietly became the migrate image.
 ARG NODE_VERSION=24
 ARG RUST_VERSION=1.96
 ARG ALPINE_VERSION=3.24
@@ -37,7 +40,9 @@ COPY packages/indexing/src/postgres-migrations ./packages/indexing/src/postgres-
 COPY packages/token-metadata/src/migrations ./packages/token-metadata/src/migrations
 COPY packages/prices/src/migrations ./packages/prices/src/migrations
 
-RUN cargo build --release --locked -p migrate
+# Both binaries from one stage, so they share the dependency compile rather than
+# building `tokio` and `serde` twice.
+RUN cargo build --release --locked -p migrate -p api
 
 # ---------------------------------------------------------------- migrate ----
 FROM alpine:${ALPINE_VERSION} AS migrate
@@ -53,6 +58,18 @@ USER nobody
 # Exec form and no shell, so a `docker compose down` mid-migration reaches the
 # process. There is nothing to drain — a failed run leaves the ledger accurate.
 ENTRYPOINT ["/usr/local/bin/migrate"]
+
+# -------------------------------------------------------------------- api ----
+FROM alpine:${ALPINE_VERSION} AS api
+# The image is the binary, as `migrate`'s is. It reads no file at runtime and
+# the whole configuration is environment variables, so there is nothing to copy
+# beside it and nothing to mount.
+COPY --from=rust-build /src/target/release/api /usr/local/bin/api
+USER nobody
+
+# Exec form and no shell, so SIGTERM reaches the process directly — a shell
+# wrapper would swallow it and the readiness-first drain would never run.
+ENTRYPOINT ["/usr/local/bin/api"]
 
 # ---------------------------------------------------------------- build ------
 FROM node:${NODE_VERSION}-alpine AS build

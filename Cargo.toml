@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 clickhouse-client = { path = "crates/clickhouse" }
 migrations = { path = "crates/migrations" }
+ops = { path = "crates/ops" }
 postgres = { path = "crates/postgres" }
 
 [workspace.lints.rust]

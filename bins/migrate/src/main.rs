@@ -14,7 +14,36 @@ mod clickhouse;
 use std::process::ExitCode;
 
 use migrations::Source;
-use refinery_core::{Error, Migration, Report, Runner};
+use refinery_core::{AsyncMigrate, Error, Migration, Report, Runner};
+
+/// Which database a failure was against.
+///
+/// **Said here rather than inherited from whatever failed underneath.** Before
+/// this, the Postgres stage looked like it named itself and only did so because
+/// `postgres::Error` happens to spell "Postgres" in its message, and the
+/// ClickHouse stage did not name itself at all — a missing database came back as
+/// refinery quoting the server and nothing else. A dependency's wording is the
+/// dependency's to change; which of two databases a deploy died on is ours to
+/// state.
+#[derive(Debug, thiserror::Error)]
+#[error("the {database} migrations could not be applied")]
+struct Failed {
+    database: &'static str,
+    #[source]
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl Failed {
+    fn at(
+        database: &'static str,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Self {
+        Self {
+            database,
+            source: source.into(),
+        }
+    }
+}
 
 /// Flattens the groups into the migration set refinery is handed.
 ///
@@ -43,10 +72,24 @@ async fn main() -> ExitCode {
         Err(error) => {
             // The chain, not just the head: the top line says which stage failed
             // and the cause underneath is the one naming the table or the syntax.
-            eprintln!("migrate: {error}");
-            let mut cause = error.source();
+            //
+            // A cause already quoted by the line above it is skipped, because
+            // the two error conventions in this tree disagree — ours name their
+            // own stage and leave the rest to `source()`, `deadpool`'s
+            // interpolate theirs — and a naive walk prints the bottom half
+            // twice. `ops::check` reconciles them the same way, for the same
+            // reason, into a single line rather than these.
+            let mut said = error.to_string();
+            eprintln!("migrate: {said}");
+
+            // Qualified, because `Error` in this module is refinery's.
+            let mut cause = std::error::Error::source(&error);
             while let Some(next) = cause {
-                eprintln!("  caused by: {next}");
+                let text = next.to_string();
+                if !said.contains(&text) {
+                    eprintln!("  caused by: {text}");
+                    said = text;
+                }
                 cause = next.source();
             }
             ExitCode::FAILURE
@@ -54,21 +97,40 @@ async fn main() -> ExitCode {
     }
 }
 
-/// ClickHouse first, then Postgres, each reported under its own name so a failure
-/// says which database it was rather than leaving that to be inferred.
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// ClickHouse first, then Postgres, each named on the way out whether it
+/// succeeded or not.
+async fn run() -> Result<(), Failed> {
     let mut target = clickhouse::ClickHouse(clickhouse_client::build_client(clickhouse_config()));
-    let applied = Runner::new(&union(migrations::CLICKHOUSE)?)
-        .run_async(&mut target)
-        .await?;
-    report("clickhouse", &applied);
+    apply("clickhouse", migrations::CLICKHOUSE, &mut target).await?;
 
-    let mut target = postgres::build_client(&env("POSTGRES_URL", POSTGRES_URL)).await?;
-    let applied = Runner::new(&union(migrations::POSTGRES)?)
-        .run_async(&mut target)
-        .await?;
-    report("postgres", &applied);
+    // One connection out of the pool, which is the only way this workspace
+    // connects to Postgres. A job that runs to completion wants exactly one and
+    // then exits; that it comes from a pool costs nothing and means there is not
+    // a second constructor to keep in step.
+    let url = env("POSTGRES_URL", POSTGRES_URL);
+    let pool = postgres::build_pool(&url).map_err(|error| Failed::at("postgres", error))?;
+    let mut target = postgres::connection(&pool)
+        .await
+        .map_err(|error| Failed::at("postgres", error))?;
+    apply("postgres", migrations::POSTGRES, &mut **target).await?;
 
+    Ok(())
+}
+
+/// Applies one database's set and says which one it was if anything goes wrong.
+async fn apply<T: AsyncMigrate + Send>(
+    database: &'static str,
+    sources: &[Source],
+    target: &mut T,
+) -> Result<(), Failed> {
+    let set = union(sources).map_err(|error| Failed::at(database, error))?;
+
+    let applied = Runner::new(&set)
+        .run_async(target)
+        .await
+        .map_err(|error| Failed::at(database, error))?;
+
+    report(database, &applied);
     Ok(())
 }
 
