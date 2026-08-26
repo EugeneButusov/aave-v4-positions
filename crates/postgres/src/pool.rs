@@ -25,8 +25,16 @@ const MAX_CONNECTIONS: usize = 10;
 /// to start instead turns a thirty-second outage into a crash loop, and
 /// `postgres.js` is lazy for the same reason.
 ///
+/// **And a single connection does not come back.** Measured against a server
+/// stopped and restarted under both: `build_client`'s answers "connection
+/// closed" from the outage onward and never recovers, because the task driving
+/// its socket has ended and nothing redials; the pool answers again the moment
+/// the server does. For a process whose readiness is derived from that answer,
+/// the difference is a pod that heals itself and a pod that needs restarting.
+///
 /// [`crate::build_client`] stays for `bins/migrate`, which hands refinery one
-/// raw connection and runs to completion.
+/// raw connection and runs to completion — one shot, and a failed run leaves the
+/// ledger accurate.
 ///
 /// # Errors
 ///
