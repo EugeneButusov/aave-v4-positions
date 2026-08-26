@@ -8,6 +8,20 @@
 //! registry.** `ops` owns the report and the paths; this owns which databases
 //! this process is answering for, which is knowledge the composition root
 //! already has and nothing else needs.
+//!
+//! **It is handed its dependencies rather than making them**, and each of the
+//! four has its own reason. The [`Drain`] has two holders — the readiness
+//! handler and the future `with_graceful_shutdown` waits on — so one made in
+//! here could never be flipped by the other. [`Uptime`] is read at the top of
+//! `main`, because started here it would begin counting after the config and
+//! both clients. The clients could be built from a [`crate::config::Config`]
+//! and are not, because they are about to have a second consumer each: the
+//! position store takes the ClickHouse client, the read stores take the pool,
+//! and a `router` that constructed them would have to construct those too — at
+//! which point it is the composition root rather than a description of what is
+//! served. It is also what lets the cases below hand it a Postgres pool pointed
+//! at a closed port, and what will let them hand it a fake store instead of a
+//! doctored URL.
 
 use axum::Router;
 use clickhouse_client::clickhouse::Client;
