@@ -75,3 +75,32 @@ pub async fn connection(pool: &Pool) -> Result<Connection, Error> {
         .await
         .map_err(|source| Error::ConnectFailed { source })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// That cloning a [`Pool`] shares one rather than making a second.
+    ///
+    /// Worth pinning because a request path depends on it: the readiness
+    /// handler clones its pool on every call, and `Clone` says nothing about
+    /// which of the two it is. `deadpool`'s `Pool` is an `Arc<PoolInner>` and
+    /// its docs say so, but a crate is free to change that in a patch release
+    /// and nothing here would notice.
+    ///
+    /// Closing rather than counting, so this needs no server: `close()` shuts
+    /// the shared semaphore, and a second pool would have its own.
+    #[tokio::test]
+    async fn a_cloned_pool_is_the_same_pool() {
+        let pool = build_pool("postgres://postgres@127.0.0.1:1/nothing").unwrap();
+        let clone = pool.clone();
+
+        clone.close();
+
+        assert!(pool.is_closed(), "the clone closed a pool of its own");
+        assert!(
+            matches!(connection(&pool).await, Err(Error::ConnectFailed { .. })),
+            "the original still handed out a connection"
+        );
+    }
+}

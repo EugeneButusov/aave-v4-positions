@@ -38,6 +38,16 @@ use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetReques
 
 pub(crate) fn router(uptime: Uptime, drain: Drain, clickhouse: Client, postgres: Pool) -> Router {
     let probes = ops::probe_router(uptime, drain, move || {
+        // Cloned per request, and both clones share the thing that matters.
+        // `deadpool`'s `Pool` is an `Arc<PoolInner>`, so this is one atomic bump
+        // and the connections are the same connections — pinned by
+        // `postgres::pool::tests::a_cloned_pool_is_the_same_pool`, because
+        // `Clone` alone does not say which of the two it is. `clickhouse`'s
+        // `Client` shares its transport the same way, behind an
+        // `Arc<dyn HttpClient>`, but is not quite free: its url, database,
+        // auth, roles, settings and headers are owned fields and are copied.
+        // All of the collections are empty here, so it is a few small
+        // allocations — worth knowing before anyone sets `settings`.
         let (clickhouse, postgres) = (clickhouse.clone(), postgres.clone());
         async move {
             // Side by side rather than one after the other, as the TypeScript's

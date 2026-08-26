@@ -2124,6 +2124,7 @@ version = "0.0.0"
 dependencies = [
  "deadpool-postgres",
  "thiserror",
+ "tokio",
  "tokio-postgres",
 ]
 
