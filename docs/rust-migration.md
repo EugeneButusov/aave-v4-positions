@@ -597,3 +597,29 @@ The arithmetic decisions rest on these rather than on recall:
 [primitive-types::U256](https://docs.rs/primitive-types/latest/primitive_types/struct.U256.html) ·
 [spl-math](https://docs.rs/spl-math/latest/spl_math/) ·
 [Uniswap FullMath](https://docs.uniswap.org/contracts/v3/reference/core/libraries/FullMath)
+
+The service foundation rests on these, each read rather than recalled, and each
+named beside the code it shaped:
+
+| source | what it settled |
+| --- | --- |
+| [quickwit `health_check_api/handler.rs`](https://github.com/quickwit-oss/quickwit/blob/main/quickwit/quickwit-serve/src/health_check_api/handler.rs) | a probe handler takes its real collaborators; no registry to resolve |
+| [linkerd2-proxy `admin/server/readiness.rs`](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/admin/src/server/readiness.rs) | readiness is a shared value rather than a service |
+| [linkerd2-proxy `app/src/env.rs`](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/src/env.rs) | parse every variable, defer the failure; take the environment as a map so a test can supply one |
+| [influxdb `models/health.rs`](https://github.com/influxdata/influxdb/blob/main/core/influxdb2_client/src/models/health.rs) | `skip_serializing_if` — a passing check serialises to two keys |
+| [crates.io `crates_io_env_vars`](https://github.com/rust-lang/crates.io/blob/main/crates/crates_io_env_vars/src/lib.rs) | hand-rolled env reading over a config crate, and `dotenvy` beside it |
+| [crates.io `src/middleware.rs`](https://github.com/rust-lang/crates.io/blob/main/src/middleware.rs) | `CatchPanicLayer`, so a panicking handler answers rather than dropping the socket |
+| [meilisearch `src/option.rs`](https://github.com/meilisearch/meilisearch/blob/main/crates/meilisearch/src/option.rs) | the `clap(env)` shape, measured and then declined — it reports one bad variable, not all of them |
+| [`clickhouse` 0.15.1](https://github.com/ClickHouse/clickhouse-rs) · [`deadpool` 0.12.3](https://github.com/bikeshedder/deadpool) | what `Clone` does to a client and a pool: transport shared, config copied |
+
+Still to be spent, on the route: [crates.io `util/errors.rs`](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs) and
+[Zed collab](https://github.com/zed-industries/zed/blob/main/crates/collab/src/lib.rs) converge on one error type with an
+`IntoResponse`; [crates.io `openapi.rs`](https://github.com/rust-lang/crates.io/blob/main/src/openapi.rs) registers routes with
+their documentation so neither can drift, and snapshots the document with `insta`; its
+[pagination](https://github.com/rust-lang/crates.io/blob/main/src/controllers/helpers/pagination.rs) leaves the cursor
+unsigned, which is the one place we diverge and say why.
+
+**What none of them could settle** is the wire contract. The probe payloads, their status codes and
+the drain's ordering came from measuring the running TypeScript service and reading
+`packages/ops/src/lifecycle/graceful-shutdown.ts` — this port's obligation, not the ecosystem's
+convention.
