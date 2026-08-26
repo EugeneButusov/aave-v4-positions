@@ -15,6 +15,7 @@
 
 mod app;
 mod config;
+mod errors;
 mod logging;
 mod middleware;
 mod router;

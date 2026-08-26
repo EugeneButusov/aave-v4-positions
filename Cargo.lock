@@ -80,6 +80,8 @@ dependencies = [
  "dotenvy",
  "ops",
  "postgres",
+ "serde",
+ "serde_json",
  "tokio",
  "tower",
  "tower-http",
