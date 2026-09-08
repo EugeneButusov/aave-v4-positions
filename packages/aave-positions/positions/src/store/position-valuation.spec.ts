@@ -25,6 +25,7 @@ import {
   addReserve,
   borrow,
   migratedDatabase,
+  setCollateral,
   supply,
 } from '../test-support/spoke-ledger';
 
@@ -122,7 +123,9 @@ describe('valuing a position', () => {
 
   describe('the amounts', () => {
     it('turns supplied shares into a token amount', async () => {
-      await listReserve([supply({ block: 200 }, ALICE, '7', '1000')]);
+      // Before the checkpoint, so the position exists at the instant valued at:
+      // the fold is read as of that instant too, not just the index.
+      await listReserve([supply({ block: 50 }, ALICE, '7', '1000')]);
 
       const [position] = (await page({ asOf: BigInt(CHECKPOINT_AT) })).items;
       // Valued at the checkpoint itself, so the index has not moved: the asset
@@ -133,7 +136,7 @@ describe('valuing a position', () => {
     });
 
     it('grows a debt with time on a fixed share balance', async () => {
-      await listReserve([borrow({ block: 200 }, ALICE, '7', '1000000')]);
+      await listReserve([borrow({ block: 50 }, ALICE, '7', '1000000')]);
 
       const now = await page({ asOf: BigInt(CHECKPOINT_AT) });
       const later = await page({ asOf: BigInt(CHECKPOINT_AT + YEAR) });
@@ -185,11 +188,111 @@ describe('valuing a position', () => {
     });
 
     it('returns every amount as a string, exact past 2^53', async () => {
-      await listReserve([borrow({ block: 200 }, ALICE, '7', '422166581625087607993')]);
+      await listReserve([borrow({ block: 50 }, ALICE, '7', '422166581625087607993')]);
 
       const [position] = (await page({ asOf: BigInt(CHECKPOINT_AT) })).items;
       expect(position?.value?.drawnDebt).toBe('422166581625087607993');
       expect(typeof position?.value?.totalDebt).toBe('string');
+    });
+  });
+
+  /**
+   * Which fold the page reads, as opposed to which checkpoint it values with.
+   *
+   * A share balance is the sum of every delta up to an instant, and until the
+   * fold carried one it could only be summed up to *now* — so naming an `asOf`
+   * moved the interest index and left the balances where they were. The two
+   * halves have to agree or the page reports a debt that was never owed.
+   */
+  describe('the instant it reads the fold at', () => {
+    /** Between the two events every case below writes. */
+    const BETWEEN = BigInt(CHECKPOINT_AT + 150);
+    const AFTER = BigInt(CHECKPOINT_AT + 250);
+
+    it('returns the shares held then, not the ones held since', async () => {
+      await listReserve([
+        supply({ block: 200 }, ALICE, '7', '1000'),
+        supply({ block: 300 }, ALICE, '7', '500'),
+      ]);
+
+      expect((await page({ asOf: BETWEEN })).items[0]?.suppliedShares).toBe('1000');
+      expect((await page({ asOf: AFTER })).items[0]?.suppliedShares).toBe('1500');
+    });
+
+    it('values those shares rather than the ones held now', async () => {
+      await listReserve([
+        borrow({ block: 200 }, ALICE, '7', '1000000'),
+        borrow({ block: 300 }, ALICE, '7', '1000000'),
+      ]);
+
+      // Both reads extrapolate the same checkpoint to their own instant, so the
+      // gap between them is the second borrow and not interest.
+      const before = await page({ asOf: BETWEEN });
+      const after = await page({ asOf: AFTER });
+
+      expect(before.items[0]?.drawnShares).toBe('1000000');
+      expect(after.items[0]?.drawnShares).toBe('2000000');
+      expect(BigInt(after.items[0]?.value?.totalDebt ?? '0')).toBeGreaterThan(
+        2n * BigInt(before.items[0]?.value?.totalDebt ?? '0') - 10n,
+      );
+    });
+
+    it('leaves out a position that did not exist yet', async () => {
+      await listReserve([supply({ block: 300 }, ALICE, '7', '1000')]);
+
+      // Its shares sum to nothing before its first event, and a position with no
+      // shares is one the listing filter drops — the same rule that hides a
+      // closed one.
+      expect((await page({ asOf: BETWEEN })).items).toEqual([]);
+      expect((await page({ asOf: AFTER })).items).toHaveLength(1);
+    });
+
+    it('reads the collateral flag as it stood', async () => {
+      await listReserve([
+        supply({ block: 200 }, ALICE, '7', '1000'),
+        setCollateral({ block: 300 }, ALICE, '7', true),
+      ]);
+
+      // Latest-wins, so the cut changes which row argMax lands on rather than
+      // whether it finds one. Without it the flag would read as set at instants
+      // before anyone set it.
+      expect((await page({ asOf: BETWEEN })).items[0]?.usingAsCollateral).toBe(false);
+      expect((await page({ asOf: AFTER })).items[0]?.usingAsCollateral).toBe(true);
+    });
+
+    it('does not resolve a reserve listed after the instant', async () => {
+      await hubEvents.append([
+        addAsset({ block: 10 }, USDC, 6),
+        add({ block: 20 }, '1000000', '1000000'),
+        draw({ block: 30 }, '400000', '400000'),
+        updateAsset({ block: CHECKPOINT_BLOCK }, RAY.toString(), FIVE_PERCENT, '0'),
+      ]);
+      await spokeEvents.append([
+        supply({ block: 200 }, ALICE, '7', '1000'),
+        addReserve({ block: 300 }, '7', '7', HUB),
+      ]);
+
+      // The shares are real at both instants; what moves is whether the registry
+      // can yet say which Hub asset they belong to. Null rather than resolved
+      // through a listing that had not happened — the same answer as a reserve
+      // this deployment has never seen.
+      const before = (await page({ asOf: BETWEEN })).items[0];
+      expect(before?.suppliedShares).toBe('1000');
+      expect(before?.asset).toBeNull();
+      expect(before?.value).toBeNull();
+
+      expect((await page({ asOf: AFTER })).items[0]?.asset).not.toBeNull();
+    });
+
+    it('answers the same after later events land', async () => {
+      await listReserve([supply({ block: 200 }, ALICE, '7', '1000')]);
+      const before = await page({ asOf: BETWEEN });
+
+      await spokeEvents.append([supply({ block: 300 }, ALICE, '7', '500')]);
+
+      // §12.6's promise, and the half of it the fold owns: a page pinned to an
+      // instant does not move because the indexer did.
+      expect((await page({ asOf: BETWEEN })).items).toEqual(before.items);
     });
   });
 });

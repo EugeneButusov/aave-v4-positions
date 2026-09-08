@@ -263,6 +263,272 @@ pub const CLICKHOUSE: &[Source] = &[
                     "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/052_spoke_reserves_current.sql"
                 ),
             },
+            Embedded {
+                file: "060_drop_position_supply",
+                label: "V60__drop_position_supply",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/060_drop_position_supply.sql"
+                ),
+            },
+            Embedded {
+                file: "061_drop_position_withdraw",
+                label: "V61__drop_position_withdraw",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/061_drop_position_withdraw.sql"
+                ),
+            },
+            Embedded {
+                file: "062_drop_position_borrow",
+                label: "V62__drop_position_borrow",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/062_drop_position_borrow.sql"
+                ),
+            },
+            Embedded {
+                file: "063_drop_position_repay",
+                label: "V63__drop_position_repay",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/063_drop_position_repay.sql"
+                ),
+            },
+            Embedded {
+                file: "064_drop_position_report_deficit",
+                label: "V64__drop_position_report_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/064_drop_position_report_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "065_drop_position_liquidation_collateral",
+                label: "V65__drop_position_liquidation_collateral",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/065_drop_position_liquidation_collateral.sql"
+                ),
+            },
+            Embedded {
+                file: "066_drop_position_liquidation_debt",
+                label: "V66__drop_position_liquidation_debt",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/066_drop_position_liquidation_debt.sql"
+                ),
+            },
+            Embedded {
+                file: "067_drop_position_liquidation_liquidator",
+                label: "V67__drop_position_liquidation_liquidator",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/067_drop_position_liquidation_liquidator.sql"
+                ),
+            },
+            Embedded {
+                file: "068_drop_user_positions",
+                label: "V68__drop_user_positions",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/068_drop_user_positions.sql"
+                ),
+            },
+            Embedded {
+                file: "069_user_positions",
+                label: "V69__user_positions",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/069_user_positions.sql"
+                ),
+            },
+            Embedded {
+                file: "070_position_supply",
+                label: "V70__position_supply",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/070_position_supply.sql"
+                ),
+            },
+            Embedded {
+                file: "071_position_withdraw",
+                label: "V71__position_withdraw",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/071_position_withdraw.sql"
+                ),
+            },
+            Embedded {
+                file: "072_position_borrow",
+                label: "V72__position_borrow",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/072_position_borrow.sql"
+                ),
+            },
+            Embedded {
+                file: "073_position_repay",
+                label: "V73__position_repay",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/073_position_repay.sql"
+                ),
+            },
+            Embedded {
+                file: "074_position_report_deficit",
+                label: "V74__position_report_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/074_position_report_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "075_position_liquidation_collateral",
+                label: "V75__position_liquidation_collateral",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/075_position_liquidation_collateral.sql"
+                ),
+            },
+            Embedded {
+                file: "076_position_liquidation_debt",
+                label: "V76__position_liquidation_debt",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/076_position_liquidation_debt.sql"
+                ),
+            },
+            Embedded {
+                file: "077_position_liquidation_liquidator",
+                label: "V77__position_liquidation_liquidator",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/077_position_liquidation_liquidator.sql"
+                ),
+            },
+            Embedded {
+                file: "078_fill_position_supply",
+                label: "V78__fill_position_supply",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/078_fill_position_supply.sql"
+                ),
+            },
+            Embedded {
+                file: "079_fill_position_withdraw",
+                label: "V79__fill_position_withdraw",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/079_fill_position_withdraw.sql"
+                ),
+            },
+            Embedded {
+                file: "080_fill_position_borrow",
+                label: "V80__fill_position_borrow",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/080_fill_position_borrow.sql"
+                ),
+            },
+            Embedded {
+                file: "081_fill_position_repay",
+                label: "V81__fill_position_repay",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/081_fill_position_repay.sql"
+                ),
+            },
+            Embedded {
+                file: "082_fill_position_report_deficit",
+                label: "V82__fill_position_report_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/082_fill_position_report_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "083_fill_position_liquidation_collateral",
+                label: "V83__fill_position_liquidation_collateral",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/083_fill_position_liquidation_collateral.sql"
+                ),
+            },
+            Embedded {
+                file: "084_fill_position_liquidation_debt",
+                label: "V84__fill_position_liquidation_debt",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/084_fill_position_liquidation_debt.sql"
+                ),
+            },
+            Embedded {
+                file: "085_fill_position_liquidation_liquidator",
+                label: "V85__fill_position_liquidation_liquidator",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/085_fill_position_liquidation_liquidator.sql"
+                ),
+            },
+            Embedded {
+                file: "086_user_position_flags_timestamp",
+                label: "V86__user_position_flags_timestamp",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/086_user_position_flags_timestamp.sql"
+                ),
+            },
+            Embedded {
+                file: "087_position_collateral_flag",
+                label: "V87__position_collateral_flag",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/087_position_collateral_flag.sql"
+                ),
+            },
+            Embedded {
+                file: "088_truncate_user_position_flags",
+                label: "V88__truncate_user_position_flags",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/088_truncate_user_position_flags.sql"
+                ),
+            },
+            Embedded {
+                file: "089_fill_position_collateral_flag",
+                label: "V89__fill_position_collateral_flag",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/089_fill_position_collateral_flag.sql"
+                ),
+            },
+            Embedded {
+                file: "090_user_positions_as_of",
+                label: "V90__user_positions_as_of",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/090_user_positions_as_of.sql"
+                ),
+            },
+            Embedded {
+                file: "091_drop_user_positions_current",
+                label: "V91__drop_user_positions_current",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/091_drop_user_positions_current.sql"
+                ),
+            },
+            Embedded {
+                file: "092_spoke_reserves_timestamp",
+                label: "V92__spoke_reserves_timestamp",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/092_spoke_reserves_timestamp.sql"
+                ),
+            },
+            Embedded {
+                file: "093_spoke_reserve_registry",
+                label: "V93__spoke_reserve_registry",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/093_spoke_reserve_registry.sql"
+                ),
+            },
+            Embedded {
+                file: "094_truncate_spoke_reserves",
+                label: "V94__truncate_spoke_reserves",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/094_truncate_spoke_reserves.sql"
+                ),
+            },
+            Embedded {
+                file: "095_fill_spoke_reserve_registry",
+                label: "V95__fill_spoke_reserve_registry",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/095_fill_spoke_reserve_registry.sql"
+                ),
+            },
+            Embedded {
+                file: "096_spoke_reserves_as_of",
+                label: "V96__spoke_reserves_as_of",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/096_spoke_reserves_as_of.sql"
+                ),
+            },
+            Embedded {
+                file: "097_drop_spoke_reserves_current",
+                label: "V97__drop_spoke_reserves_current",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/097_drop_spoke_reserves_current.sql"
+                ),
+            },
         ],
     },
 ];

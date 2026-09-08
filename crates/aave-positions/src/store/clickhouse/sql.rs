@@ -47,7 +47,11 @@ FROM (
     -- value rather than a missing predicate. Measured: same condition, same
     -- granule, same binary search as omitting it.
     SELECT *
-    FROM user_positions_current
+    -- now(), not the instant this page is valued at, which is the difference
+    -- this port has yet to make: TypeScript binds valuedAt to both views so a
+    -- page cannot read the fold at one instant and value it at another. Until
+    -- that lands, this is what user_positions_current was, said out loud.
+    FROM user_positions_as_of(cut = now())
     -- The leading pair of the sorting key, so the scan starts at this
     -- wallet's rows rather than filtering its way to them.
     WHERE chain_id = {chainId:UInt32}
@@ -105,7 +109,7 @@ FROM (
 --
 -- LEFT, because a position must survive a reserve the registry has not
 -- seen. The nulls that produces are reported as nulls rather than zeros.
-LEFT JOIN spoke_reserves_current AS r
+LEFT JOIN spoke_reserves_as_of(cut = now()) AS r
     ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
 LEFT JOIN hub_assets_current AS a
     ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id

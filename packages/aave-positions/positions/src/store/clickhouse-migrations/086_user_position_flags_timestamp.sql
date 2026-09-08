@@ -1,0 +1,12 @@
+-- The collateral flag gains the instant it was set at.
+--
+-- **An `ALTER` here where `user_positions` needed a rebuild**, and the
+-- difference is the grain: this table is already one row per log, keyed by
+-- `(…, block_number, log_index)`, so every row still knows which event it came
+-- from and the column can be filled from the log rather than guessed.
+--
+-- It is filled by `089`, not by this statement. A new column defaults to the
+-- epoch on existing rows, which reads as "before every cut" — the flag would
+-- then be visible at instants before it was set, which is precisely the bug
+-- this whole sequence exists to remove.
+ALTER TABLE user_position_flags ADD COLUMN IF NOT EXISTS block_timestamp DateTime('UTC');
