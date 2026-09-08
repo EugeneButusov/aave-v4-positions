@@ -15,7 +15,10 @@ const POSITIONS_VIEW = 'user_positions_as_of';
 // Also parameterised: a reserve listed after the instant did not exist then,
 // and a page valued at that instant must not resolve through it.
 const RESERVES_VIEW = 'spoke_reserves_as_of';
-const HUB_ASSETS_VIEW = 'hub_assets_current';
+// The last of the three, and the one the 500 came from: the interest
+// checkpoint a page extrapolates from has to be the one in force at the instant
+// it is valued at, not whichever the indexer folded last.
+const HUB_ASSETS_VIEW = 'hub_assets_as_of';
 
 /**
  * This package's schema, owned here rather than in a central list.
@@ -275,7 +278,7 @@ export class ClickHousePositionStore implements PositionStore {
         -- seen. The nulls that produces are reported as nulls rather than zeros.
         LEFT JOIN ${RESERVES_VIEW}(cut = {valuedAt:DateTime}) AS r
                ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
-        LEFT JOIN ${HUB_ASSETS_VIEW} AS a
+        LEFT JOIN ${HUB_ASSETS_VIEW}(cut = {valuedAt:DateTime}) AS a
                ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
         -- Qualified, and it has to be. Unqualified, \`reserve_id\` binds to the
         -- toString alias above and sorts the decimal digits as text, putting 13

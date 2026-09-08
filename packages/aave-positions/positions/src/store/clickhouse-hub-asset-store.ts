@@ -6,7 +6,9 @@ import type { Address } from '@packages/indexing';
 import type { HubAsset } from './hub-asset';
 import type { HubAssetStore } from './hub-asset-store';
 
-const HUB_ASSETS_VIEW = 'hub_assets_current';
+// Reconciliation compares the fold as it stands, so this one asks for now and
+// says so rather than getting it from a view named for it.
+const HUB_ASSETS_VIEW = 'hub_assets_as_of(cut = now())';
 
 /** One row as ClickHouse renders it: every wide integer already a string. */
 interface Row {

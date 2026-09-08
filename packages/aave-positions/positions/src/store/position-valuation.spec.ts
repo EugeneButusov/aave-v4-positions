@@ -295,4 +295,74 @@ describe('valuing a position', () => {
       expect((await page({ asOf: BETWEEN })).items).toEqual(before.items);
     });
   });
+
+  /**
+   * Which checkpoint the extrapolation starts from.
+   *
+   * The index accrues per second and is emitted only when something touches the
+   * asset, so a valuation is a checkpoint plus linear interest to the instant
+   * asked for (§5.3). Which checkpoint is therefore the whole of the answer, and
+   * it has to be the one in force then: a later one is a negative elapsed, which
+   * reverts on chain and threw here, and one chosen by how far the indexer
+   * happens to have got is a different answer to the same question each time.
+   */
+  describe('the checkpoint it extrapolates from', () => {
+    const LATER_BLOCK = CHECKPOINT_BLOCK + 200;
+    const LATER_AT = 1_785_000_000 + LATER_BLOCK;
+    /** An index no extrapolation from the first checkpoint could reach. */
+    const DOUBLED = (RAY * 2n).toString();
+
+    async function twoCheckpoints(): Promise<void> {
+      await listReserve([supply({ block: 50 }, ALICE, '7', '1000')]);
+      await hubEvents.append([updateAsset({ block: LATER_BLOCK }, DOUBLED, FIVE_PERCENT, '0')]);
+    }
+
+    it('takes the one in force at the instant, not the newest there is', async () => {
+      await twoCheckpoints();
+
+      // The newest checkpoint is 200s after this instant, and reaching it from
+      // here is `calculateLinearInterest` over a negative elapsed — which the
+      // arithmetic refuses, so the whole page failed rather than valued.
+      expect((await page({ asOf: BigInt(CHECKPOINT_AT) })).items[0]?.value?.drawnIndex).toBe(
+        RAY.toString(),
+      );
+    });
+
+    it('carries it forward to the instant rather than snapping to it', async () => {
+      await twoCheckpoints();
+      const elapsed = 100n;
+
+      // Still the earlier checkpoint, and 100s of interest on top: the cut
+      // selects a base, it does not replace the extrapolation.
+      expect(
+        (await page({ asOf: BigInt(CHECKPOINT_AT) + elapsed })).items[0]?.value?.drawnIndex,
+      ).toBe((RAY + (BigInt(FIVE_PERCENT) * elapsed) / BigInt(YEAR)).toString());
+    });
+
+    it('moves to the later one once the instant reaches it', async () => {
+      await twoCheckpoints();
+
+      expect((await page({ asOf: BigInt(LATER_AT) })).items[0]?.value?.drawnIndex).toBe(DOUBLED);
+    });
+
+    it('reports null when no checkpoint precedes the instant', async () => {
+      await twoCheckpoints();
+
+      // Nothing to carry forward, so no number is offered — the same answer as
+      // an asset the Hub has listed and never checkpointed at all.
+      const [position] = (await page({ asOf: BigInt(CHECKPOINT_AT) - 1n })).items;
+      expect(position?.value).toBeNull();
+    });
+
+    it('answers the same after a checkpoint lands past the instant', async () => {
+      await listReserve([supply({ block: 50 }, ALICE, '7', '1000')]);
+      const asOf = BigInt(CHECKPOINT_AT) + 100n;
+      const before = await page({ asOf });
+
+      await hubEvents.append([updateAsset({ block: LATER_BLOCK }, DOUBLED, FIVE_PERCENT, '0')]);
+
+      // §12.6's promise, and the half the Hub dimension owns.
+      expect((await page({ asOf })).items[0]?.value).toEqual(before.items[0]?.value);
+    });
+  });
 });

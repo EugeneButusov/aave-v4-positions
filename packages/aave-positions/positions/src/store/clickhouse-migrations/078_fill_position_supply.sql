@@ -2,7 +2,15 @@
 -- A materialized view fires on insert and never looks back, so the rows written
 -- before `070` existed have to come from `spoke_events` directly. Same
 -- projection, so the two cannot disagree.
+-- Columns named, and they have to be. `INSERT … SELECT` maps by position,
+-- `ALTER TABLE … ADD COLUMN` appends, and ClickHouse raises nothing when the
+-- two disagree — it truncated a DateTime into a UInt8 flag when measured, and
+-- wrote it. A materialized view maps by name and is safe either way; this is
+-- the statement that is not.
 INSERT INTO user_positions
+    (chain_id, user, spoke, reserve_id, block_timestamp, supplied_shares,
+     drawn_shares, premium_shares, premium_offset_ray, net_supplied_amount,
+     net_borrowed_amount, events)
 SELECT
     chain_id,
     lower(JSONExtractString(body, 'user'))                      AS user,

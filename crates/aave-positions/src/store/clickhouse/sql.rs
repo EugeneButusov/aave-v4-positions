@@ -111,7 +111,7 @@ FROM (
 -- seen. The nulls that produces are reported as nulls rather than zeros.
 LEFT JOIN spoke_reserves_as_of(cut = now()) AS r
     ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
-LEFT JOIN hub_assets_current AS a
+LEFT JOIN hub_assets_as_of(cut = now()) AS a
     ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
 -- Qualified, and it has to be. Unqualified, reserve_id binds to the
 -- toString alias above and sorts the decimal digits as text, putting 13

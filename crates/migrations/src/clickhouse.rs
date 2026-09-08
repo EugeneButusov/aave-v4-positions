@@ -529,6 +529,307 @@ pub const CLICKHOUSE: &[Source] = &[
                     "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/097_drop_spoke_reserves_current.sql"
                 ),
             },
+            Embedded {
+                file: "100_hub_asset_deltas",
+                label: "V100__hub_asset_deltas",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/100_hub_asset_deltas.sql"
+                ),
+            },
+            Embedded {
+                file: "101_drop_hub_add",
+                label: "V101__drop_hub_add",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/101_drop_hub_add.sql"
+                ),
+            },
+            Embedded {
+                file: "102_drop_hub_remove",
+                label: "V102__drop_hub_remove",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/102_drop_hub_remove.sql"
+                ),
+            },
+            Embedded {
+                file: "103_drop_hub_draw",
+                label: "V103__drop_hub_draw",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/103_drop_hub_draw.sql"
+                ),
+            },
+            Embedded {
+                file: "104_drop_hub_restore",
+                label: "V104__drop_hub_restore",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/104_drop_hub_restore.sql"
+                ),
+            },
+            Embedded {
+                file: "105_drop_hub_report_deficit",
+                label: "V105__drop_hub_report_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/105_drop_hub_report_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "106_drop_hub_eliminate_deficit",
+                label: "V106__drop_hub_eliminate_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/106_drop_hub_eliminate_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "107_drop_hub_mint_fee_shares",
+                label: "V107__drop_hub_mint_fee_shares",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/107_drop_hub_mint_fee_shares.sql"
+                ),
+            },
+            Embedded {
+                file: "108_drop_hub_sweep",
+                label: "V108__drop_hub_sweep",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/108_drop_hub_sweep.sql"
+                ),
+            },
+            Embedded {
+                file: "109_drop_hub_reclaim",
+                label: "V109__drop_hub_reclaim",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/109_drop_hub_reclaim.sql"
+                ),
+            },
+            Embedded {
+                file: "110_drop_hub_refresh_premium",
+                label: "V110__drop_hub_refresh_premium",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/110_drop_hub_refresh_premium.sql"
+                ),
+            },
+            Embedded {
+                file: "111_hub_add",
+                label: "V111__hub_add",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/111_hub_add.sql"
+                ),
+            },
+            Embedded {
+                file: "112_hub_remove",
+                label: "V112__hub_remove",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/112_hub_remove.sql"
+                ),
+            },
+            Embedded {
+                file: "113_hub_draw",
+                label: "V113__hub_draw",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/113_hub_draw.sql"
+                ),
+            },
+            Embedded {
+                file: "114_hub_restore",
+                label: "V114__hub_restore",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/114_hub_restore.sql"
+                ),
+            },
+            Embedded {
+                file: "115_hub_report_deficit",
+                label: "V115__hub_report_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/115_hub_report_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "116_hub_eliminate_deficit",
+                label: "V116__hub_eliminate_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/116_hub_eliminate_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "117_hub_mint_fee_shares",
+                label: "V117__hub_mint_fee_shares",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/117_hub_mint_fee_shares.sql"
+                ),
+            },
+            Embedded {
+                file: "118_hub_sweep",
+                label: "V118__hub_sweep",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/118_hub_sweep.sql"
+                ),
+            },
+            Embedded {
+                file: "119_hub_reclaim",
+                label: "V119__hub_reclaim",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/119_hub_reclaim.sql"
+                ),
+            },
+            Embedded {
+                file: "120_hub_refresh_premium",
+                label: "V120__hub_refresh_premium",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/120_hub_refresh_premium.sql"
+                ),
+            },
+            Embedded {
+                file: "121_truncate_hub_assets",
+                label: "V121__truncate_hub_assets",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/121_truncate_hub_assets.sql"
+                ),
+            },
+            Embedded {
+                file: "122_hub_assets_rollup",
+                label: "V122__hub_assets_rollup",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/122_hub_assets_rollup.sql"
+                ),
+            },
+            Embedded {
+                file: "123_fill_hub_add",
+                label: "V123__fill_hub_add",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/123_fill_hub_add.sql"
+                ),
+            },
+            Embedded {
+                file: "124_fill_hub_remove",
+                label: "V124__fill_hub_remove",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/124_fill_hub_remove.sql"
+                ),
+            },
+            Embedded {
+                file: "125_fill_hub_draw",
+                label: "V125__fill_hub_draw",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/125_fill_hub_draw.sql"
+                ),
+            },
+            Embedded {
+                file: "126_fill_hub_restore",
+                label: "V126__fill_hub_restore",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/126_fill_hub_restore.sql"
+                ),
+            },
+            Embedded {
+                file: "127_fill_hub_report_deficit",
+                label: "V127__fill_hub_report_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/127_fill_hub_report_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "128_fill_hub_eliminate_deficit",
+                label: "V128__fill_hub_eliminate_deficit",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/128_fill_hub_eliminate_deficit.sql"
+                ),
+            },
+            Embedded {
+                file: "129_fill_hub_mint_fee_shares",
+                label: "V129__fill_hub_mint_fee_shares",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/129_fill_hub_mint_fee_shares.sql"
+                ),
+            },
+            Embedded {
+                file: "130_fill_hub_sweep",
+                label: "V130__fill_hub_sweep",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/130_fill_hub_sweep.sql"
+                ),
+            },
+            Embedded {
+                file: "131_fill_hub_reclaim",
+                label: "V131__fill_hub_reclaim",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/131_fill_hub_reclaim.sql"
+                ),
+            },
+            Embedded {
+                file: "132_fill_hub_refresh_premium",
+                label: "V132__fill_hub_refresh_premium",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/132_fill_hub_refresh_premium.sql"
+                ),
+            },
+            Embedded {
+                file: "133_hub_asset_state_timestamp",
+                label: "V133__hub_asset_state_timestamp",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/133_hub_asset_state_timestamp.sql"
+                ),
+            },
+            Embedded {
+                file: "134_hub_update_asset",
+                label: "V134__hub_update_asset",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/134_hub_update_asset.sql"
+                ),
+            },
+            Embedded {
+                file: "135_hub_update_asset_config",
+                label: "V135__hub_update_asset_config",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/135_hub_update_asset_config.sql"
+                ),
+            },
+            Embedded {
+                file: "136_hub_add_asset",
+                label: "V136__hub_add_asset",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/136_hub_add_asset.sql"
+                ),
+            },
+            Embedded {
+                file: "137_truncate_hub_asset_state",
+                label: "V137__truncate_hub_asset_state",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/137_truncate_hub_asset_state.sql"
+                ),
+            },
+            Embedded {
+                file: "138_fill_hub_update_asset",
+                label: "V138__fill_hub_update_asset",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/138_fill_hub_update_asset.sql"
+                ),
+            },
+            Embedded {
+                file: "139_fill_hub_update_asset_config",
+                label: "V139__fill_hub_update_asset_config",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/139_fill_hub_update_asset_config.sql"
+                ),
+            },
+            Embedded {
+                file: "140_fill_hub_add_asset",
+                label: "V140__fill_hub_add_asset",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/140_fill_hub_add_asset.sql"
+                ),
+            },
+            Embedded {
+                file: "141_hub_assets_as_of",
+                label: "V141__hub_assets_as_of",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/141_hub_assets_as_of.sql"
+                ),
+            },
+            Embedded {
+                file: "142_drop_hub_assets_current",
+                label: "V142__drop_hub_assets_current",
+                sql: include_str!(
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/142_drop_hub_assets_current.sql"
+                ),
+            },
         ],
     },
 ];
