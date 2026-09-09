@@ -62,13 +62,6 @@ export const positionQuerySchema = z
      * the numbers match — and it is what lets a reconciliation pin both sides
      * to one block.
      *
-     * **It reads the fold at that instant, not only the interest index.** The
-     * share balances are the ones held then, the collateral flag is the one set
-     * then, a reserve listed later does not resolve, and the Hub checkpoint is
-     * the one that was in force. A position opened after the instant is absent
-     * rather than empty. Prices are the exception and are withheld entirely,
-     * because the oracle is stored at the head with no history behind it.
-     *
      * Bounded at both ends, and the bounds are a units check: below the Main
      * Spoke's genesis nothing exists to value, and above 2100 the caller sent
      * milliseconds. Either way the page would come back full of numbers with
