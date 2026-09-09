@@ -124,10 +124,10 @@ pub const CLICKHOUSE: &[Source] = &[
                 ),
             },
             Embedded {
-                file: "021_user_positions_current",
-                label: "V21__user_positions_current",
+                file: "021_user_positions_as_of",
+                label: "V21__user_positions_as_of",
                 sql: include_str!(
-                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/021_user_positions_current.sql"
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/021_user_positions_as_of.sql"
                 ),
             },
             Embedded {
@@ -236,10 +236,10 @@ pub const CLICKHOUSE: &[Source] = &[
                 ),
             },
             Embedded {
-                file: "045_hub_assets_current",
-                label: "V45__hub_assets_current",
+                file: "045_hub_assets_as_of",
+                label: "V45__hub_assets_as_of",
                 sql: include_str!(
-                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/045_hub_assets_current.sql"
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/045_hub_assets_as_of.sql"
                 ),
             },
             Embedded {
@@ -257,10 +257,10 @@ pub const CLICKHOUSE: &[Source] = &[
                 ),
             },
             Embedded {
-                file: "052_spoke_reserves_current",
-                label: "V52__spoke_reserves_current",
+                file: "052_spoke_reserves_as_of",
+                label: "V52__spoke_reserves_as_of",
                 sql: include_str!(
-                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/052_spoke_reserves_current.sql"
+                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/052_spoke_reserves_as_of.sql"
                 ),
             },
         ],

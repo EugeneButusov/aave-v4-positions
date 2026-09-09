@@ -19,7 +19,7 @@ use crate::valuation::{AssetState, PositionShares, Valuation};
 /// nullable: a `LEFT JOIN` miss fills a non-nullable column with its default,
 /// so an unresolved reserve arrives as `"0"` and `""` rather than as nothing.
 /// What actually says the join missed is `underlying`, which is nullable in
-/// `hub_assets_current` and therefore null when there is no right-hand row.
+/// `hub_assets_as_of` and therefore null when there is no right-hand row.
 #[derive(clickhouse::Row, Deserialize)]
 pub(super) struct Row {
     chain_id: u32,
@@ -278,7 +278,7 @@ mod tests {
         }
 
         /// `underlying` is what says the join missed: it is nullable in
-        /// `hub_assets_current`, where `asset_id` and `hub` are not and come
+        /// `hub_assets_as_of`, where `asset_id` and `hub` are not and come
         /// back as their defaults.
         #[test]
         fn reports_no_asset_when_the_registry_has_not_resolved_the_reserve() {

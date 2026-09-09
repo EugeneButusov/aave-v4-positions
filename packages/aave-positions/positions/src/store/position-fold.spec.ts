@@ -221,7 +221,7 @@ describe('the position fold', () => {
       // the generation, and argMaxIf(..., sign = 1) keeps the retracted event
       // because its +1 twin still carries sign = 1 — measured, all three.
       // Liveness is a property of the (key, version) group, so the collapse in
-      // user_positions_current is what makes this work.
+      // user_positions_as_of is what makes this work.
       expect((await positions())[0]?.usingAsCollateral).toBe(true);
     });
 

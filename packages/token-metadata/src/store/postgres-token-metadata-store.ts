@@ -50,7 +50,7 @@ export class PostgresTokenMetadataStore implements TokenMetadataStore {
     const values = rows.map((row) => ({
       chain_id: row.chainId,
       // Lower-cased on the way in, not trusted from the caller. The join on the
-      // read side compares against `hub_assets_current.underlying`, which the
+      // read side compares against `hub_assets_as_of.underlying`, which the
       // fold stores `lower()`ed — a checksummed address written here would
       // match nothing and read as a token nobody has enriched yet, forever.
       token: row.token.toLowerCase(),

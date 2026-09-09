@@ -1,6 +1,6 @@
 -- One Hub asset, both halves, as one row. Every read goes through this.
 --
--- The same `UNION ALL`-not-`JOIN` shape as `user_positions_current`, for the
+-- The same `UNION ALL`-not-`JOIN` shape as `user_positions_as_of`, for the
 -- same measured reason: ClickHouse has no index-seek join, so a LEFT JOIN would
 -- scan, aggregate and hash the whole state table on every query unless the
 -- planner pushed the predicate through — and pushdown through a join is the
@@ -20,7 +20,18 @@
 -- `(100,'usdc'), (200,NULL), (300,NULL)` returns `'usdc'`. Spelling the
 -- condition out keeps the intent at the call site and keeps the view correct if
 -- one of these columns ever stops being nullable.
-CREATE VIEW IF NOT EXISTS hub_assets_current AS
+-- **Parameterised, and both halves are cut the same way**: one `WHERE` on the
+-- relation, because every row of both tables carries `block_timestamp`. The
+-- additive half is a sum over deltas, so the cut is membership; the latest-wins
+-- half is an `argMax`, so the cut moves which row wins — and an asset listed
+-- after the instant has no `AddAsset` to land on, so it resolves to nothing
+-- rather than to a row with its listing fields blanked.
+--
+-- Cutting `hub_asset_state` on `index_timestamp` instead — the only instant it
+-- used to carry — would have dropped every `AddAsset` and `UpdateAssetConfig`
+-- row, because that column is NULL on both, and blanked `underlying`,
+-- `decimals` and `liquidity_fee` for the whole page.
+CREATE VIEW IF NOT EXISTS hub_assets_as_of AS
 SELECT
     chain_id,
     hub,
@@ -70,6 +81,7 @@ FROM
         toUInt64(0)                               AS block_number,
         toUInt32(0)                               AS log_index
     FROM hub_assets
+    WHERE block_timestamp <= {cut:DateTime}
 
     UNION ALL
 
@@ -97,6 +109,7 @@ FROM
             any(underlying)      AS underlying,
             any(decimals)        AS decimals
         FROM hub_asset_state
+        WHERE block_timestamp <= {cut:DateTime}
         GROUP BY chain_id, hub, asset_id, block_number, log_index, version
         HAVING sum(sign) > 0
     )

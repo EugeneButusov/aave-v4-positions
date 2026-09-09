@@ -42,7 +42,7 @@ export class ClickHouseTokenListings implements TokenListings {
 
   async all(chainId: number): Promise<readonly Address[]> {
     const result = await this.client.query({
-      // Read at event grain, not through `hub_assets_current`: that view
+      // Read at event grain, not through `hub_assets_as_of`: that view
       // collapses and `argMax`es the whole table to produce 17 rows, where this
       // wants only the set of addresses ever listed.
       //

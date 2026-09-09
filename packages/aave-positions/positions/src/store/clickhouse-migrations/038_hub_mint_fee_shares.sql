@@ -12,6 +12,7 @@ SELECT
     chain_id,
     address                                                AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))          AS asset_id,
+    block_timestamp,
     toInt256(0)                                            AS liquidity,
     sign * toInt256(JSONExtractString(body, 'shares'))     AS added_shares,
     toInt256(0)                                            AS drawn_shares,

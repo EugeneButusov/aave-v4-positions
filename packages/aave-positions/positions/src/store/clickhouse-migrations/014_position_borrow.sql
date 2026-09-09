@@ -5,6 +5,7 @@ SELECT
     lower(JSONExtractString(body, 'user'))                    AS user,
     address                                                   AS spoke,
     toUInt256(JSONExtractString(body, 'reserveId'))           AS reserve_id,
+    block_timestamp,
     toInt256(0)                                               AS supplied_shares,
     sign * toInt256(JSONExtractString(body, 'drawnShares'))   AS drawn_shares,
     toInt256(0)                                               AS premium_shares,

@@ -16,6 +16,7 @@ SELECT
     block_number,
     log_index,
     version,
+    block_timestamp,
     toUInt256(JSONExtractString(body, 'drawnIndex'))              AS drawn_index,
     toUInt256(JSONExtractString(body, 'drawnRate'))               AS drawn_rate,
     toUInt256(JSONExtractString(body, 'accruedFees'))             AS realized_fees,

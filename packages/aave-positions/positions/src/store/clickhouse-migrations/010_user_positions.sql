@@ -25,6 +25,19 @@ CREATE TABLE IF NOT EXISTS user_positions
     -- independent risk config and independent health factors (§12.3).
     spoke               String,
     reserve_id          UInt256,
+    -- The block's own instant, carried from `spoke_events`, and the reason this
+    -- table is one row per *event* rather than one per position.
+    --
+    -- A balance is the sum of every delta up to a moment, so without a moment to
+    -- sum up to it can only answer for now — and the read path takes an `asOf`.
+    -- Summing on write would answer that question once, for the wrong instant,
+    -- and leave nothing to re-sum: the deltas would be gone.
+    --
+    -- The cost is measured rather than assumed. Event grain is about 4.6x the
+    -- rows a per-position table holds, but a page reads a fraction of that:
+    -- median 2 events per position on mainnet, p99 40, the busiest position 297,
+    -- and the busiest wallet's entire page 823 rows across 8 reserves.
+    block_timestamp     DateTime('UTC'),
     -- Signed because withdrawals and repayments subtract, and Int256 rather
     -- than something that "looks big enough" — shares are uint120 on chain and
     -- §7.5 is about exactly that habit.
@@ -49,4 +62,13 @@ PARTITION BY chain_id
 -- Leads with `user` because the access pattern is "positions of this wallet",
 -- where the ledger's is "logs in this block range". Different table, different
 -- sorting key.
-ORDER BY (chain_id, user, spoke, reserve_id);
+-- `block_timestamp` last, so `(chain_id, user, spoke, reserve_id)` still leads
+-- and a page stays a binary search into one wallet's contiguous rows; the cut is
+-- then a range inside the run it lands on.
+--
+-- Still summing. Two deltas for one position in one log — a liquidation
+-- crediting collateral and charging debt to the same wallet — share the whole
+-- key and merge, which is correct. A retraction is the same log with `sign = -1`
+-- and the same key, so a reorg's pair sums to zero rather than needing collapse,
+-- and both halves fall on the same side of any cut.
+ORDER BY (chain_id, user, spoke, reserve_id, block_timestamp);
