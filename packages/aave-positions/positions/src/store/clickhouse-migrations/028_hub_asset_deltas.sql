@@ -20,6 +20,20 @@
 --
 -- The columns are `030`'s exactly and mean what that file says they mean; it is
 -- where they are argued from Hub.sol and where they should stay argued.
+--
+-- **Reorg-safe, and it rests on something outside this file.** A retraction is
+-- the same log written back with `sign = -1`, so its projection is the exact
+-- negation of the `+1` twin's and the two sum to zero — that much is the same
+-- property the fold has always had. Putting `block_timestamp` in the sorting
+-- key adds a condition: the pair must share it, or they land on different rows
+-- and a cut between them keeps a delta the chain no longer has.
+--
+-- They do, because `revert` is `INSERT … SELECT` over the ledger's own rows and
+-- `block_timestamp` is among the columns it copies. If that ever stops being
+-- true — a retraction generated from the replacement branch rather than from
+-- the ledger — this table, `user_positions` and `hub_asset_state` all go quietly
+-- wrong at past instants and stay right at now, which is the hard way to find
+-- out. Three cases in `position-valuation.spec.ts` fail if it does.
 CREATE TABLE IF NOT EXISTS hub_asset_deltas
 (
     chain_id           UInt32,

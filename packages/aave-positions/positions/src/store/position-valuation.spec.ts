@@ -15,6 +15,7 @@ import {
   add,
   addAsset,
   draw,
+  mintFeeShares,
   updateAsset,
 } from '../test-support/hub-ledger';
 import {
@@ -363,6 +364,94 @@ describe('valuing a position', () => {
 
       // §12.6's promise, and the half the Hub dimension owns.
       expect((await page({ asOf })).items[0]?.value).toEqual(before.items[0]?.value);
+    });
+  });
+
+  /**
+   * A reorg, read at an instant the retracted event was live at.
+   *
+   * Every other reorg case here reads the fold at now, where the sum is right
+   * whatever instant the `+1` and its `-1` twin landed on — they cancel and the
+   * total is the same. A cut does not have that luxury: if a retraction carried
+   * the *replacement* block's instant rather than the retracted one's, the two
+   * would sit on either side of a cut between them and the read would keep a
+   * delta the chain no longer has.
+   *
+   * It cannot, because `revert` is `INSERT … SELECT` over the ledger's own rows
+   * and `block_timestamp` is among the columns it copies. This is what says so.
+   */
+  describe('a reorg', () => {
+    const BETWEEN = BigInt(CHECKPOINT_AT + 150);
+    const AFTER = BigInt(CHECKPOINT_AT + 250);
+    /** The two replacement checkpoints' own instants, where the index is the
+     *  checkpoint itself rather than the checkpoint plus interest. */
+    const AT_200 = 1_785_000_000 + 200;
+    const AT_300 = 1_785_000_000 + 300;
+
+    it('leaves no trace at an instant the retracted event was live at', async () => {
+      await listReserve([supply({ block: 200 }, ALICE, '7', '1000')]);
+      expect((await page({ asOf: BETWEEN })).items[0]?.suppliedShares).toBe('1000');
+
+      // The chain replaced 200-300: the supply is smaller and lands later.
+      await spokeEvents.revert(CHAIN_ID, 200, 300);
+      await spokeEvents.append([supply({ block: 300 }, ALICE, '7', '500')]);
+
+      // At an instant between the two branches the wallet holds nothing — the
+      // old supply is retracted and the new one has not happened. A retraction
+      // stamped with the new block's instant would read 1000 here.
+      expect((await page({ asOf: BETWEEN })).items).toEqual([]);
+      expect((await page({ asOf: AFTER })).items[0]?.suppliedShares).toBe('500');
+    });
+
+    it('does not price shares against a Hub total the chain no longer has', async () => {
+      await listReserve([supply({ block: 50 }, ALICE, '7', '1000')]);
+      const baseline = (await page({ asOf: BETWEEN })).items[0]?.value?.suppliedAmount;
+
+      // Fee shares are minted against the same assets, so the supply side's
+      // denominator grows and a share redeems for less. A Sweep would not do:
+      // it moves liquidity into `swept` by the same amount, and
+      // `totalAddedAssets` adds the two back together.
+      await hubEvents.append([mintFeeShares({ block: 200 }, '500000', '500000')]);
+      const diluted = (await page({ asOf: BETWEEN })).items[0]?.value?.suppliedAmount;
+      expect(diluted).not.toBe(baseline);
+
+      await hubEvents.revert(CHAIN_ID, 200, 300);
+      await hubEvents.append([mintFeeShares({ block: 300 }, '500000', '500000')]);
+
+      // The totals are a rollup of every delta ever written, and a past instant
+      // is that rollup less everything after it. A retraction landing on the
+      // wrong side of the cut would be subtracted twice or not at all.
+      expect((await page({ asOf: BETWEEN })).items[0]?.value?.suppliedAmount).toBe(baseline);
+      expect((await page({ asOf: BigInt(AT_300) })).items[0]?.value?.suppliedAmount).toBe(diluted);
+    });
+
+    it('does not extrapolate from a checkpoint the chain no longer has', async () => {
+      await listReserve([supply({ block: 50 }, ALICE, '7', '1000')]);
+      await hubEvents.append([
+        updateAsset({ block: 200 }, (RAY * 2n).toString(), FIVE_PERCENT, '0'),
+      ]);
+      // At that checkpoint's own instant, so the index is it and not it plus
+      // interest — `drawnIndexAt` short-circuits when the two coincide.
+      expect((await page({ asOf: BigInt(AT_200) })).items[0]?.value?.drawnIndex).toBe(
+        (RAY * 2n).toString(),
+      );
+
+      await hubEvents.revert(CHAIN_ID, 200, 300);
+      await hubEvents.append([
+        updateAsset({ block: 300 }, (RAY * 3n).toString(), FIVE_PERCENT, '0'),
+      ]);
+
+      // Back to the block-100 checkpoint carried forward 150s: the retracted one
+      // is gone and its replacement has not happened. The collapse runs
+      // `HAVING sum(sign) > 0` *after* the cut, so a pair split across it would
+      // leave the retracted checkpoint standing and extrapolate every amount on
+      // the page from an index the chain never had.
+      expect((await page({ asOf: BETWEEN })).items[0]?.value?.drawnIndex).toBe(
+        (RAY + (BigInt(FIVE_PERCENT) * 150n) / BigInt(YEAR)).toString(),
+      );
+      expect((await page({ asOf: BigInt(AT_300) })).items[0]?.value?.drawnIndex).toBe(
+        (RAY * 3n).toString(),
+      );
     });
   });
 });
