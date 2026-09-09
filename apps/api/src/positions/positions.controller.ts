@@ -91,11 +91,9 @@ export class PositionsController {
     required: false,
     schema: { type: 'integer', minimum: GENESIS_UNIX_SECONDS, maximum: MAX_ASOF_UNIX_SECONDS },
     description:
-      'Unix seconds to read and value the page at. Defaults to now — amounts accrue every ' +
-      'second and the chain emits nothing while they do, so naming the instant is what makes ' +
-      'a response reproducible. The whole page is that instant: shares as they were held, the ' +
-      'collateral flag as it was set, the interest index in force, and a reserve listed later ' +
-      'left unresolved. Echoed back as `valuedAt`.',
+      'Unix seconds to value the page at. Defaults to now — amounts accrue every second ' +
+      'and the chain emits nothing while they do, so naming the instant is what makes a ' +
+      'response reproducible. Echoed back as `valuedAt`.',
   })
   @ApiOkResponse({ type: PositionPageDto })
   @ApiBadRequestResponse({
