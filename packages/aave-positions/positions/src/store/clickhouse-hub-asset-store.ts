@@ -6,9 +6,13 @@ import type { Address } from '@packages/indexing';
 import type { HubAsset } from './hub-asset';
 import type { HubAssetStore } from './hub-asset-store';
 
-// Reconciliation compares the fold as it stands, so this one asks for now and
-// says so rather than getting it from a view named for it.
-const HUB_ASSETS_VIEW = 'hub_assets_as_of(cut = now())';
+// Parameterised by the instant the asset is read at. A caller that wants the
+// newest state passes nothing and gets now; one comparing against a contract
+// call names the block's own instant, or the fold being ahead reads as drift.
+const HUB_ASSETS_VIEW = 'hub_assets_as_of';
+
+/** Unix seconds, as the views take them. */
+const nowSeconds = (): bigint => BigInt(Math.floor(Date.now() / 1000));
 
 /** One row as ClickHouse renders it: every wide integer already a string. */
 interface Row {
@@ -100,7 +104,7 @@ const COLUMNS = `
 export class ClickHouseHubAssetStore implements HubAssetStore {
   constructor(@Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient) {}
 
-  async list(chainId: number, hub: Address): Promise<readonly HubAsset[]> {
+  async list(chainId: number, hub: Address, asOf?: bigint): Promise<readonly HubAsset[]> {
     const result = await this.client.query({
       // **`ORDER BY a.asset_id`, qualified.** Unqualified it binds the
       // `toString(asset_id)` alias in the projection and sorts the text, which
@@ -109,18 +113,23 @@ export class ClickHouseHubAssetStore implements HubAssetStore {
       // Qualifying resolves to the source `UInt256` instead.
       query: `
         SELECT ${COLUMNS}
-        FROM ${HUB_ASSETS_VIEW} AS a
+        FROM ${HUB_ASSETS_VIEW}(cut = {asOf:DateTime}) AS a
         WHERE a.chain_id = {chainId:UInt32} AND a.hub = {hub:String}
         ORDER BY a.asset_id
       `,
-      query_params: { chainId, hub: hub.toLowerCase() },
+      query_params: { chainId, hub: hub.toLowerCase(), asOf: Number(asOf ?? nowSeconds()) },
       format: 'JSONEachRow',
     });
 
     return (await result.json<Row>()).map(toHubAsset);
   }
 
-  async get(chainId: number, hub: Address, assetId: string): Promise<HubAsset | null> {
+  async get(
+    chainId: number,
+    hub: Address,
+    assetId: string,
+    asOf?: bigint,
+  ): Promise<HubAsset | null> {
     const result = await this.client.query({
       // Qualified for the same reason as `list`, and here the alias binding is
       // at least loud: unqualified, `asset_id` resolves to the `toString`
@@ -128,12 +137,17 @@ export class ClickHouseHubAssetStore implements HubAssetStore {
       // rather than silently comparing text.
       query: `
         SELECT ${COLUMNS}
-        FROM ${HUB_ASSETS_VIEW} AS a
+        FROM ${HUB_ASSETS_VIEW}(cut = {asOf:DateTime}) AS a
         WHERE a.chain_id = {chainId:UInt32}
           AND a.hub = {hub:String}
           AND a.asset_id = {assetId:UInt256}
       `,
-      query_params: { chainId, hub: hub.toLowerCase(), assetId },
+      query_params: {
+        chainId,
+        hub: hub.toLowerCase(),
+        assetId,
+        asOf: Number(asOf ?? nowSeconds()),
+      },
       format: 'JSONEachRow',
     });
 
