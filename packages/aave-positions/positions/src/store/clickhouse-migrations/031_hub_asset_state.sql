@@ -21,6 +21,11 @@ CREATE TABLE IF NOT EXISTS hub_asset_state
     hub                String,
     asset_id           UInt256,
 
+    block_number       UInt64,
+    log_index          UInt32,
+    -- Copied from the source row: half the pairing key, and what makes the
+    -- retraction collapse.
+    version            UInt64,
     -- Chain order, and the tiebreak the read view argMaxes on. **Never
     -- `version`**: version orders *dispatches*, and the loop re-dispatches an
     -- earlier range whenever a later processor asks to retry, so version
@@ -35,11 +40,6 @@ CREATE TABLE IF NOT EXISTS hub_asset_state
     -- asset listed after that instant correctly resolves to nothing rather than
     -- to a row with its listing fields blanked.
     block_timestamp    DateTime('UTC'),
-    block_number       UInt64,
-    log_index          UInt32,
-    -- Copied from the source row: half the pairing key, and what makes the
-    -- retraction collapse.
-    version            UInt64,
 
     -- From UpdateAsset. The interest checkpoint (§5.3) — the emitted index is
     -- the *settled* one, because `accrue()` writes `asset.drawnIndex` before

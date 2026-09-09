@@ -7,7 +7,7 @@
 --
 -- `topic2` is the *calling* spoke and `topic3` the covered one. Neither is read
 -- here, because both quantities are asset-global.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_eliminate_deficit TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_eliminate_deficit TO hub_assets AS
 SELECT
     chain_id,
     address                                                      AS hub,

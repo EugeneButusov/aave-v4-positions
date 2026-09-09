@@ -20,24 +20,17 @@
 -- `(100,'usdc'), (200,NULL), (300,NULL)` returns `'usdc'`. Spelling the
 -- condition out keeps the intent at the call site and keeps the view correct if
 -- one of these columns ever stops being nullable.
--- **Parameterised, and the totals half is the interesting part.** The
--- checkpoint half below is cut directly — every row of `hub_asset_state` carries
--- `block_timestamp`, so one `WHERE` does it, and an asset listed after the
--- instant resolves to nothing rather than to a row with its listing fields
--- blanked. The totals cannot be cut that way without reading every delta ever
--- written on every page, which is the read this file already spends a paragraph
--- avoiding.
+-- **Parameterised, and both halves are cut the same way**: one `WHERE` on the
+-- relation, because every row of both tables carries `block_timestamp`. The
+-- additive half is a sum over deltas, so the cut is membership; the latest-wins
+-- half is an `argMax`, so the cut moves which row wins — and an asset listed
+-- after the instant has no `AddAsset` to land on, so it resolves to nothing
+-- rather than to a row with its listing fields blanked.
 --
--- So the totals are `rollup − everything after the instant`. Every column there
--- is an additive signed delta, so the subtraction is exact; it was checked
--- against a direct sum at three instants across all seventeen assets.
---
--- The cost then scales with how far back the cut is rather than with total
--- history. Measured: `cut = now()` reads 54 rows, because the tail is one month
--- partition with nothing in it; 28 hours back reads 3,709. A cut older than
--- roughly half the history reads more than a plain event-grain sum would —
--- 38,376 against 10,833 at 102 days — which is the price of making the common
--- case nearly free, and is still about 10ms.
+-- Cutting `hub_asset_state` on `index_timestamp` instead — the only instant it
+-- used to carry — would have dropped every `AddAsset` and `UpdateAssetConfig`
+-- row, because that column is NULL on both, and blanked `underlying`,
+-- `decimals` and `liquidity_fee` for the whole page.
 CREATE VIEW IF NOT EXISTS hub_assets_as_of AS
 SELECT
     chain_id,
@@ -88,25 +81,7 @@ FROM
         toUInt64(0)                               AS block_number,
         toUInt32(0)                               AS log_index
     FROM hub_assets
-
-    UNION ALL
-
-    -- Less everything the asset accumulated after the instant.
-    SELECT
-        chain_id, hub, asset_id,
-        -liquidity, -added_shares, -drawn_shares, -swept,
-        -premium_shares, -premium_offset_ray, -deficit_ray, -events,
-        CAST(NULL, 'Nullable(UInt256)')           AS drawn_index,
-        CAST(NULL, 'Nullable(UInt256)')           AS drawn_rate,
-        CAST(NULL, 'Nullable(UInt256)')           AS realized_fees,
-        CAST(NULL, 'Nullable(DateTime(\'UTC\'))') AS index_timestamp,
-        CAST(NULL, 'Nullable(UInt16)')            AS liquidity_fee,
-        CAST(NULL, 'Nullable(String)')            AS underlying,
-        CAST(NULL, 'Nullable(UInt8)')             AS decimals,
-        toUInt64(0)                               AS block_number,
-        toUInt32(0)                               AS log_index
-    FROM hub_asset_deltas
-    WHERE block_timestamp > {cut:DateTime}
+    WHERE block_timestamp <= {cut:DateTime}
 
     UNION ALL
 

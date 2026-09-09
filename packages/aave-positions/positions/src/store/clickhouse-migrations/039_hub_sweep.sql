@@ -1,6 +1,6 @@
 -- Sweep: liquidity leaves for a reinvestment controller. Still the asset's, so
 -- `swept` rises by what `liquidity` loses and `totalAddedAssets` counts both.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_sweep TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_sweep TO hub_assets AS
 SELECT
     chain_id,
     address                                                AS hub,

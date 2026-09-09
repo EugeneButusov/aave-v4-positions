@@ -418,9 +418,9 @@ describe('valuing a position', () => {
       await hubEvents.revert(CHAIN_ID, 200, 300);
       await hubEvents.append([mintFeeShares({ block: 300 }, '500000', '500000')]);
 
-      // The totals are a rollup of every delta ever written, and a past instant
-      // is that rollup less everything after it. A retraction landing on the
-      // wrong side of the cut would be subtracted twice or not at all.
+      // The totals are a sum over every delta up to the instant, so a
+      // retraction landing on the wrong side of the cut leaves the asset priced
+      // against liquidity the chain no longer has.
       expect((await page({ asOf: BETWEEN })).items[0]?.value?.suppliedAmount).toBe(baseline);
       expect((await page({ asOf: BigInt(AT_300) })).items[0]?.value?.suppliedAmount).toBe(diluted);
     });

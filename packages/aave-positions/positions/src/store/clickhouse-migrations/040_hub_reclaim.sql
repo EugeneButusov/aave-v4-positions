@@ -1,5 +1,5 @@
 -- Reclaim: swept liquidity comes back. The exact inverse of Sweep.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_reclaim TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_reclaim TO hub_assets AS
 SELECT
     chain_id,
     address                                                AS hub,

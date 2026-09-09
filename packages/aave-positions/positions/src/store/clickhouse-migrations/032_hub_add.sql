@@ -24,7 +24,7 @@
 -- `asset.liquidity + amount`. Additive after all, but the `balanceOf` read
 -- beside it is a solvency `require` rather than the source of the value, which
 -- is worth knowing before trusting a fold of a field the contract assigns.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_add TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_add TO hub_assets AS
 SELECT
     chain_id,
     address                                                AS hub,

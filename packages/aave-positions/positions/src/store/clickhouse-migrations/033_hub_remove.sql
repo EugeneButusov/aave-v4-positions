@@ -1,5 +1,5 @@
 -- Remove: supply leaves. The exact inverse of Add.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_remove TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_remove TO hub_assets AS
 SELECT
     chain_id,
     address                                                AS hub,

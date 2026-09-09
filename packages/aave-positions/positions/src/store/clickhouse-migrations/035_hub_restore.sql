@@ -4,7 +4,7 @@
 --
 -- Also carries a premium delta, applied at asset level by
 -- `_applyPremiumDelta(asset, spoke, …)`.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_restore TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_restore TO hub_assets AS
 SELECT
     chain_id,
     address                                                     AS hub,

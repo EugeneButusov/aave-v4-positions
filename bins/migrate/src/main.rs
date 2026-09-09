@@ -117,7 +117,7 @@ mod tests {
     /// rather than at deploy time.
     #[test]
     fn both_unions_parse() {
-        assert_eq!(union(CLICKHOUSE).unwrap().len(), 37);
+        assert_eq!(union(CLICKHOUSE).unwrap().len(), 35);
         assert_eq!(union(POSTGRES).unwrap().len(), 4);
     }
 

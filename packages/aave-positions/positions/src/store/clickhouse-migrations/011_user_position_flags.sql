@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS user_position_flags
     user                String,
     spoke               String,
     reserve_id          UInt256,
+    block_number        UInt64,
+    log_index           UInt32,
+    -- Copied from the ledger row, because it is half the pairing key.
+    version             UInt64,
     -- The ordering that decides "latest". Emphatically not `version`, which
     -- orders dispatches rather than chain events — measured: re-dispatching an
     -- earlier block after a later one gives it the higher version, and an
@@ -30,10 +34,6 @@ CREATE TABLE IF NOT EXISTS user_position_flags
     -- this is what a read cuts on, so a flag set after the instant asked for is
     -- not the row `argMax` lands on.
     block_timestamp     DateTime('UTC'),
-    block_number        UInt64,
-    log_index           UInt32,
-    -- Copied from the ledger row, because it is half the pairing key.
-    version             UInt64,
     using_as_collateral UInt8,
     -- Copied from the ledger row. This is what makes the retraction pair.
     sign                Int8

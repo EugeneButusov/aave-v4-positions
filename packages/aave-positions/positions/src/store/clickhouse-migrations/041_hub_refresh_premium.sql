@@ -7,7 +7,7 @@
 -- `premiumShares.add(sharesDelta)` and `premiumOffsetRay + offsetRayDelta` —
 -- which is precisely what makes the pair additive rather than latest-wins.
 -- `restoredPremiumRay` is required to be zero here and changes no stored field.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_refresh_premium TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_refresh_premium TO hub_assets AS
 SELECT
     chain_id,
     address                                       AS hub,

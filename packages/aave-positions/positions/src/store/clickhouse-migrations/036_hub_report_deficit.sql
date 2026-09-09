@@ -5,7 +5,7 @@
 --
 -- The Hub's five-parameter form. The Spoke emits a *different* four-parameter
 -- event of the same name against a different ledger (§4.4).
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_report_deficit TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_report_deficit TO hub_assets AS
 SELECT
     chain_id,
     address                                                     AS hub,

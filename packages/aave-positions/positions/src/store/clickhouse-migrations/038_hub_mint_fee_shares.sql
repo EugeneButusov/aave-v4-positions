@@ -7,7 +7,7 @@
 -- transaction — so an `UpdateAsset` carrying the zeroed value lands at a higher
 -- `log_index` and wins the argMax. Verified in Hub.sol: all 14 functions that
 -- call `accrue()` also call `updateDrawnRate()`.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_mint_fee_shares TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_mint_fee_shares TO hub_assets AS
 SELECT
     chain_id,
     address                                                AS hub,

@@ -1,5 +1,5 @@
 -- Draw: a Spoke borrows against Hub liquidity. Debt shares up, liquidity down.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_draw TO hub_asset_deltas AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_draw TO hub_assets AS
 SELECT
     chain_id,
     address                                                     AS hub,

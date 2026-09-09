@@ -131,13 +131,6 @@ pub const CLICKHOUSE: &[Source] = &[
                 ),
             },
             Embedded {
-                file: "028_hub_asset_deltas",
-                label: "V28__hub_asset_deltas",
-                sql: include_str!(
-                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/028_hub_asset_deltas.sql"
-                ),
-            },
-            Embedded {
                 file: "030_hub_assets",
                 label: "V30__hub_assets",
                 sql: include_str!(
@@ -247,13 +240,6 @@ pub const CLICKHOUSE: &[Source] = &[
                 label: "V45__hub_assets_as_of",
                 sql: include_str!(
                     "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/045_hub_assets_as_of.sql"
-                ),
-            },
-            Embedded {
-                file: "046_hub_assets_rollup",
-                label: "V46__hub_assets_rollup",
-                sql: include_str!(
-                    "../../../packages/aave-positions/positions/src/store/clickhouse-migrations/046_hub_assets_rollup.sql"
                 ),
             },
             Embedded {
