@@ -1,4 +1,10 @@
--- The additive half of the Hub asset fold (§5.5).
+-- The additive half of the Hub asset fold (§5.5), rolled up by asset.
+--
+-- **Derived rather than written.** The ten views write to `028_hub_asset_deltas`
+-- at event grain; `046` sums those into this table, which holds no time and is
+-- what a read at now touches. Two tables of the same facts would drift the
+-- moment one projection was edited and the other was not — this one cannot,
+-- because it has no source but the deltas.
 --
 -- Every field here is a **group under addition**, so retraction propagates for
 -- free: the projection of a `sign = -1` ledger row is the exact negation of its

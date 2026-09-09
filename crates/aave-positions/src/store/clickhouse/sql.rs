@@ -50,7 +50,7 @@ FROM (
     -- now(), not the instant this page is valued at, which is the difference
     -- this port has yet to make: TypeScript binds valuedAt to both views so a
     -- page cannot read the fold at one instant and value it at another. Until
-    -- that lands, this is what user_positions_current was, said out loud.
+    -- that lands, this is what these views answered before they took an instant.
     FROM user_positions_as_of(cut = now())
     -- The leading pair of the sorting key, so the scan starts at this
     -- wallet's rows rather than filtering its way to them.
@@ -83,7 +83,7 @@ FROM (
 -- **A join, not the UNION ALL the collateral flag got.** The two cases
 -- differ structurally, and EXPLAIN indexes = 1 shows how.
 --
--- The left side prunes. Both branches of user_positions_current report
+-- The left side prunes. Both branches of user_positions_as_of report
 -- PrimaryKey Keys: chain_id, user, spoke with the wallet predicate as
 -- their condition and Search Algorithm: binary search — that is the
 -- UNION ALL pushdown the flag was shaped for, doing its job.

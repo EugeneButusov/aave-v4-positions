@@ -4,7 +4,7 @@
  *
  * Published for the reason `@packages/indexing` publishes its own: the
  * enrichment package's listing sources read `hub_asset_state` and
- * `spoke_reserves_current`, so its specs need a migrated database with real
+ * `spoke_reserves_as_of`, so its specs need a migrated database with real
  * rows in it. Two independent definitions of "a Hub that has listed USDC"
  * would drift, and the one that drifted would be the one nobody was reading.
  *

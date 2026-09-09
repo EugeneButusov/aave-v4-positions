@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS user_position_flags
     -- orders dispatches rather than chain events — measured: re-dispatching an
     -- earlier block after a later one gives it the higher version, and an
     -- argMax by version then returns the stale flag.
+    -- The block's own instant. `block_number` orders the latest-wins pick;
+    -- this is what a read cuts on, so a flag set after the instant asked for is
+    -- not the row `argMax` lands on.
+    block_timestamp     DateTime('UTC'),
     block_number        UInt64,
     log_index           UInt32,
     -- Copied from the ledger row, because it is half the pairing key.

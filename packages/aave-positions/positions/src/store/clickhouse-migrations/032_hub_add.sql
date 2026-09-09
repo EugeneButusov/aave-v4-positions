@@ -24,11 +24,12 @@
 -- `asset.liquidity + amount`. Additive after all, but the `balanceOf` read
 -- beside it is a solvency `require` rather than the source of the value, which
 -- is worth knowing before trusting a fold of a field the contract assigns.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_add TO hub_assets AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_add TO hub_asset_deltas AS
 SELECT
     chain_id,
     address                                                AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))          AS asset_id,
+    block_timestamp,
     sign * toInt256(JSONExtractString(body, 'amount'))     AS liquidity,
     sign * toInt256(JSONExtractString(body, 'shares'))     AS added_shares,
     toInt256(0)                                            AS drawn_shares,

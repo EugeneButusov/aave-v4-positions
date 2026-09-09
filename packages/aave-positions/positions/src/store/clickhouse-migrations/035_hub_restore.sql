@@ -4,11 +4,12 @@
 --
 -- Also carries a premium delta, applied at asset level by
 -- `_applyPremiumDelta(asset, spoke, …)`.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_restore TO hub_assets AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_restore TO hub_asset_deltas AS
 SELECT
     chain_id,
     address                                                     AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))               AS asset_id,
+    block_timestamp,
     sign * (toInt256(JSONExtractString(body, 'drawnAmount'))
           + toInt256(JSONExtractString(body, 'premiumAmount'))) AS liquidity,
     toInt256(0)                                                 AS added_shares,

@@ -14,6 +14,7 @@ SELECT
     lower(JSONExtractString(body, 'user'))                                   AS user,
     address                                                                  AS spoke,
     toUInt256(JSONExtractString(body, 'collateralReserveId'))                AS reserve_id,
+    block_timestamp,
     sign * -toInt256(JSONExtractString(body, 'collateralSharesLiquidated'))  AS supplied_shares,
     toInt256(0)                                                              AS drawn_shares,
     toInt256(0)                                                              AS premium_shares,

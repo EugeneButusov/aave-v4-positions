@@ -1,4 +1,4 @@
--- The projection of `AddReserve`. `052_spoke_reserves_current` reads it back;
+-- The projection of `AddReserve`. `052_spoke_reserves_as_of` reads it back;
 -- the two are one change, applied as two files.
 
 -- All three parameters are indexed, so the whole event is in the topics — but
@@ -13,6 +13,7 @@ SELECT
     block_number,
     log_index,
     version,
+    block_timestamp,
     toUInt256(JSONExtractString(body, 'assetId'))  AS asset_id,
     lower(JSONExtractString(body, 'hub'))          AS hub,
     sign

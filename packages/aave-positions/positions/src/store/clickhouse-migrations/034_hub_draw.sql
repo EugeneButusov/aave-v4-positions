@@ -1,9 +1,10 @@
 -- Draw: a Spoke borrows against Hub liquidity. Debt shares up, liquidity down.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_draw TO hub_assets AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_draw TO hub_asset_deltas AS
 SELECT
     chain_id,
     address                                                     AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))               AS asset_id,
+    block_timestamp,
     sign * -toInt256(JSONExtractString(body, 'drawnAmount'))    AS liquidity,
     toInt256(0)                                                 AS added_shares,
     sign * toInt256(JSONExtractString(body, 'drawnShares'))     AS drawn_shares,

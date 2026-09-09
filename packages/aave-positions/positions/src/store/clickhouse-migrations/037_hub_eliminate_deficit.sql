@@ -7,11 +7,12 @@
 --
 -- `topic2` is the *calling* spoke and `topic3` the covered one. Neither is read
 -- here, because both quantities are asset-global.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_eliminate_deficit TO hub_assets AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_eliminate_deficit TO hub_asset_deltas AS
 SELECT
     chain_id,
     address                                                      AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))                AS asset_id,
+    block_timestamp,
     toInt256(0)                                                  AS liquidity,
     sign * -toInt256(JSONExtractString(body, 'shares'))          AS added_shares,
     toInt256(0)                                                  AS drawn_shares,

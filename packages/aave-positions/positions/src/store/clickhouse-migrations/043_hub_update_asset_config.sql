@@ -10,6 +10,7 @@ SELECT
     block_number,
     log_index,
     version,
+    block_timestamp,
     CAST(NULL, 'Nullable(UInt256)')                                AS drawn_index,
     CAST(NULL, 'Nullable(UInt256)')                                AS drawn_rate,
     CAST(NULL, 'Nullable(UInt256)')                                AS realized_fees,

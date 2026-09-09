@@ -17,7 +17,20 @@
 -- LEFT JOIN semantics fall out of it: a position with no flag event still
 -- appears, via ifNull, and a flag with no position sums to zero shares and is
 -- dropped by the store's filter.
-CREATE VIEW IF NOT EXISTS user_positions_current AS
+-- **Parameterised, and the parameter is the point.** A page is only as
+-- point-in-time as its least point-in-time input, and a view that answered only
+-- for now made `asOf` mean "value today's balances against a past index" — a
+-- number that was never true at any block. Naming the instant is not a
+-- convenience; it is what makes the answer well defined.
+--
+-- Both halves are cut, and they have to be for different reasons. The additive
+-- half is a sum over deltas, so the cut is membership: a supply after the
+-- instant simply is not in it, and a position whose first event is after it has
+-- no shares and drops out of the listing entirely. The flag half is
+-- latest-wins, so the cut moves which row wins — a collateral flag set later
+-- must not be the one `argMax` finds, or a position reads as collateral before
+-- anyone made it so.
+CREATE VIEW IF NOT EXISTS user_positions_as_of AS
 SELECT
     chain_id,
     user,
@@ -45,6 +58,7 @@ FROM
         toUInt64(0)                   AS block_number,
         toUInt32(0)                   AS log_index
     FROM user_positions
+    WHERE block_timestamp <= {cut:DateTime}
 
     UNION ALL
 
@@ -64,6 +78,9 @@ FROM
             chain_id, user, spoke, reserve_id, block_number, log_index,
             any(using_as_collateral) AS using_as_collateral
         FROM user_position_flags
+        WHERE block_timestamp <= {cut:DateTime}
+        -- Outside the collapse, so a retraction and the row it retracts fall
+        -- on the same side of the cut.
         GROUP BY chain_id, user, spoke, reserve_id, block_number, log_index, version
         HAVING sum(sign) > 0
     )

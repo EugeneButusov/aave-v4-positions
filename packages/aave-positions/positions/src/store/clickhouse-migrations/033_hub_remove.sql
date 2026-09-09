@@ -1,9 +1,10 @@
 -- Remove: supply leaves. The exact inverse of Add.
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_remove TO hub_assets AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_remove TO hub_asset_deltas AS
 SELECT
     chain_id,
     address                                                AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))          AS asset_id,
+    block_timestamp,
     sign * -toInt256(JSONExtractString(body, 'amount'))    AS liquidity,
     sign * -toInt256(JSONExtractString(body, 'shares'))    AS added_shares,
     toInt256(0)                                            AS drawn_shares,

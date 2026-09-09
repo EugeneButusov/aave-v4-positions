@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS spoke_reserves
     chain_id     UInt32,
     spoke        String,
     reserve_id   UInt256,
+    -- The block's own instant, which a read cuts on: a reserve listed after the
+    -- instant asked for must not resolve a position to a Hub asset that did not
+    -- exist yet.
+    block_timestamp DateTime('UTC'),
     block_number UInt64,
     log_index    UInt32,
     version      UInt64,

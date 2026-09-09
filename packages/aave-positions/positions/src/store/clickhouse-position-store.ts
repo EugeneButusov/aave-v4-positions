@@ -250,7 +250,7 @@ export class ClickHousePositionStore implements PositionStore {
         -- **A join, not the UNION ALL the collateral flag got.** The two cases
         -- differ structurally, and EXPLAIN indexes = 1 shows how.
         --
-        -- The left side prunes. Both branches of user_positions_current report
+        -- The left side prunes. Both branches of user_positions_as_of report
         -- PrimaryKey Keys: chain_id, user, spoke with the wallet predicate as
         -- their condition and Search Algorithm: binary search — that is the
         -- UNION ALL pushdown the flag was shaped for, doing its job.

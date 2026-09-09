@@ -1,8 +1,8 @@
 //! Teaching refinery to drive ClickHouse.
 //!
 //! refinery ships backends for Postgres, MySQL and SQLite. ClickHouse is not one
-//! of them, but the three traits below are all it takes — and sixty-seven of this
-//! deployment's seventy-one migrations are ClickHouse, so the alternative was a
+//! of them, but the three traits below are all it takes — and thirty-seven of this
+//! deployment's forty-one migrations are ClickHouse, so the alternative was a
 //! second hand-rolled runner beside refinery rather than none.
 
 use async_trait::async_trait;

@@ -25,6 +25,16 @@ CREATE TABLE IF NOT EXISTS hub_asset_state
     -- `version`**: version orders *dispatches*, and the loop re-dispatches an
     -- earlier range whenever a later processor asks to retry, so version
     -- ordering reads a stale value. Measured on the collateral flag.
+    -- The block's own instant, on every row.
+    --
+    -- **Distinct from `index_timestamp` below, which it equals on exactly one
+    -- kind of row.** That one is the *checkpoint's* time and is NULL on
+    -- `AddAsset` and `UpdateAssetConfig`, which is what makes `argMaxIf` pick
+    -- the right checkpoint. This one is present everywhere, so a read can cut
+    -- the whole relation at an instant instead of column by column — and an
+    -- asset listed after that instant correctly resolves to nothing rather than
+    -- to a row with its listing fields blanked.
+    block_timestamp    DateTime('UTC'),
     block_number       UInt64,
     log_index          UInt32,
     -- Copied from the source row: half the pairing key, and what makes the

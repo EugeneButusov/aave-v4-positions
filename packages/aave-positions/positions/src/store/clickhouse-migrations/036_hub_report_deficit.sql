@@ -5,11 +5,12 @@
 --
 -- The Hub's five-parameter form. The Spoke emits a *different* four-parameter
 -- event of the same name against a different ledger (§4.4).
-CREATE MATERIALIZED VIEW IF NOT EXISTS hub_report_deficit TO hub_assets AS
+CREATE MATERIALIZED VIEW IF NOT EXISTS hub_report_deficit TO hub_asset_deltas AS
 SELECT
     chain_id,
     address                                                     AS hub,
     toUInt256(JSONExtractString(body, 'assetId'))               AS asset_id,
+    block_timestamp,
     toInt256(0)                                                 AS liquidity,
     toInt256(0)                                                 AS added_shares,
     sign * -toInt256(JSONExtractString(body, 'drawnShares'))    AS drawn_shares,

@@ -1,26 +1,43 @@
--- One Hub asset, both halves, as it stood at a named instant.
+-- One Hub asset, both halves, as one row. Every read goes through this.
 --
--- **Three branches, and the middle one is the trick.** The totals live in a
--- rollup keyed by asset — twenty rows, no time in it — because the page joins
--- this dimension whole with nothing to prune by, and reading 43,849 deltas per
--- page to serve twenty rows is the read `design-notes` already wants cheaper,
--- not dearer. So the cut is `rollup − everything after the cut`: every column
--- there is an additive signed delta, so subtracting the tail is exact, and it
--- was verified against a direct sum at three instants across all 17 assets.
+-- The same `UNION ALL`-not-`JOIN` shape as `user_positions_as_of`, for the
+-- same measured reason: ClickHouse has no index-seek join, so a LEFT JOIN would
+-- scan, aggregate and hash the whole state table on every query unless the
+-- planner pushed the predicate through — and pushdown through a join is the
+-- fragile case where pushdown into union branches is not.
+--
+-- **Three latest-wins groups, resolved one column at a time.** `UpdateAsset`,
+-- `UpdateAssetConfig` and `AddAsset` write disjoint columns of one row and fire
+-- at wildly different rates — 29,482 against 34 against 17 over all history — so
+-- the newest row for an asset is almost always an `UpdateAsset` whose
+-- `underlying` is NULL. Resolving the row as a whole would blank the listing
+-- fields every twenty seconds; each column has to find its own newest value.
+--
+-- The `If` is explicitness rather than necessity, and the mutation test says so:
+-- replacing `argMaxIf(underlying, …, underlying IS NOT NULL)` with a plain
+-- `argMax` changes no result, because **`argMax` already ignores rows whose
+-- argument is NULL** — measured, `argMax(v, ord)` over
+-- `(100,'usdc'), (200,NULL), (300,NULL)` returns `'usdc'`. Spelling the
+-- condition out keeps the intent at the call site and keeps the view correct if
+-- one of these columns ever stops being nullable.
+-- **Parameterised, and the totals half is the interesting part.** The
+-- checkpoint half below is cut directly — every row of `hub_asset_state` carries
+-- `block_timestamp`, so one `WHERE` does it, and an asset listed after the
+-- instant resolves to nothing rather than to a row with its listing fields
+-- blanked. The totals cannot be cut that way without reading every delta ever
+-- written on every page, which is the read this file already spends a paragraph
+-- avoiding.
+--
+-- So the totals are `rollup − everything after the instant`. Every column there
+-- is an additive signed delta, so the subtraction is exact; it was checked
+-- against a direct sum at three instants across all seventeen assets.
 --
 -- The cost then scales with how far back the cut is rather than with total
--- history. Measured: `cut = now()` reads 54 rows where the view this replaces
--- read 44,074, because the tail is one month partition with nothing in it. A cut
--- 28 hours back reads 3,709. A cut older than roughly half the history reads
--- more than a plain event-grain sum would — 38,376 against 10,833 at 102 days —
--- which is the price of making the common case nearly free, and is still ~10ms.
---
--- **The checkpoint half is cut on the relation, not column by column.** Every
--- row of `hub_asset_state` carries `block_timestamp` now, so one `WHERE` does
--- it. Cutting on `index_timestamp` instead — the only instant that table used to
--- have — would have dropped every `AddAsset` and `UpdateAssetConfig` row and
--- blanked `underlying`, `decimals` and `liquidity_fee` for the whole page. This
--- way an asset listed after the instant correctly resolves to nothing at all.
+-- history. Measured: `cut = now()` reads 54 rows, because the tail is one month
+-- partition with nothing in it; 28 hours back reads 3,709. A cut older than
+-- roughly half the history reads more than a plain event-grain sum would —
+-- 38,376 against 10,833 at 102 days — which is the price of making the common
+-- case nearly free, and is still about 10ms.
 CREATE VIEW IF NOT EXISTS hub_assets_as_of AS
 SELECT
     chain_id,
@@ -37,6 +54,10 @@ SELECT
     -- Ordered by (block_number, log_index) — chain order. Ordering by `version`
     -- instead reads a stale checkpoint whenever a range is re-dispatched out of
     -- order, which the loop does whenever a later processor asks to retry.
+    --
+    -- This ordering is also what makes `realized_fees` correct across a
+    -- MintFeeShares: the mint zeroes it and the `UpdateAsset` carrying the zero
+    -- is emitted after, at a higher log_index, in the same transaction.
     argMaxIf(drawn_index, (block_number, log_index), drawn_index IS NOT NULL)
                             AS drawn_index,
     argMaxIf(drawn_rate, (block_number, log_index), drawn_rate IS NOT NULL)
@@ -53,7 +74,6 @@ SELECT
                             AS decimals
 FROM
 (
-    -- Everything the asset has ever accumulated.
     SELECT
         chain_id, hub, asset_id,
         liquidity, added_shares, drawn_shares, swept,
@@ -71,7 +91,7 @@ FROM
 
     UNION ALL
 
-    -- Less everything it accumulated after the instant.
+    -- Less everything the asset accumulated after the instant.
     SELECT
         chain_id, hub, asset_id,
         -liquidity, -added_shares, -drawn_shares, -swept,
@@ -102,7 +122,8 @@ FROM
         -- The collapse, load-bearing rather than tidy. FINAL leaks an unpaired
         -- retraction where this does not — measured — and grouping without
         -- `version` would let a reorg's superseded row and its replacement
-        -- merge, so any() could return stale content.
+        -- merge, so any() could return stale content. Without it a retracted
+        -- checkpoint stays the argMax forever.
         SELECT
             chain_id, hub, asset_id, block_number, log_index,
             any(drawn_index)     AS drawn_index,

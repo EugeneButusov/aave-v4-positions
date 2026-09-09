@@ -13,7 +13,7 @@ use super::math::{
 
 /// The Hub asset state one valuation reads.
 ///
-/// A narrowed view of the `hub_assets_current` row — the fields the arithmetic
+/// A narrowed view of the `hub_assets_as_of` row — the fields the arithmetic
 /// touches and nothing else, so a change to the row shape cannot silently alter
 /// a formula.
 ///
