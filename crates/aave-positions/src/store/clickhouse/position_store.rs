@@ -44,11 +44,22 @@ impl ClickHousePositionStore {
 #[async_trait]
 impl PositionStore for ClickHousePositionStore {
     async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error> {
+        // One instant for the whole page, so two positions in one response
+        // cannot disagree about what time it is — and reported back, because an
+        // amount without the moment it was computed at is not reproducible
+        // (§12.6).
+        //
+        // Read before the statement rather than after it, because it is what the
+        // statement selects *by*: taking the clock again afterwards would cut the
+        // fold at one instant and value it at another.
+        let valued_at = query.as_of.unwrap_or_else(now);
+
         let after = query.after.as_ref();
         let (spoke_from, spoke_to) = sql::spoke_bounds(query.spoke);
         let pending = self
             .client
             .query(sql::STATEMENT)
+            .param("valuedAt", valued_at)
             .param("chainId", query.chain_id)
             .param("user", lower_case(query.user))
             // One more than asked, so the extra row's presence is what says
@@ -68,12 +79,6 @@ impl PositionStore for ClickHousePositionStore {
             .param("spokeTo", spoke_to);
 
         let rows = pending.fetch_all::<Row>().await?;
-
-        // One instant for the whole page, so two positions in one response
-        // cannot disagree about what time it is — and reported back, because an
-        // amount without the moment it was computed at is not reproducible
-        // (§12.6).
-        let valued_at = query.as_of.unwrap_or_else(now);
 
         let limit = usize::try_from(query.limit).unwrap_or(usize::MAX);
         let full = rows.len() > limit;
@@ -156,10 +161,10 @@ mod tests {
         /// the balances are positive, which is why
         /// `hides_a_position_whose_shares_have_netted_to_zero` stays a local case —
         /// a zero asked for here is a zero written, not a `+500` and a `-500`.
-        async fn given_positions(&self, held: &[Held]) {
+        async fn given_positions_at(&self, block: u64, held: &[Held]) {
             let mut events = Vec::new();
             for (position, entry) in held.iter().enumerate() {
-                let at = At::block(100)
+                let at = At::block(block)
                     .log(u32::try_from(position).unwrap().saturating_mul(2))
                     .on(entry.spoke);
 
@@ -181,6 +186,20 @@ mod tests {
                 }
             }
             append(&self.client, "spoke_events", &events).await;
+        }
+
+        async fn given_checkpoint(&self, asset_id: &str, at: u64, drawn_index: &str) {
+            append(
+                &self.client,
+                "hub_events",
+                &[update_asset(
+                    At::block(at.saturating_sub(T0)),
+                    asset_id,
+                    drawn_index,
+                    FIVE_PERCENT,
+                )],
+            )
+            .await;
         }
 
         /// A reserve resolved to a Hub asset, checkpointed and accruing.

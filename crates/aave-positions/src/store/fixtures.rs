@@ -61,7 +61,7 @@ impl At {
 pub(super) struct Event {
     pub at: At,
     pub address: Address,
-    /// Distinct per block on the Hub side, so `index_timestamp` can be checked
+    /// Distinct per block on both sides, so `index_timestamp` can be checked
     /// against the checkpoint it belongs to rather than a constant.
     pub timestamp: u32,
     pub name: &'static str,
@@ -75,7 +75,7 @@ pub(super) fn spoke_event(name: &'static str, at: At, body: String) -> Event {
     Event {
         at,
         address: at.spoke,
-        timestamp: 1_785_000_000,
+        timestamp: u32::try_from(T0.saturating_add(at.block)).unwrap_or(u32::MAX),
         name,
         body,
     }

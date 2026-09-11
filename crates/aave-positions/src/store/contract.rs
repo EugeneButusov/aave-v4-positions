@@ -15,10 +15,10 @@
 //! balance rather than the deltas that summed to it, and nothing that can say
 //! what a `LEFT JOIN` miss fills a column with. They stay with the adapter.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, I256, U256};
 
-use super::fixtures::{ALICE, BOB, RAY, SECOND_SPOKE, SPOKE, USDC, ask, reserve_ids};
-use super::{PositionKey, PositionQuery, PositionStore};
+use super::fixtures::{ALICE, BOB, FIVE_PERCENT, RAY, SECOND_SPOKE, SPOKE, USDC, ask, reserve_ids};
+use super::{PositionKey, PositionPage, PositionQuery, PositionStore};
 
 /// One position a wallet holds, before anything values it.
 pub(crate) struct Held {
@@ -72,14 +72,29 @@ pub(crate) trait Fixture {
 
     fn store(&self) -> &Self::Store;
 
-    async fn given_positions(&self, held: &[Held]);
+    /// Positions opened in the same block as the checkpoint every case values
+    /// from, which is what most of them want.
+    async fn given_positions(&self, held: &[Held]) {
+        self.given_positions_at(CHECKPOINT_BLOCK, held).await;
+    }
+
+    /// Positions opened in a block of the case's choosing, so a cut can fall
+    /// between two of them and the fold has something to rewind.
+    async fn given_positions_at(&self, block: u64, held: &[Held]);
+
     async fn given_reserve(&self, listed: &Listed);
+
+    /// A second `UpdateAsset` on a reserve already listed, so a case can ask
+    /// *which* checkpoint a valuation started from rather than only whether it
+    /// found one.
+    async fn given_checkpoint(&self, asset_id: &str, at: u64, drawn_index: &str);
 }
 
 /// Deliberately out of numeric order as text: 13 sorts before 3.
 const RESERVES: [&str; 5] = ["3", "7", "13", "21", "34"];
 
 /// The block every fixture checkpoints at, and the instant it lands on.
+pub(crate) const CHECKPOINT_BLOCK: u64 = 100;
 pub(crate) const CHECKPOINT_AT: u64 = 1_785_000_100;
 pub(crate) const YEAR: u64 = 365 * 24 * 3600;
 
@@ -402,6 +417,123 @@ pub(crate) async fn defaults_to_now_when_no_instant_is_named<F: Fixture>() {
 /// `cargo` runs them concurrently. A case left out of the list below is a build
 /// error rather than a silent gap: nothing else calls these, so it trips
 /// `dead_code`, which the workspace denies.
+/// A checkpoint and a supply *after* the instant these cases ask for, which is
+/// what makes them evidence: with one checkpoint and one supply, a store that
+/// ignored the instant entirely would pass every case above.
+const LATER_BLOCK: u64 = CHECKPOINT_BLOCK + 200;
+const LATER_AT: u64 = CHECKPOINT_AT + 200;
+/// An index no extrapolation from the first checkpoint could reach.
+const DOUBLED: &str = "2000000000000000000000000000";
+
+fn decimal(value: &str) -> U256 {
+    U256::from_str_radix(value, 10).unwrap()
+}
+
+async fn valued_at<F: Fixture>(fixture: &F, at: u64) -> PositionPage {
+    fixture
+        .store()
+        .list(&PositionQuery {
+            as_of: Some(at),
+            ..ask()
+        })
+        .await
+        .unwrap()
+}
+
+async fn two_checkpoints<F: Fixture>(case: &str) -> F {
+    let fixture = F::fresh(case).await;
+    fixture.given_reserve(&listed("7", "7")).await;
+    fixture.given_checkpoint("7", LATER_AT, DOUBLED).await;
+    // Opened before the first checkpoint, so a case can value at an instant
+    // earlier than any checkpoint and still have a position to look at.
+    fixture
+        .given_positions_at(CHECKPOINT_BLOCK - 50, &[Held::supplying("7", "1000")])
+        .await;
+    fixture
+}
+
+pub(crate) async fn takes_the_checkpoint_in_force_not_the_newest_there_is<F: Fixture>() {
+    let fixture = two_checkpoints::<F>("in_force").await;
+
+    let page = valued_at(&fixture, CHECKPOINT_AT).await;
+
+    // The newest checkpoint is 200s after this instant, and reaching it from
+    // here is linear interest over a negative elapsed — which the arithmetic
+    // refuses, so the whole page fails rather than values.
+    assert_eq!(
+        page.items[0].value.as_ref().unwrap().drawn_index,
+        decimal(RAY)
+    );
+}
+
+pub(crate) async fn carries_that_checkpoint_forward_rather_than_snapping_to_it<F: Fixture>() {
+    let fixture = two_checkpoints::<F>("carries_forward").await;
+
+    let page = valued_at(&fixture, CHECKPOINT_AT + 100).await;
+
+    // The earlier checkpoint plus 100s of interest: the cut selects a base, it
+    // does not replace the extrapolation.
+    let interest = decimal(FIVE_PERCENT)
+        .checked_mul(U256::from(100))
+        .and_then(|accrued| accrued.checked_div(U256::from(YEAR)))
+        .unwrap();
+    let expected = decimal(RAY).checked_add(interest).unwrap();
+    assert_eq!(page.items[0].value.as_ref().unwrap().drawn_index, expected);
+}
+
+pub(crate) async fn reports_no_value_when_no_checkpoint_precedes_the_instant<F: Fixture>() {
+    let fixture = two_checkpoints::<F>("before_any").await;
+
+    let page = valued_at(&fixture, CHECKPOINT_AT - 1).await;
+
+    // Nothing to carry forward, so no number is offered — the same answer as an
+    // asset the Hub has listed and never checkpointed. The listing itself is not
+    // cut away, so the asset still resolves.
+    assert!(page.items[0].value.is_none());
+    assert!(page.items[0].asset.is_some());
+}
+
+pub(crate) async fn returns_the_shares_held_then_not_the_ones_held_since<F: Fixture>() {
+    let fixture = F::fresh("shares_then").await;
+    fixture.given_reserve(&listed("7", "7")).await;
+    fixture
+        .given_positions(&[Held::supplying("7", "1000")])
+        .await;
+    fixture
+        .given_positions_at(LATER_BLOCK, &[Held::supplying("7", "500")])
+        .await;
+
+    // A balance is the sum of the deltas up to an instant. Reading the fold at
+    // now would report 1500 at both.
+    assert_eq!(
+        valued_at(&fixture, CHECKPOINT_AT + 100).await.items[0].supplied_shares,
+        I256::try_from(1000).unwrap()
+    );
+    assert_eq!(
+        valued_at(&fixture, LATER_AT + 100).await.items[0].supplied_shares,
+        I256::try_from(1500).unwrap()
+    );
+}
+
+pub(crate) async fn leaves_out_a_position_that_did_not_exist_yet<F: Fixture>() {
+    let fixture = F::fresh("not_yet").await;
+    fixture.given_reserve(&listed("7", "7")).await;
+    fixture
+        .given_positions_at(LATER_BLOCK, &[Held::supplying("7", "1000")])
+        .await;
+
+    // Its shares sum to nothing before its first event, and a position with no
+    // shares is one the listing filter drops — the same rule that hides a closed
+    // one.
+    assert!(
+        valued_at(&fixture, CHECKPOINT_AT + 100)
+            .await
+            .items
+            .is_empty()
+    );
+    assert_eq!(valued_at(&fixture, LATER_AT + 100).await.items.len(), 1);
+}
+
 macro_rules! position_store_contract {
     ($fixture:ty) => {
         $crate::store::contract::position_store_contract!(@cases $fixture:
@@ -416,6 +548,11 @@ macro_rules! position_store_contract {
             reports_no_next_key_when_the_page_is_not_full
             values_every_position_on_a_page_at_one_instant
             defaults_to_now_when_no_instant_is_named
+            takes_the_checkpoint_in_force_not_the_newest_there_is
+            carries_that_checkpoint_forward_rather_than_snapping_to_it
+            reports_no_value_when_no_checkpoint_precedes_the_instant
+            returns_the_shares_held_then_not_the_ones_held_since
+            leaves_out_a_position_that_did_not_exist_yet
         );
     };
     (@cases $fixture:ty: $($case:ident)*) => {
