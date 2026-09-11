@@ -47,11 +47,12 @@ FROM (
     -- value rather than a missing predicate. Measured: same condition, same
     -- granule, same binary search as omitting it.
     SELECT *
-    -- now(), not the instant this page is valued at, which is the difference
-    -- this port has yet to make: TypeScript binds valuedAt to both views so a
-    -- page cannot read the fold at one instant and value it at another. Until
-    -- that lands, this is what these views answered before they took an instant.
-    FROM user_positions_as_of(cut = now())
+    -- **Cut at the instant this page is valued at**, which is what stops it
+    -- reading the fold at one moment and valuing it at another. The shares a
+    -- position held then, the collateral flag set then, the reserve listed by
+    -- then, and the interest checkpoint in force then: all three views take the
+    -- same parameter, and a page is only as point-in-time as its least.
+    FROM user_positions_as_of(cut = {valuedAt:DateTime})
     -- The leading pair of the sorting key, so the scan starts at this
     -- wallet's rows rather than filtering its way to them.
     WHERE chain_id = {chainId:UInt32}
@@ -109,9 +110,9 @@ FROM (
 --
 -- LEFT, because a position must survive a reserve the registry has not
 -- seen. The nulls that produces are reported as nulls rather than zeros.
-LEFT JOIN spoke_reserves_as_of(cut = now()) AS r
+LEFT JOIN spoke_reserves_as_of(cut = {valuedAt:DateTime}) AS r
     ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
-LEFT JOIN hub_assets_as_of(cut = now()) AS a
+LEFT JOIN hub_assets_as_of(cut = {valuedAt:DateTime}) AS a
     ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
 -- Qualified, and it has to be. Unqualified, reserve_id binds to the
 -- toString alias above and sorts the decimal digits as text, putting 13
@@ -177,6 +178,9 @@ mod tests {
         assert_eq!(
             parameters(STATEMENT),
             [
+                // First, because the fold is selected by it before it is
+                // filtered by anything else.
+                "valuedAt",
                 "chainId",
                 "user",
                 "afterSpoke",
@@ -217,14 +221,26 @@ mod tests {
     }
 
     /// Every `{name:Type}` in the executable half, in the order it appears.
+    /// Distinct names, in the order they first appear.
+    ///
+    /// One `param` call covers every occurrence, so a name used by more than one
+    /// view — `valuedAt` is read by all three — is one thing to bind and belongs
+    /// in the list once. The question this answers is which names exist, not how
+    /// many times the statement mentions them.
     fn parameters(statement: &str) -> Vec<&str> {
-        statement
+        let mut seen = Vec::new();
+        for name in statement
             .lines()
             .filter(|line| !line.trim_start().starts_with("--"))
             .flat_map(|line| line.split('{').skip(1))
             .filter_map(|rest| rest.split('}').next())
             .filter_map(|slot| slot.split_once(':'))
             .map(|(name, _)| name)
-            .collect()
+        {
+            if !seen.contains(&name) {
+                seen.push(name);
+            }
+        }
+        seen
     }
 }
