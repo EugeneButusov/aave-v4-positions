@@ -78,12 +78,18 @@ where
         Err(error) => CheckResult {
             name,
             status: CheckStatus::Down,
-            error: Some(chain(&error)),
+            error: Some(message_with_causes(&error)),
         },
     }
 }
 
-/// The chain, skipping any link already spelled out by the one above it.
+/// The error's own message followed by its causes, skipping any already
+/// spelled out by the one above it.
+///
+/// A *cause* chain, not a call stack: `source()` walks what each error wrapped,
+/// which is a chain of whys rather than of frames. Nothing here captures a
+/// backtrace, and the two answer different questions — a frame list says where
+/// the code was, and this says what the database refused.
 ///
 /// Two conventions live side by side in the ecosystem: `thiserror` messages
 /// here name only their own stage and leave the cause to `source()`, while
@@ -92,7 +98,7 @@ where
 /// "error connecting to server: error connecting to server: Connection
 /// refused". A containment test reconciles both without either side having to
 /// know about the other.
-fn chain(error: &dyn std::error::Error) -> String {
+fn message_with_causes(error: &dyn std::error::Error) -> String {
     let mut message = error.to_string();
     let mut cause = error.source();
 
