@@ -512,15 +512,28 @@ and Postgres, and a replay harness issuing several hundred requests — every wa
 page size, cursors walked to exhaustion, `asOf` pinned at fixed instants — **byte-comparing the
 JSON**. Diff the two OpenAPI documents too.
 
-**One key is expected to differ, and the comparator has to be told rather than left to find it.**
-`GET /health/live` answers `uptime_seconds` where the TypeScript answers `uptimeSeconds`. It is the
-only multi-word key on the probe surface, so matching it meant a `serde(rename_all)` governing
-exactly one field and leaving the probes the one camel-cased thing in an otherwise Rust-flavoured
-crate. It is safe to deviate because the key has no consumer: all three compose healthchecks — and a
-Kubernetes probe — request `/health/ready` and read only the status code, and nothing requests
-`/health/live` at all. Every other probe key, and every key of the positions contract, is matched
-exactly; this is the single exception, and a gate that reports it as drift is a gate that has not
-been told the truth.
+**Two keys are expected to differ, and the comparator has to be told rather than left to find them.**
+This port reads as Rust rather than as a transliteration, so the two multi-word keys it owns are
+snake_case:
+
+| endpoint | TypeScript | here |
+| --- | --- | --- |
+| `GET /health/live` | `uptimeSeconds` | `uptime_seconds` |
+| any error body | `statusCode` | `status_code` |
+
+The first is free: it is the only multi-word key on the probe surface, so matching it meant a
+`serde(rename_all)` governing exactly one field, and it has no consumer — all three compose
+healthchecks and a Kubernetes probe request `/health/ready` and read only the status code, and
+nothing requests `/health/live` at all.
+
+The second is not free, and should be treated as a breaking change with a release note: error bodies
+are parsed by callers, and anything switching on `statusCode` stops seeing it. The status line still
+carries the code, which is what most clients actually read.
+
+Everything else is matched exactly, field order included — the error envelope still emits `message`,
+then `error`, then the status, which is the order the running service uses and not the order its own
+DTO class declares. A gate that reports either of these two as drift is a gate that has not been told
+the truth; a gate that reports anything else has found something.
 
 **Then capture that corpus as golden files and commit it.** Once `apps/api` is gone the oracle is
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the

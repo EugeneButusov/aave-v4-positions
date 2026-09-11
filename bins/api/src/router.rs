@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(
             body,
-            r#"{"message":"Cannot GET /nope?a=1&b=2","error":"Not Found","statusCode":404}"#
+            r#"{"message":"Cannot GET /nope?a=1&b=2","error":"Not Found","status_code":404}"#
         );
     }
 
@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(
             body,
-            r#"{"message":"Cannot POST /health/live","error":"Not Found","statusCode":404}"#
+            r#"{"message":"Cannot POST /health/live","error":"Not Found","status_code":404}"#
         );
     }
 

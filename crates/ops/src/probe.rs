@@ -177,7 +177,7 @@ mod tests {
         let (status, body) = request(router(Drain::new(), checks), "/health/ready").await;
 
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        // The 503 body is the report and nothing else — no `statusCode`, no
+        // The 503 body is the report and nothing else — no `status_code`, no
         // `message`, no `error` wrapper. Measured, because the TypeScript
         // raises a framework exception here and no spec of its own covers it.
         assert_eq!(

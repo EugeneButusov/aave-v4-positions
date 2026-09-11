@@ -14,8 +14,16 @@
 //! convention and not ours to borrow.
 //!
 //! **The field order is measured**, and it is not the order the DTO class
-//! declares: the running service emits `message`, then `error`, then
-//! `statusCode`. A byte-comparing gate sees the difference.
+//! declares: the running service emits `message`, then `error`, then the status.
+//! A byte-comparing gate sees the difference, so the order is the contract even
+//! though the third key's spelling is not.
+//!
+//! **That third key is `status_code` where the TypeScript says `statusCode`**,
+//! the same deliberate deviation the probe surface makes and for the same
+//! reason — this port reads as Rust rather than as a transliteration. Unlike the
+//! probes, this one is parsed by callers, so it is the kind of change that goes
+//! in the release note rather than passing unnoticed. `docs/rust-migration.md`
+//! names both keys as the differential's only expected differences.
 
 use axum::Json;
 use axum::http::StatusCode;
@@ -34,8 +42,8 @@ pub(crate) struct ApiError {
     /// behind it, and serde attributes are not `dead_code`. It becomes optional
     /// the day something needs it to be.
     error: &'static str,
-    #[serde(rename = "statusCode", serialize_with = "code")]
-    status: StatusCode,
+    #[serde(serialize_with = "code")]
+    status_code: StatusCode,
 }
 
 impl ApiError {
@@ -48,14 +56,14 @@ impl ApiError {
         Self {
             message,
             error: "Not Found",
-            status: StatusCode::NOT_FOUND,
+            status_code: StatusCode::NOT_FOUND,
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(self)).into_response()
+        (self.status_code, Json(self)).into_response()
     }
 }
 
@@ -78,7 +86,7 @@ mod tests {
         // the other way round.
         assert_eq!(
             json(&ApiError::not_found("Cannot GET /nope".to_owned())),
-            r#"{"message":"Cannot GET /nope","error":"Not Found","statusCode":404}"#
+            r#"{"message":"Cannot GET /nope","error":"Not Found","status_code":404}"#
         );
     }
 
@@ -87,7 +95,7 @@ mod tests {
         let error = ApiError::not_found(String::new());
 
         assert!(
-            json(&error).contains(r#""statusCode":404"#),
+            json(&error).contains(r#""status_code":404"#),
             "{}",
             json(&error)
         );
