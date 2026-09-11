@@ -78,7 +78,7 @@ where
         Err(error) => CheckResult {
             name,
             status: CheckStatus::Down,
-            error: Some(message_with_causes(&error)),
+            error: Some(error_message_with_causes(&error)),
         },
     }
 }
@@ -98,7 +98,7 @@ where
 /// "error connecting to server: error connecting to server: Connection
 /// refused". A containment test reconciles both without either side having to
 /// know about the other.
-fn message_with_causes(error: &dyn std::error::Error) -> String {
+fn error_message_with_causes(error: &dyn std::error::Error) -> String {
     let mut message = error.to_string();
     let mut cause = error.source();
 
