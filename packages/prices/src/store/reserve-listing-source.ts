@@ -46,7 +46,9 @@ export class ClickHouseReserveListings implements ReserveListings {
       // differently from the spec that pins it.
       query: `
         SELECT toString(r.reserve_id) AS reserve_id
-        FROM spoke_reserves_current AS r
+        -- Pricing is a job about now, so this asks for now and says so. The
+        -- view it used to read was named for that and hid the choice.
+        FROM spoke_reserves_as_of(cut = now()) AS r
         WHERE r.chain_id = {chainId:UInt32} AND r.spoke = {spoke:String}
         ORDER BY r.reserve_id
       `,

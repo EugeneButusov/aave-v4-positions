@@ -37,7 +37,10 @@ export function event(name: string, at: At, body: Record<string, unknown>): Deco
     address: at.spoke ?? SPOKE,
     blockNumber: at.block,
     blockHash: `0x${'aa'.repeat(32)}`,
-    blockTimestamp: 1_785_000_000,
+    // Distinct per block, as the Hub builder's already was. The position fold
+    // keys on this now, so a constant would put every event in a suite at one
+    // instant and leave a cut with nothing to separate.
+    blockTimestamp: 1_785_000_000 + at.block,
     txHash: `0x${'bb'.repeat(32)}`,
     txIndex: 0,
     logIndex: at.log ?? 0,

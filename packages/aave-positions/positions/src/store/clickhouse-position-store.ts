@@ -8,9 +8,17 @@ import type { Position, PositionAsset, PositionValue } from './position';
 import { valuePosition, type AssetState } from '../valuation/valuation';
 import type { PositionPage, PositionQuery, PositionStore } from './position-store';
 
-const POSITIONS_VIEW = 'user_positions_current';
-const RESERVES_VIEW = 'spoke_reserves_current';
-const HUB_ASSETS_VIEW = 'hub_assets_current';
+// Parameterised by the instant the page is valued at. The shares a position
+// held then are not the shares it holds now, and a view that answered only for
+// now is what made `asOf` value today's balances against a past index.
+const POSITIONS_VIEW = 'user_positions_as_of';
+// Also parameterised: a reserve listed after the instant did not exist then,
+// and a page valued at that instant must not resolve through it.
+const RESERVES_VIEW = 'spoke_reserves_as_of';
+// The last of the three, and the one the 500 came from: the interest
+// checkpoint a page extrapolates from has to be the one in force at the instant
+// it is valued at, not whichever the indexer folded last.
+const HUB_ASSETS_VIEW = 'hub_assets_as_of';
 
 /**
  * This package's schema, owned here rather than in a central list.
@@ -158,9 +166,21 @@ export class ClickHousePositionStore implements PositionStore {
   constructor(@Inject(CLICKHOUSE_CLIENT) private readonly client: ClickHouseClient) {}
 
   async list(query: PositionQuery): Promise<PositionPage> {
+    // One instant for the whole page, so two positions in one response cannot
+    // disagree about what time it is — and reported back, because an amount
+    // without the moment it was computed at is not reproducible (§12.6).
+    //
+    // Read before the query rather than after it, because it is now what the
+    // query selects *by*: taking the clock again afterwards would cut the fold
+    // at one instant and value it at another.
+    const valuedAt = query.asOf ?? BigInt(Math.floor(Date.now() / 1000));
+
     const params: Record<string, unknown> = {
       chainId: query.chainId,
       user: query.user.toLowerCase(),
+      // Seconds, as a number: `DateTime` takes an epoch and a bigint has no
+      // JSON rendering the driver would agree with.
+      valuedAt: Number(valuedAt),
       // Fetch one more than asked. Its presence is what says there is a next
       // page; counting the whole result set to find out would defeat the point
       // of keyset paging.
@@ -222,7 +242,7 @@ export class ClickHousePositionStore implements PositionStore {
             toString(toUnixTimestamp(a.index_timestamp)) AS checkpoint_at
         FROM (
             SELECT *
-            FROM ${POSITIONS_VIEW}
+            FROM ${POSITIONS_VIEW}(cut = {valuedAt:DateTime})
             WHERE ${filters.join(' AND ')}
             ORDER BY user, spoke, reserve_id
             LIMIT {limit:UInt32}
@@ -230,7 +250,7 @@ export class ClickHousePositionStore implements PositionStore {
         -- **A join, not the UNION ALL the collateral flag got.** The two cases
         -- differ structurally, and EXPLAIN indexes = 1 shows how.
         --
-        -- The left side prunes. Both branches of user_positions_current report
+        -- The left side prunes. Both branches of user_positions_as_of report
         -- PrimaryKey Keys: chain_id, user, spoke with the wallet predicate as
         -- their condition and Search Algorithm: binary search — that is the
         -- UNION ALL pushdown the flag was shaped for, doing its job.
@@ -256,9 +276,9 @@ export class ClickHousePositionStore implements PositionStore {
         --
         -- LEFT, because a position must survive a reserve the registry has not
         -- seen. The nulls that produces are reported as nulls rather than zeros.
-        LEFT JOIN ${RESERVES_VIEW} AS r
+        LEFT JOIN ${RESERVES_VIEW}(cut = {valuedAt:DateTime}) AS r
                ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
-        LEFT JOIN ${HUB_ASSETS_VIEW} AS a
+        LEFT JOIN ${HUB_ASSETS_VIEW}(cut = {valuedAt:DateTime}) AS a
                ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
         -- Qualified, and it has to be. Unqualified, \`reserve_id\` binds to the
         -- toString alias above and sorts the decimal digits as text, putting 13
@@ -269,10 +289,6 @@ export class ClickHousePositionStore implements PositionStore {
     });
 
     const rows = await result.json<Row>();
-    // One instant for the whole page, so two positions in one response cannot
-    // disagree about what time it is — and reported back, because an amount
-    // without the moment it was computed at is not reproducible (§12.6).
-    const valuedAt = query.asOf ?? BigInt(Math.floor(Date.now() / 1000));
     const items = rows.slice(0, query.limit).map((row) => toPosition(row, valuedAt));
     const last = items.at(-1);
 

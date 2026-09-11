@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS token_metadata (
     -- exceed int4, and EIP-2294 only caps them at MAX_SAFE_INTEGER.
     chain_id         bigint      NOT NULL,
     -- Lower-cased 0x-hex, enforced. It is joined against
-    -- `hub_assets_current.underlying`, which the fold stores `lower()`ed; a
+    -- `hub_assets_as_of.underlying`, which the fold stores `lower()`ed; a
     -- checksummed address written here would match nothing and read as a token
     -- nobody has enriched yet, forever.
     token            text        NOT NULL CHECK (token ~ '^0x[0-9a-f]{40}$'),

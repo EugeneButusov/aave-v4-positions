@@ -208,7 +208,14 @@ async function main(): Promise<void> {
     args.assets ??
     Number(await chain.readContract({ address: hub, abi: HUB_ABI, functionName: 'getAssetCount' }));
 
-  const folded = await store.list(env.CHAIN_ID, hub);
+  // **Read at the block being compared against, not at now.** Every field below
+  // moves with the asset's own events, and the fold runs ahead of `--to` by
+  // however far the indexer has got — so reading the fold at now and the chain
+  // at `to` reports that lead as drift. The checkpoint fields are the loudest:
+  // `drawnIndex` and `checkpointAt` change on every `UpdateAsset`, which fires
+  // 434 times per 10k blocks.
+  const block = await chain.getBlock({ blockNumber: BigInt(to) });
+  const folded = await store.list(env.CHAIN_ID, hub, block.timestamp);
   const byId = new Map(folded.map((a) => [a.assetId, a]));
 
   const getAsset = (assetId: number, blockNumber: bigint) =>
@@ -286,7 +293,7 @@ async function main(): Promise<void> {
   const mode = args.absolute ? 'absolute' : `delta against block ${baseline}`;
   process.stdout.write(
     `hub ${hub}\n` +
-      `${mode}, at block ${to}\n` +
+      `${mode}, at block ${to}, fold read at t=${block.timestamp}\n` +
       `${count} asset(s) listed, ${untouched} untouched in the window\n` +
       `${compared} field comparison(s), ${skipped} skipped (no such event in window)\n`,
   );

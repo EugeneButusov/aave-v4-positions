@@ -47,7 +47,11 @@ FROM (
     -- value rather than a missing predicate. Measured: same condition, same
     -- granule, same binary search as omitting it.
     SELECT *
-    FROM user_positions_current
+    -- now(), not the instant this page is valued at, which is the difference
+    -- this port has yet to make: TypeScript binds valuedAt to both views so a
+    -- page cannot read the fold at one instant and value it at another. Until
+    -- that lands, this is what these views answered before they took an instant.
+    FROM user_positions_as_of(cut = now())
     -- The leading pair of the sorting key, so the scan starts at this
     -- wallet's rows rather than filtering its way to them.
     WHERE chain_id = {chainId:UInt32}
@@ -79,7 +83,7 @@ FROM (
 -- **A join, not the UNION ALL the collateral flag got.** The two cases
 -- differ structurally, and EXPLAIN indexes = 1 shows how.
 --
--- The left side prunes. Both branches of user_positions_current report
+-- The left side prunes. Both branches of user_positions_as_of report
 -- PrimaryKey Keys: chain_id, user, spoke with the wallet predicate as
 -- their condition and Search Algorithm: binary search — that is the
 -- UNION ALL pushdown the flag was shaped for, doing its job.
@@ -105,9 +109,9 @@ FROM (
 --
 -- LEFT, because a position must survive a reserve the registry has not
 -- seen. The nulls that produces are reported as nulls rather than zeros.
-LEFT JOIN spoke_reserves_current AS r
+LEFT JOIN spoke_reserves_as_of(cut = now()) AS r
     ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
-LEFT JOIN hub_assets_current AS a
+LEFT JOIN hub_assets_as_of(cut = now()) AS a
     ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
 -- Qualified, and it has to be. Unqualified, reserve_id binds to the
 -- toString alias above and sorts the decimal digits as text, putting 13

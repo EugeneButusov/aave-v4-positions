@@ -54,7 +54,7 @@ export const positionQuerySchema = z
     limit: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
     cursor: z.string().min(1).optional(),
     /**
-     * Unix seconds to value the page at. Defaults to now.
+     * Unix seconds to read and value the page at. Defaults to now.
      *
      * Amounts accrue every second and the chain emits nothing while they do, so
      * "now" is a choice rather than an absence of one. Naming it explicitly is

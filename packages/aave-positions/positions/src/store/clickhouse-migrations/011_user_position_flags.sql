@@ -22,14 +22,18 @@ CREATE TABLE IF NOT EXISTS user_position_flags
     user                String,
     spoke               String,
     reserve_id          UInt256,
-    -- The ordering that decides "latest". Emphatically not `version`, which
-    -- orders dispatches rather than chain events — measured: re-dispatching an
-    -- earlier block after a later one gives it the higher version, and an
-    -- argMax by version then returns the stale flag.
     block_number        UInt64,
     log_index           UInt32,
     -- Copied from the ledger row, because it is half the pairing key.
     version             UInt64,
+    -- The ordering that decides "latest". Emphatically not `version`, which
+    -- orders dispatches rather than chain events — measured: re-dispatching an
+    -- earlier block after a later one gives it the higher version, and an
+    -- argMax by version then returns the stale flag.
+    -- The block's own instant. `block_number` orders the latest-wins pick;
+    -- this is what a read cuts on, so a flag set after the instant asked for is
+    -- not the row `argMax` lands on.
+    block_timestamp     DateTime('UTC'),
     using_as_collateral UInt8,
     -- Copied from the ledger row. This is what makes the retraction pair.
     sign                Int8

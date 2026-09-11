@@ -18,6 +18,7 @@ SELECT
     block_number,
     log_index,
     version,
+    block_timestamp,
     JSONExtractBool(body, 'usingAsCollateral')      AS using_as_collateral,
     sign
 FROM spoke_events
