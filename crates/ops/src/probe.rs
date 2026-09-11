@@ -138,7 +138,7 @@ mod tests {
         let (status, body) = request(router(Drain::new(), vec![]), "/health/live").await;
 
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body, r#"{"status":"ok","uptimeSeconds":0}"#);
+        assert_eq!(body, r#"{"status":"ok","uptime_seconds":0}"#);
     }
 
     #[tokio::test]

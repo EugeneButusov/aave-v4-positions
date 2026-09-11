@@ -512,6 +512,16 @@ and Postgres, and a replay harness issuing several hundred requests — every wa
 page size, cursors walked to exhaustion, `asOf` pinned at fixed instants — **byte-comparing the
 JSON**. Diff the two OpenAPI documents too.
 
+**One key is expected to differ, and the comparator has to be told rather than left to find it.**
+`GET /health/live` answers `uptime_seconds` where the TypeScript answers `uptimeSeconds`. It is the
+only multi-word key on the probe surface, so matching it meant a `serde(rename_all)` governing
+exactly one field and leaving the probes the one camel-cased thing in an otherwise Rust-flavoured
+crate. It is safe to deviate because the key has no consumer: all three compose healthchecks — and a
+Kubernetes probe — request `/health/ready` and read only the status code, and nothing requests
+`/health/live` at all. Every other probe key, and every key of the positions contract, is matched
+exactly; this is the single exception, and a gate that reports it as drift is a gate that has not
+been told the truth.
+
 **Then capture that corpus as golden files and commit it.** Once `apps/api` is gone the oracle is
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the
 Rust API, soak, then delete `apps/api` in its own PR. The remaining `packages/*` stay — the

@@ -4,6 +4,15 @@
 //! manifests and whatever watches them read these exact keys. They are matched
 //! field for field against what the TypeScript service emits today, down to
 //! `error` being **absent** rather than null on a check that passed.
+//!
+//! **One deliberate deviation: `uptime_seconds`, where the TypeScript says
+//! `uptimeSeconds`.** It is the only multi-word key on this whole surface, so
+//! honouring it meant a `rename_all` that governed exactly one field and left
+//! the probes the one camel-cased thing in the crate. Nothing reads it — all
+//! three compose healthchecks hit `/health/ready` and look only at the status
+//! code, and a Kubernetes probe does the same — so the key has no consumer to
+//! break. The differential gate is told about this one rather than left to
+//! report it; see `docs/rust-migration.md`.
 
 use serde::Serialize;
 
@@ -20,8 +29,10 @@ pub enum Alive {
 }
 
 /// The body of `GET /health/live`.
+///
+/// No `rename_all`: the field below is snake_case on the wire, which is the
+/// deviation the module header explains.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Liveness {
     pub status: Alive,
     pub uptime_seconds: u64,

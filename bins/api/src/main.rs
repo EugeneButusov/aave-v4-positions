@@ -33,7 +33,7 @@ use ops::{Drain, Uptime};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    // Before anything else, so `uptimeSeconds` counts from the process rather
+    // Before anything else, so `uptime_seconds` counts from the process rather
     // than from whenever the databases finished being dialled.
     let uptime = Uptime::now();
 
@@ -150,7 +150,7 @@ mod tests {
 
         assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
         assert!(
-            response.ends_with(r#"{"status":"ok","uptimeSeconds":0}"#),
+            response.ends_with(r#"{"status":"ok","uptime_seconds":0}"#),
             "{response}"
         );
 
