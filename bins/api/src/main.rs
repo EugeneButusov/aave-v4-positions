@@ -2,7 +2,7 @@
 //!
 //! The first long-lived process in this workspace, which is why `ops` exists and
 //! why the shutdown path is written out rather than left to the runtime:
-//! `bins/migrate` runs to completion and has nothing to drain.
+//! `bins/migrate` runs to completion and has nothing to shutdown.
 //!
 //! Boot order is config, logging, dependencies, state, listener — one parsed
 //! configuration flowing downward, and nothing reading the environment behind
@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use app::App;
 use config::Config;
-use ops::{Drain, Uptime};
+use ops::{ShutdownFlag, Uptime};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -73,10 +73,10 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let clickhouse = clickhouse_client::build_client(config.clickhouse);
     let postgres = postgres::build_pool(&config.postgres_url)?;
 
-    let drain = Drain::new();
+    let shutdown = ShutdownFlag::new();
     let handler = app::handler(Arc::new(App {
         uptime,
-        drain: drain.clone(),
+        shutdown: shutdown.clone(),
         clickhouse,
         postgres,
     }));
@@ -86,7 +86,7 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     tracing::info!(%address, "api listening");
 
     axum::serve(listener, handler)
-        .with_graceful_shutdown(async move { drain.on_signal(config.grace).await })
+        .with_graceful_shutdown(async move { shutdown.on_signal(config.grace).await })
         .await?;
 
     // Reached only once the accept loop has stopped and the last in-flight
@@ -102,7 +102,7 @@ mod tests {
     //! Everything in `router` and `middleware` drives the router directly, which
     //! leaves `axum::serve`, the listener and the shutdown future untested — and
     //! those are this file's whole contribution. One request over TCP, then the
-    //! drain, covers it without an HTTP client dependency: the response is read
+    //! shutdown, covers it without an HTTP client dependency: the response is read
     //! as bytes because the only thing asserted is that the process answered.
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -112,27 +112,27 @@ mod tests {
 
     #[tokio::test]
     async fn serves_over_a_socket_and_stops_when_drained() {
-        let drain = Drain::new();
+        let shutdown = ShutdownFlag::new();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
 
-        // Stands in for the signal, so the drain happens after the request
+        // Stands in for the signal, so the shutdown happens after the request
         // rather than racing it.
         let (terminate, terminated) = tokio::sync::oneshot::channel::<()>();
 
         let served = tokio::spawn({
             let handler = app::handler(Arc::new(App {
                 uptime: Uptime::now(),
-                drain: drain.clone(),
+                shutdown: shutdown.clone(),
                 clickhouse: clickhouse(),
                 postgres: postgres(),
             }));
-            let drain = drain.clone();
+            let shutdown = shutdown.clone();
             async move {
                 axum::serve(listener, handler)
                     .with_graceful_shutdown(async move {
                         let _ = terminated.await;
-                        drain.begin_and_hold(std::time::Duration::ZERO).await;
+                        shutdown.begin_and_hold(std::time::Duration::ZERO).await;
                     })
                     .await
                     .unwrap();

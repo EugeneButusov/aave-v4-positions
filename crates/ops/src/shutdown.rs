@@ -3,7 +3,7 @@
 //! `axum::serve(...).with_graceful_shutdown(f)` stops accepting the moment `f`
 //! resolves, which on its own races the endpoints controller: the pod can still
 //! be receiving traffic it is no longer listening for. So `f` is
-//! [`Drain::on_signal`], which fails readiness *first*, holds for the removal to
+//! [`ShutdownFlag::on_signal`], which fails readiness *first*, holds for the removal to
 //! propagate, and only then resolves — leaving axum to finish what is in flight.
 //!
 //! A shared flag rather than a service, following
@@ -20,9 +20,9 @@ use std::time::Duration;
 /// Shared with the readiness handler, and cloned rather than borrowed so the
 /// handler and the signal task can both hold one.
 #[derive(Clone, Debug, Default)]
-pub struct Drain(Arc<AtomicBool>);
+pub struct ShutdownFlag(Arc<AtomicBool>);
 
-impl Drain {
+impl ShutdownFlag {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -34,7 +34,7 @@ impl Drain {
     /// whole message, and a probe that observes the flip one request late is
     /// indistinguishable from one that arrived a millisecond earlier.
     #[must_use]
-    pub fn is_draining(&self) -> bool {
+    pub fn has_begun(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
 
@@ -55,7 +55,7 @@ impl Drain {
     /// The future to hand `with_graceful_shutdown`.
     ///
     /// SIGTERM is what an orchestrator sends; SIGINT is what a terminal sends.
-    /// Both drain, because a `docker compose down` that skipped the drain would
+    /// Both shutdown, because a `docker compose down` that skipped the shutdown would
     /// be a different shutdown path from the deployed one, and the deployed one
     /// is the one that has to work.
     pub async fn on_signal(&self, grace: Duration) {
@@ -109,39 +109,39 @@ mod tests {
 
     #[test]
     fn is_ready_until_told_otherwise() {
-        let drain = Drain::new();
-        assert!(!drain.is_draining());
+        let shutdown = ShutdownFlag::new();
+        assert!(!shutdown.has_begun());
 
-        drain.begin();
-        assert!(drain.is_draining());
+        shutdown.begin();
+        assert!(shutdown.has_begun());
     }
 
     #[test]
     fn a_clone_sees_the_same_flag() {
         // The handler holds one and the signal task holds another; a copy that
         // drained privately would fail readiness for nobody.
-        let drain = Drain::new();
-        let handler = drain.clone();
+        let shutdown = ShutdownFlag::new();
+        let handler = shutdown.clone();
 
-        drain.begin();
+        shutdown.begin();
 
-        assert!(handler.is_draining());
+        assert!(handler.has_begun());
     }
 
     #[tokio::test(start_paused = true)]
     async fn fails_readiness_before_it_waits_rather_than_after() {
         // The ordering is the whole point of the type: hold first and the pod
         // is still advertised as ready for the length of the grace window.
-        let drain = Drain::new();
+        let shutdown = ShutdownFlag::new();
         let held = tokio::spawn({
-            let drain = drain.clone();
-            async move { drain.begin_and_hold(Duration::from_secs(10)).await }
+            let shutdown = shutdown.clone();
+            async move { shutdown.begin_and_hold(Duration::from_secs(10)).await }
         });
 
         tokio::task::yield_now().await;
 
         assert!(
-            drain.is_draining(),
+            shutdown.has_begun(),
             "readiness still passing during the hold"
         );
         assert!(!held.is_finished(), "returned without holding");

@@ -143,8 +143,8 @@ impl Report {
     /// still worth asking about — the last readiness body before a rolling
     /// update finishes is sometimes the only evidence of what it saw.
     #[must_use]
-    pub fn new(checks: Vec<CheckResult>, draining: bool) -> Self {
-        let status = if draining {
+    pub fn new(checks: Vec<CheckResult>, shutting_down: bool) -> Self {
+        let status = if shutting_down {
             Readiness::ShuttingDown
         } else if checks.iter().all(|check| check.status == CheckStatus::Up) {
             Readiness::Ok

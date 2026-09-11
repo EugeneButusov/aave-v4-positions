@@ -8,7 +8,7 @@
 //! of forcing one.
 //!
 //! **It is handed its dependencies rather than making them**, and each has its
-//! own reason. The [`Drain`] has two holders — the readiness handler and the
+//! own reason. The [`ShutdownFlag`] has two holders — the readiness handler and the
 //! future `with_graceful_shutdown` waits on — so one made in here could never be
 //! flipped by the other. [`Uptime`] is read at the top of `main`, because
 //! started here it would begin counting after the config and both clients. The
@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use clickhouse_client::clickhouse::Client;
-use ops::{Drain, Uptime};
+use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
 
 use crate::{middleware, router};
@@ -30,7 +30,7 @@ use crate::{middleware, router};
 /// The live resources, built once at boot and read for the process's life.
 pub(crate) struct App {
     pub(crate) uptime: Uptime,
-    pub(crate) drain: Drain,
+    pub(crate) shutdown: ShutdownFlag,
     pub(crate) clickhouse: Client,
     pub(crate) postgres: Pool,
 }

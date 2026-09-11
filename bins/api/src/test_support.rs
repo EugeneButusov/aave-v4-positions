@@ -11,7 +11,7 @@ use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use clickhouse_client::clickhouse::Client;
-use ops::{Drain, Uptime};
+use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
 use tower::ServiceExt;
 
@@ -43,7 +43,7 @@ pub(crate) fn unreachable_postgres() -> Pool {
 pub(crate) fn state(postgres: Pool) -> Arc<App> {
     Arc::new(App {
         uptime: Uptime::now(),
-        drain: Drain::new(),
+        shutdown: ShutdownFlag::new(),
         clickhouse: clickhouse(),
         postgres,
     })

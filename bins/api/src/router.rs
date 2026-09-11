@@ -15,9 +15,9 @@ use crate::app::AppState;
 use crate::errors::ApiError;
 
 pub(crate) fn build(state: AppState) -> Router {
-    let (uptime, drain) = (state.uptime, state.drain.clone());
+    let (uptime, shutdown) = (state.uptime, state.shutdown.clone());
 
-    ops::probe_router(uptime, drain, move || {
+    ops::probe_router(uptime, shutdown, move || {
         let state = state.clone();
         async move {
             // Side by side rather than one after the other, as the TypeScript's
@@ -61,7 +61,7 @@ async fn not_found(method: Method, uri: Uri) -> ApiError {
 #[cfg(test)]
 mod tests {
     //! Against real servers, because the wiring is the only thing left to get
-    //! wrong: `ops` already proves the report and the drain in isolation, and
+    //! wrong: `ops` already proves the report and the shutdown in isolation, and
     //! what these add is that the names, the order and the two `ping`s behind
     //! them are hooked up to the databases this process actually opens.
 

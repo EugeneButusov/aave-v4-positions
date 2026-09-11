@@ -17,8 +17,8 @@ use std::time::Instant;
 use axum::routing::get;
 use axum::{Json, Router, http::StatusCode};
 
-use crate::drain::Drain;
 use crate::health::{Alive, CheckResult, Liveness, Readiness, Report};
+use crate::shutdown::ShutdownFlag;
 
 /// When the process started, taken as early as `main` can take it.
 ///
@@ -44,7 +44,7 @@ impl Uptime {
 /// Unversioned and outside any API prefix, deliberately: probe paths are
 /// infrastructure, and pinning them keeps deployment manifests independent of
 /// how the API is versioned.
-pub fn probe_router<F, Fut>(uptime: Uptime, drain: Drain, checks: F) -> Router
+pub fn probe_router<F, Fut>(uptime: Uptime, shutdown: ShutdownFlag, checks: F) -> Router
 where
     F: Fn() -> Fut + Clone + Send + Sync + 'static,
     Fut: Future<Output = Vec<CheckResult>> + Send + 'static,
@@ -62,9 +62,9 @@ where
         .route(
             "/health/ready",
             get(move || {
-                let (drain, checks) = (drain.clone(), checks.clone());
+                let (shutdown, checks) = (shutdown.clone(), checks.clone());
                 async move {
-                    let report = Report::new(checks().await, drain.is_draining());
+                    let report = Report::new(checks().await, shutdown.has_begun());
                     (code(report.status), Json(report))
                 }
             }),
@@ -114,8 +114,8 @@ mod tests {
     }
 
     /// A router over a fixed answer, so a case says what it is testing.
-    fn router(drain: Drain, checks: Vec<CheckResult>) -> Router {
-        probe_router(Uptime::now(), drain, move || {
+    fn router(shutdown: ShutdownFlag, checks: Vec<CheckResult>) -> Router {
+        probe_router(Uptime::now(), shutdown, move || {
             let checks = checks.clone();
             async move { checks }
         })
@@ -135,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn liveness_reports_ok_and_an_uptime() {
-        let (status, body) = request(router(Drain::new(), vec![]), "/health/live").await;
+        let (status, body) = request(router(ShutdownFlag::new(), vec![]), "/health/live").await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, r#"{"status":"ok","uptime_seconds":0}"#);
@@ -146,10 +146,10 @@ mod tests {
         // Measured: the TypeScript keeps answering 200 here through the whole
         // grace window. Failing it would have kubelet restart a pod that is
         // deliberately shutting down.
-        let drain = Drain::new();
-        drain.begin();
+        let shutdown = ShutdownFlag::new();
+        shutdown.begin();
 
-        let (status, _) = request(router(drain, vec![up("clickhouse")]), "/health/live").await;
+        let (status, _) = request(router(shutdown, vec![up("clickhouse")]), "/health/live").await;
 
         assert_eq!(status, StatusCode::OK);
     }
@@ -158,7 +158,7 @@ mod tests {
     async fn readiness_is_ok_with_every_dependency_up() {
         let checks = vec![up("clickhouse"), up("postgres")];
 
-        let (status, body) = request(router(Drain::new(), checks), "/health/ready").await;
+        let (status, body) = request(router(ShutdownFlag::new(), checks), "/health/ready").await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
@@ -174,7 +174,7 @@ mod tests {
             up("postgres"),
         ];
 
-        let (status, body) = request(router(Drain::new(), checks), "/health/ready").await;
+        let (status, body) = request(router(ShutdownFlag::new(), checks), "/health/ready").await;
 
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         // The 503 body is the report and nothing else — no `status_code`, no
@@ -188,11 +188,11 @@ mod tests {
 
     #[tokio::test]
     async fn readiness_fails_while_draining_with_everything_up() {
-        let drain = Drain::new();
-        drain.begin();
+        let shutdown = ShutdownFlag::new();
+        shutdown.begin();
         let checks = vec![up("clickhouse"), up("postgres")];
 
-        let (status, body) = request(router(drain, checks), "/health/ready").await;
+        let (status, body) = request(router(shutdown, checks), "/health/ready").await;
 
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(
@@ -204,12 +204,12 @@ mod tests {
     #[tokio::test]
     async fn readiness_still_reports_the_checks_while_draining() {
         // Measured against the TypeScript: the checks keep running through the
-        // drain and a failing one is still named. Only the top line changes.
-        let drain = Drain::new();
-        drain.begin();
+        // shutdown and a failing one is still named. Only the top line changes.
+        let shutdown = ShutdownFlag::new();
+        shutdown.begin();
         let checks = vec![down("clickhouse", "connection refused"), up("postgres")];
 
-        let (_, body) = request(router(drain, checks), "/health/ready").await;
+        let (_, body) = request(router(shutdown, checks), "/health/ready").await;
 
         assert!(
             body.contains(r#"{"name":"clickhouse","status":"down","error":"connection refused"}"#)

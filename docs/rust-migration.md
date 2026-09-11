@@ -88,7 +88,7 @@ Cargo.toml                  workspace
 crates/
   aave-abi/                 vendored ABI JSON + sol! bindings + addresses   ← new, see Risk 1
   telemetry/                OTLP init for traces, metrics, logs
-  ops/                      the probe report, its router, and the graceful drain
+  ops/                      the probe report, its router, and the graceful shutdown
   clickhouse/               client   ← package `clickhouse-client`
   postgres/                 connect
   migrations/               every `.sql` this deployment applies, embedded
@@ -492,7 +492,7 @@ This phase must not be rushed; everything downstream inherits it.
 `bins/api` on axum, the `PositionStore` ClickHouse adapter, the read halves of
 `token-metadata` and `prices`, cursor signing, request validation, utoipa. Plus `telemetry` and
 `ops`, which arrive here because this is the first long-lived process: one needs a `main` that
-initialises OTLP, the other a probe router and a drain.
+initialises OTLP, the other a probe router and a shutdown flag.
 
 **`HubAssetStore` is not here — it moved to Phase 4**, with `reconcile:hub`, which is its only caller
 anywhere in the workspace. `apps/api` serves one route,

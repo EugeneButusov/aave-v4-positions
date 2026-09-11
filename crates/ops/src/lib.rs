@@ -2,7 +2,7 @@
 //!
 //! Two things, and they are the same thing seen from two sides: `/health/live`
 //! and `/health/ready` are how an orchestrator asks whether to route traffic,
-//! and [`Drain`] is how the process answers "no" before it stops listening.
+//! and [`ShutdownFlag`] is how the process answers "no" before it stops listening.
 //!
 //! **No registry, and no `HealthIndicator` trait.** The TypeScript this ports
 //! from resolves its indicators through a DI token, which is machinery Rust has
@@ -13,10 +13,10 @@
 //! read, and the resolution does not: a caller passes one closure listing its
 //! dependencies, and [`check`] turns each answer into a row.
 
-mod drain;
 mod health;
 mod probe;
+mod shutdown;
 
-pub use drain::Drain;
 pub use health::{Alive, CheckResult, CheckStatus, Liveness, Readiness, Report, check};
 pub use probe::{Uptime, probe_router};
+pub use shutdown::ShutdownFlag;
