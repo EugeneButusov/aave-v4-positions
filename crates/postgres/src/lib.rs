@@ -8,6 +8,13 @@ mod error;
 mod health;
 mod pool;
 
+/// The driver itself, re-exported as `clickhouse-client` re-exports `clickhouse`.
+///
+/// A store in another crate reads its rows with the driver's own `Row` and
+/// reports the driver's own error; taking those through here is what keeps one
+/// version of it in the workspace rather than each adapter naming its own.
+pub use tokio_postgres;
+
 /// The driver's client, which a [`Connection`] derefs to.
 ///
 /// An alias, not a wrapper: refinery implements its traits for this exact type,

@@ -165,7 +165,7 @@ time:
 | binary    | links                                                                | **cannot** link                       |
 | --------- | -------------------------------------------------------------------- | ------------------------------------- |
 | `migrate` | `clickhouse-client`, `postgres`, `migrations`                        | `alloy`, `axum` — no chain, no socket |
-| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, `indexing`, the write paths |
+| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, the write paths |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
 The third column will be asserted in CI with `cargo tree -i`, so reaching across fails the build
@@ -175,6 +175,15 @@ pass without proving anything. `api`'s row names those crates rather than `alloy
 `crates/aave-positions` links `alloy-primitives` for `U256` and `I256`: the prohibition is no chain
 and no socket, and integer types are neither — they are also what the Phase 3 decoders will hand
 over, so sharing them is what keeps a conversion out of the boundary.
+
+**`indexing` left that column, and the reason is the rule itself.** It was there as a stand-in for
+the chain client, since the crate was planned as "loop, ports + alloy adapters". But `api` links it
+for `SyncStatusStore` — the read-only view of the cursor row, whose own doc argues it is a separate
+port from `CursorStore` precisely because one process writes that row and another only reads it. Its
+whole dependency surface is a `B256` and Postgres. So the prohibition stays what it always was, no
+chain and no socket, and what follows from it is that the alloy adapters land *outside*
+`crates/indexing` when Phase 3 brings them — otherwise the read API grows an HTTP client it never
+calls and `cargo tree -i alloy-provider` says so.
 
 `migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
@@ -550,8 +559,16 @@ bodies were captured off the running TypeScript service rather than read from it
 is how the 503 turned out to be the report verbatim with no framework envelope — a shape no
 TypeScript test pins.
 
-Left: `crates/telemetry`; the read halves of `token-metadata` and `prices` plus `SyncStatusStore`; and
-the route itself — DTOs, decimal scaling, cursor signing, validation, utoipa.
+Then the three read dimensions the route joins: `crates/token-metadata` and `crates/prices` (read
+halves — `put`, the enrichment sweep and the oracle reader stay with Phases 3 and 4) and
+`crates/indexing`'s `SyncStatusStore`. Each is a port, one Postgres adapter and the port's specs as
+an executable contract, as #45 established. Two things the TypeScript needs discipline for became
+types: a price is keyed by a `ReserveKey { spoke, reserve_id }` rather than by a lower-cased
+`${spoke}:${id}` string, and labels are keyed by `Address` — so the lower-casing rule whose omission
+its store doc warns "every price silently stops joining" over has nothing left to omit.
+
+Left: `crates/telemetry`; and the route itself — DTOs, decimal scaling, cursor signing, validation,
+utoipa.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 

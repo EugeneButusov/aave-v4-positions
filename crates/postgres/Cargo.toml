@@ -12,7 +12,11 @@ deadpool-postgres = "0.14.1"
 thiserror = "2.0.19"
 
 # Only this crate builds against the driver; everyone else goes through it.
-tokio-postgres = "0.7.18"
+# `with-time-0_3` for `timestamptz`: two of the stores above this hand back the
+# moment a row was written, and `time` is already in this workspace's graph —
+# `refinery-core` and `bins/migrate` both name it — so the driver maps to a type
+# that is here rather than to a second calendar.
+tokio-postgres = { version = "0.7.18", features = ["with-time-0_3"] }
 
 [dev-dependencies]
 # Only the cases need a runtime; the crate itself starts none.
