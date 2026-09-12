@@ -23,7 +23,6 @@
 
 mod json;
 
-use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 
@@ -79,7 +78,7 @@ impl<E: Error + Send + 'static> AppError for E {
 /// The message is the caller's, which is what makes it useful and what makes it
 /// worth being careful about: it is echoed from the request line, so it reaches
 /// a log and a browser. Nothing else of ours goes into it.
-pub(crate) fn not_found(message: impl Into<Cow<'static, str>>) -> BoxedAppError {
+pub(crate) fn not_found(message: String) -> BoxedAppError {
     json::custom(StatusCode::NOT_FOUND, message)
 }
 

@@ -28,7 +28,6 @@
 //! in the release note rather than passing unnoticed. `docs/rust-migration.md`
 //! names both keys as the differential's only expected differences.
 
-use std::borrow::Cow;
 use std::fmt;
 
 use axum::Json;
@@ -39,11 +38,13 @@ use serde::{Serialize, Serializer};
 use super::{AppError, BoxedAppError};
 
 /// A failure the caller caused, carrying the status it deserves.
-pub(crate) fn custom(status: StatusCode, message: impl Into<Cow<'static, str>>) -> BoxedAppError {
-    Box::new(CustomApiError {
-        status,
-        message: message.into(),
-    })
+///
+/// **`String` where crates.io takes `impl Into<Cow<'static, str>>`**, because
+/// the borrowed half of that has no caller here: every message this service
+/// builds is formatted from the request. It goes back when a failure carries a
+/// constant instead, which is the first thing a 400 will do.
+pub(crate) fn custom(status: StatusCode, message: String) -> BoxedAppError {
+    Box::new(CustomApiError { status, message })
 }
 
 /// **Deliberately not a `std::error::Error`**, which is why `Display` is written
@@ -53,7 +54,7 @@ pub(crate) fn custom(status: StatusCode, message: impl Into<Cow<'static, str>>) 
 #[derive(Debug)]
 struct CustomApiError {
     status: StatusCode,
-    message: Cow<'static, str>,
+    message: String,
 }
 
 impl fmt::Display for CustomApiError {
@@ -101,7 +102,7 @@ mod tests {
         // Measured off the running service, and the order is load-bearing: the
         // Phase 2 gate compares bytes, and the DTO class declares these three
         // the other way round.
-        let (status, body) = answered(errors::not_found("Cannot GET /nope")).await;
+        let (status, body) = answered(errors::not_found("Cannot GET /nope".to_owned())).await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(
@@ -114,8 +115,11 @@ mod tests {
     async fn the_reason_phrase_is_the_status_and_is_not_passed_in() {
         // The one thing the constructors no longer carry. A 400 built here has
         // never had "Bad Request" written next to it.
-        let (status, body) =
-            answered(custom(StatusCode::BAD_REQUEST, "asOf is in the future")).await;
+        let (status, body) = answered(custom(
+            StatusCode::BAD_REQUEST,
+            "asOf is in the future".to_owned(),
+        ))
+        .await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
