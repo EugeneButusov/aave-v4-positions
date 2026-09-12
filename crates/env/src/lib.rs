@@ -1,13 +1,17 @@
-//! Reading the container's contract: one variable at a time, collecting the
+//! Reading a container's environment: one variable at a time, collecting the
 //! problems rather than stopping at the first.
 //!
-//! Below [`config`](crate::config) rather than inside it, and that boundary is
-//! the point: nothing here knows what this service is. It knows that a port is
-//! `1..=65535` and that `pino` spells a level seven ways. What those values
-//! *mean* to a running process — which one the listener binds, which one the
-//! shutdown waits out — is the layer above. crates.io draws the same line
-//! harder, with `crates_io_env_vars` a crate of its own that its `config`
-//! modules call into.
+//! **Nothing here knows what a service is**, and that is the whole boundary. It
+//! knows a port is `1..=65535` and that `pino` spells a level seven ways. What
+//! those values *mean* to a running process — which one the listener binds,
+//! which one the shutdown waits out — belongs to a binary's `config`, along with
+//! the mapping from variable name to field.
+//!
+//! A crate rather than a module because more than one binary boots this way:
+//! `bins/api` today, `bins/indexer` and its five CLIs next. It is the same
+//! reason `ops` is a crate, and the same line crates.io draws with
+//! `crates_io_env_vars`, which every one of its `config/*.rs` modules calls
+//! into.
 //!
 //! **Every error at once, not the first.** That is what `z.prettifyError` buys
 //! the service this replaces: a deployment with three variables wrong learns all
@@ -42,14 +46,14 @@ use std::net::IpAddr;
 use tracing::level_filters::LevelFilter;
 
 /// The environment as a map, and what has been wrong with it so far.
-pub(crate) struct Env<'a> {
+pub struct Env<'a> {
     vars: &'a HashMap<String, String>,
     errors: Vec<String>,
 }
 
 /// Everything wrong with the environment, in the order the variables are read.
 #[derive(Debug)]
-pub(crate) struct Invalid(Vec<String>);
+pub struct Invalid(Vec<String>);
 
 impl fmt::Display for Invalid {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -85,7 +89,7 @@ impl<'a> Env<'a> {
     /// Takes the environment as a map rather than reading it, so a case can
     /// name three bad variables without touching global state the other tests
     /// are running against.
-    pub(crate) fn new(vars: &'a HashMap<String, String>) -> Self {
+    pub fn new(vars: &'a HashMap<String, String>) -> Self {
         Self {
             vars,
             errors: Vec::new(),
@@ -95,7 +99,7 @@ impl<'a> Env<'a> {
     /// # Errors
     ///
     /// [`Invalid`], listing every variable that could not be read.
-    pub(crate) fn finish(self) -> Result<(), Invalid> {
+    pub fn finish(self) -> Result<(), Invalid> {
         if self.errors.is_empty() {
             Ok(())
         } else {
@@ -103,7 +107,7 @@ impl<'a> Env<'a> {
         }
     }
 
-    pub(crate) fn text(&self, key: &str, default: &str) -> String {
+    pub fn text(&self, key: &str, default: &str) -> String {
         self.raw(key).unwrap_or(default).to_owned()
     }
 
@@ -115,7 +119,7 @@ impl<'a> Env<'a> {
     /// Requiring `http` here would be a stricter boot contract than the service
     /// being replaced, and the driver is the authority on its own URL anyway:
     /// `build_pool` parses this again with libpq's rules.
-    pub(crate) fn url(&mut self, key: &str, default: &str) -> String {
+    pub fn url(&mut self, key: &str, default: &str) -> String {
         let value = self.text(key, default);
         if url::Url::parse(&value).is_err() {
             self.reject(key, &format!("must be a URL, got {value:?}"));
@@ -123,7 +127,7 @@ impl<'a> Env<'a> {
         value
     }
 
-    pub(crate) fn address(&mut self, key: &str, default: &str) -> IpAddr {
+    pub fn address(&mut self, key: &str, default: &str) -> IpAddr {
         let value = self.text(key, default);
         value.parse().unwrap_or_else(|_| {
             // Stricter than `app.listen(port, host)`, which would resolve a
@@ -134,7 +138,7 @@ impl<'a> Env<'a> {
         })
     }
 
-    pub(crate) fn port(&mut self, key: &str, default: u16) -> u16 {
+    pub fn port(&mut self, key: &str, default: u16) -> u16 {
         let Some(value) = self.raw(key) else {
             return default;
         };
@@ -150,7 +154,7 @@ impl<'a> Env<'a> {
         }
     }
 
-    pub(crate) fn seconds(&mut self, key: &str, default: u64, max: u64) -> u64 {
+    pub fn seconds(&mut self, key: &str, default: u64, max: u64) -> u64 {
         let Some(value) = self.raw(key) else {
             return default;
         };
@@ -164,7 +168,7 @@ impl<'a> Env<'a> {
         }
     }
 
-    pub(crate) fn flag(&mut self, key: &str, default: bool) -> bool {
+    pub fn flag(&mut self, key: &str, default: bool) -> bool {
         let Some(value) = self.raw(key) else {
             return default;
         };
@@ -172,7 +176,7 @@ impl<'a> Env<'a> {
         self.one_of(key, value, &FLAGS).unwrap_or(default)
     }
 
-    pub(crate) fn level(&mut self, key: &str) -> LevelFilter {
+    pub fn level(&mut self, key: &str) -> LevelFilter {
         let Some(value) = self.raw(key) else {
             return LevelFilter::INFO;
         };
@@ -212,9 +216,9 @@ impl<'a> Env<'a> {
 
 #[cfg(test)]
 mod tests {
-    //! The readers on their own terms, with keys that mean nothing to this
-    //! service. What the variables are actually called, and which reader each
-    //! one gets, is [`config`](crate::config)'s to prove.
+    //! The readers on their own terms, with keys that mean nothing to anyone.
+    //! What a variable is actually called, and which reader it gets, is a
+    //! consumer's `config` to prove.
 
     use super::*;
 

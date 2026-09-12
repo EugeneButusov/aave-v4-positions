@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 clickhouse-client = { path = "crates/clickhouse" }
+env = { path = "crates/env" }
 migrations = { path = "crates/migrations" }
 ops = { path = "crates/ops" }
 postgres = { path = "crates/postgres" }

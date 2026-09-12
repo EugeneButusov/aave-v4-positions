@@ -2,8 +2,8 @@
 //!
 //! The list below is the whole of it: every variable this service honours, the
 //! reader it goes through and the default it falls back to. Reading and
-//! validating are [`env`](crate::env)'s job — a port's range and a level's
-//! spelling mean nothing here. This is the mapping from a container's
+//! validating are [`env`](mod@env)'s job — a port's range and a level's spelling mean
+//! nothing here. This is the mapping from a container's
 //! environment to a running service, and it is the only place that mapping
 //! exists.
 //!
@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use tracing::level_filters::LevelFilter;
 
-use crate::env::{Env, Invalid};
+use env::{Env, Invalid};
 
 pub(crate) struct Config {
     pub(crate) level: LevelFilter,
@@ -76,8 +76,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     //! The mapping, not the readers: which variable reaches which field, and
-    //! what a deployment that sets none of them gets. [`env`](crate::env)
-    //! proves that a port is a port.
+    //! what a deployment that sets none of them gets. [`env`](mod@env) proves that a
+    //! port is a port.
 
     use super::*;
 

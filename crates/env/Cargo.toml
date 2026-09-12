@@ -1,0 +1,17 @@
+[package]
+name = "env"
+description = "Reads a container's environment, collecting every problem with it"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `LevelFilter`, because a log level is a variable like any other and the
+# spellings a deployment already uses are this crate's to accept. No subscriber:
+# what to do with the level is the binary's.
+tracing = "0.1.44"
+# The URL check, held to the same WHATWG standard `new URL()` applies.
+url = "2.5.8"
+
+[lints]
+workspace = true

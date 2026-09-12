@@ -78,6 +78,7 @@ dependencies = [
  "axum",
  "clickhouse-client",
  "dotenvy",
+ "env",
  "ops",
  "postgres",
  "serde",
@@ -86,7 +87,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "url",
 ]
 
 [[package]]
@@ -1067,6 +1067,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "env"
+version = "0.0.0"
+dependencies = [
+ "tracing",
+ "url",
 ]
 
 [[package]]

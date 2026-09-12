@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 clickhouse-client.workspace = true
+env.workspace = true
 ops.workspace = true
 postgres.workspace = true
 
@@ -29,9 +30,6 @@ tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["catch-panic", "request-id"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json"] }
-# Validates the two database URLs at boot, which is what `z.url()` does today.
-# Already in the tree; naming it directly is what makes the check ours.
-url = "2.5.8"
 
 [lints]
 workspace = true
