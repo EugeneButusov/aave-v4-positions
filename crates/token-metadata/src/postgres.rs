@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
-use postgres::tokio_postgres::Row;
 use postgres::{Pool, connection};
+use tokio_postgres::Row;
 
 use crate::{Error, TokenLabel, TokenMetadataStore};
 

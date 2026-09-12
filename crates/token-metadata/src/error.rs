@@ -9,7 +9,7 @@ pub enum Error {
 
     /// The server refused the query.
     #[error("the token metadata query failed")]
-    QueryFailed(#[from] postgres::tokio_postgres::Error),
+    QueryFailed(#[from] tokio_postgres::Error),
 
     /// A column held something its type says it cannot.
     ///

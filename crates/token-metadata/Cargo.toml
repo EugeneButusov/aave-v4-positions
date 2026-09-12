@@ -13,6 +13,10 @@ alloy-primitives = { version = "1.6.1", default-features = false, features = ["s
 # wants a trait object. Same trade `aave-positions` documents.
 async-trait = "0.1.92"
 postgres.workspace = true
+# The `Row` a query hands back and the error it refuses with. Named here rather
+# than reached through `postgres`, which exports what its own signatures
+# mention and neither of these appears in one.
+tokio-postgres = "0.7.18"
 thiserror = "2.0.19"
 
 [dev-dependencies]

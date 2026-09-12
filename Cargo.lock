@@ -1614,6 +1614,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -2217,6 +2218,7 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -3047,6 +3049,7 @@ dependencies = [
  "refinery-core",
  "thiserror",
  "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]

@@ -4,9 +4,9 @@
 //! duplicating one, because there is exactly one answer to "where is the
 //! indexer" and a second copy of it would be a second thing to keep in step.
 
-use postgres::tokio_postgres::Row;
 use postgres::{Pool, connection};
 use time::OffsetDateTime;
+use tokio_postgres::Row;
 
 use crate::cursor::{Error, SyncStatus, SyncStatusStore};
 

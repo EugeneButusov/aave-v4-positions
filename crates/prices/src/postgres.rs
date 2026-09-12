@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use postgres::tokio_postgres::Row;
 use postgres::{Pool, connection};
 use time::OffsetDateTime;
+use tokio_postgres::Row;
 
 use crate::{Error, ReserveKey, ReservePrice, ReservePriceStore};
 

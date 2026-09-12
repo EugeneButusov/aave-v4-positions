@@ -139,13 +139,34 @@ of them in one graph is not a compile error but a runtime found through the wron
 panicking on first use. `cargo tree --duplicates`, scoped to what members declare, is the check if it
 is ever wanted — unscoped it fires on `syn`, which proc macros duplicate quite legitimately.
 
-**A database crate owns its driver and re-exports it.** `clickhouse` is a dependency of
-`clickhouse-client` alone and `tokio-postgres` of `postgres` alone, because both appear in those
-crates' signatures — `client` returns a `clickhouse::Client`, `connect` a `tokio_postgres::Client` —
-and a caller that cannot name the return type has been handed half an API. That is the flaw refinery
-has: it takes an `OffsetDateTime` in `Migration::applied` and re-exports no `time`, so every backend
-picks its own version and hopes. Re-exporting instead means one dependency for the consumer and no
-version for the two of them to disagree about.
+**A crate exports the types its own signatures mention, and no more.** `build_pool` returns a
+`Pool`, `connection` a `Connection`, `ping` an `Error` — so `crates/postgres` exports those, plus the
+`Client` a `Connection` derefs to, because a caller that cannot name a return type has been handed
+half an API.
+
+**It does not re-export the driver.** That rule used to read the other way round, and the first
+adapter written against it showed why it was wrong. `tokio_postgres::Row` appears in none of
+`crates/postgres`'s signatures — it is what the *driver* hands back to whoever runs a query — so
+routing it through as `postgres::tokio_postgres::Row` isolates nobody from anything and leaves a
+crate documented as connection policy acting as a conduit for an entire vendor API. A store adapter
+names `tokio-postgres` itself, at a pinned version, exactly as it already names `serde`,
+`alloy-primitives` and `tokio`.
+
+The argument for re-exporting was refinery's flaw — it takes an `OffsetDateTime` in
+`Migration::applied` and re-exports no `time`, so every backend picks its own version and hopes. That
+is a *published crate's* problem, where consumers cannot coordinate. Here there is one workspace and
+one lock file, and a mismatch is loud rather than silent: `Connection` derefs to a `Client` whose
+`query` returns that driver's own `Row`, so two versions do not compile. Features follow the same
+line — `with-time-0_3` is declared by `prices` and `indexing`, which read a `timestamptz`, and not by
+whoever happens to own the dependency; removing it from either fails with `OffsetDateTime: FromSql`
+unsatisfied.
+
+**`clickhouse-client` has not been converted yet, and it is the same smell.** It re-exports
+`clickhouse` whole, and eight sites reach through it. The conversion is not identical — `clickhouse::Row`
+is a *derive macro*, so `aave-positions` and `bins/migrate` would name that crate directly whatever
+happens, while `Client` is in `build_client`'s signature and belongs behind an alias like this crate's.
+Its own PR, because it changes code that is already merged and this rule was only tested against
+Postgres.
 
 The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
