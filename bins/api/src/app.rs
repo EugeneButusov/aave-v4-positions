@@ -18,8 +18,6 @@
 //! them would have to make those too — at which point it is the composition root
 //! rather than a description of what is served.
 
-use std::sync::Arc;
-
 use axum::Router;
 use clickhouse_client::clickhouse::Client;
 use ops::{ShutdownFlag, Uptime};
@@ -28,6 +26,7 @@ use postgres::Pool;
 use crate::{middleware, router};
 
 /// The live resources, built once at boot and read for the process's life.
+#[derive(Clone)]
 pub(crate) struct App {
     pub(crate) uptime: Uptime,
     pub(crate) shutdown: ShutdownFlag,
@@ -37,16 +36,30 @@ pub(crate) struct App {
 
 /// What the router carries, and what a handler will extract once one wants it.
 ///
-/// **One `Arc` rather than the resources themselves.** Cloning this per request
-/// is an atomic increment; cloning the fields was that plus a
-/// `clickhouse::Client`, which shares its transport but deep-copies its url,
-/// database, auth, roles, settings and headers every time.
+/// **No `Arc`, while nothing needs one.** Cloning this clones the resources,
+/// and one of them is not free: `clickhouse::Client` shares its transport but
+/// deep-copies its url, database, auth, roles, settings and headers. The only
+/// path that clones per request is the readiness probe, which an orchestrator
+/// runs every few seconds — so the cost is a rounding error and the indirection
+/// would be speculative.
 ///
-/// A newtype rather than a bare `Arc<App>` because it is where crates.io hangs
+/// It stops being a rounding error when a route serves real traffic and clones
+/// this per request. Wrapping the field in an `Arc` at that point is a one-line
+/// change here and invisible everywhere else, which is the reason to wait
+/// rather than the reason to hurry.
+///
+/// **crates.io does hold an `Arc` here, and the difference is not taste.** Its
+/// `App` cannot be cloned at all — it carries a `HashMap<String, Box<dyn
+/// OidcKeyStore>>` among eleven fields, and `Box<dyn Trait>` has no `Clone` — so
+/// the indirection is the only way to share it. Ours is four fields that all
+/// clone, and the expensive one is expensive by a constant rather than by
+/// design. Same shape, different arithmetic.
+///
+/// A newtype rather than a bare `App` because it is where crates.io hangs
 /// `FromRequestParts` and `FromRef`. Those derives wait for a handler that takes
 /// state as an argument; the probes reach it through a closure.
 #[derive(Clone)]
-pub(crate) struct AppState(pub(crate) Arc<App>);
+pub(crate) struct AppState(pub(crate) App);
 
 impl std::ops::Deref for AppState {
     type Target = App;
@@ -57,7 +70,7 @@ impl std::ops::Deref for AppState {
 }
 
 /// State, then routes, then everything wrapped around them.
-pub(crate) fn handler(app: Arc<App>) -> Router {
+pub(crate) fn handler(app: App) -> Router {
     let state = AppState(app);
 
     middleware::apply(router::build(state))

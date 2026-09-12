@@ -5,8 +5,6 @@
 //! reassembling one, so a wiring mistake fails them rather than hiding behind a
 //! parallel definition.
 
-use std::sync::Arc;
-
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
@@ -40,13 +38,13 @@ pub(crate) fn unreachable_postgres() -> Pool {
     ::postgres::build_pool("postgres://postgres@127.0.0.1:1/postgres").unwrap()
 }
 
-pub(crate) fn state(postgres: Pool) -> Arc<App> {
-    Arc::new(App {
+pub(crate) fn state(postgres: Pool) -> App {
+    App {
         uptime: Uptime::now(),
         shutdown: ShutdownFlag::new(),
         clickhouse: clickhouse(),
         postgres,
-    })
+    }
 }
 
 /// The router this binary actually serves, over the given Postgres.

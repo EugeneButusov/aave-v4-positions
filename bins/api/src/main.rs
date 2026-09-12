@@ -25,7 +25,6 @@ mod test_support;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use app::App;
 use config::Config;
@@ -74,12 +73,12 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let postgres = postgres::build_pool(&config.postgres_url)?;
 
     let shutdown = ShutdownFlag::new();
-    let handler = app::handler(Arc::new(App {
+    let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
         clickhouse,
         postgres,
-    }));
+    });
 
     let address = SocketAddr::new(config.host, config.port);
     let listener = tokio::net::TcpListener::bind(address).await?;
@@ -121,12 +120,12 @@ mod tests {
         let (terminate, terminated) = tokio::sync::oneshot::channel::<()>();
 
         let served = tokio::spawn({
-            let handler = app::handler(Arc::new(App {
+            let handler = app::handler(App {
                 uptime: Uptime::now(),
                 shutdown: shutdown.clone(),
                 clickhouse: clickhouse(),
                 postgres: postgres(),
-            }));
+            });
             let shutdown = shutdown.clone();
             async move {
                 axum::serve(listener, handler)
