@@ -12,7 +12,7 @@ use axum::Router;
 use axum::http::{Method, Uri};
 
 use crate::app::AppState;
-use crate::errors::ApiError;
+use crate::errors::{self, BoxedAppError};
 
 pub(crate) fn build(state: AppState) -> Router {
     let (uptime, shutdown) = (state.uptime, state.shutdown.clone());
@@ -50,12 +50,12 @@ pub(crate) fn build(state: AppState) -> Router {
 /// `GET /nope?a=1&b=2` comes back as `Cannot GET /nope?a=1&b=2`, because Express
 /// builds the message from `req.originalUrl`. Reaching for `uri.path()` would
 /// have been the obvious thing and would have been wrong.
-async fn not_found(method: Method, uri: Uri) -> ApiError {
+async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
     let target = uri
         .path_and_query()
         .map_or_else(|| uri.path(), axum::http::uri::PathAndQuery::as_str);
 
-    ApiError::not_found(format!("Cannot {method} {target}"))
+    errors::not_found(format!("Cannot {method} {target}"))
 }
 
 #[cfg(test)]
