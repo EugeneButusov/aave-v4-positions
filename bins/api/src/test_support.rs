@@ -8,12 +8,14 @@
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
+use axum::response::IntoResponse;
 use clickhouse_client::clickhouse::Client;
 use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
 use tower::ServiceExt;
 
 use crate::app::{self as app, App};
+use crate::errors::BoxedAppError;
 
 /// The same defaults every other suite in this workspace reads.
 pub(crate) fn clickhouse() -> Client {
@@ -71,4 +73,14 @@ pub(crate) async fn get(
         String::from_utf8(body.to_vec()).unwrap(),
         request_id,
     )
+}
+
+/// Status and body of a failure, which is the pair an error case reads.
+pub(crate) async fn answered(error: BoxedAppError) -> (StatusCode, String) {
+    let response = error.into_response();
+
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+    (status, String::from_utf8(body.to_vec()).unwrap())
 }
