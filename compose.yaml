@@ -174,6 +174,10 @@ services:
     # No `init`. The Node images want a reaper because node is a poor PID 1;
     # this is one static binary that spawns nothing and takes SIGTERM itself.
     environment:
+      # Deployed: variables are injected here and a `.env` is not consulted,
+      # whatever ends up on the filesystem. Absent, the binary reads one, which
+      # is what a checkout expects.
+      APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # One JSON object per line, as the Node service emits.
       LOG_PRETTY: 'false'

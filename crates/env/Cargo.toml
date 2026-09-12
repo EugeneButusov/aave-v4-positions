@@ -6,6 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+# The local `.env`, read through `dotenv_iter` rather than `dotenv`: the values
+# are merged into a map here instead of pushed into the process environment, so
+# the "never override" rule is this crate's and visible, not a property of
+# someone else's function.
+dotenvy = "0.15.7"
 # `LevelFilter`, because a log level is a variable like any other and the
 # spellings a deployment already uses are this crate's to accept. No subscriber:
 # what to do with the level is the binary's.

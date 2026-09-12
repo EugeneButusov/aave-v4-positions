@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use tracing::level_filters::LevelFilter;
 
-use env::{Env, Invalid};
+use env::{Env, Invalid, Source};
 
 pub(crate) struct Config {
     pub(crate) level: LevelFilter,
@@ -34,11 +34,15 @@ pub(crate) struct Config {
 }
 
 impl Config {
+    /// Where the variables come from is [`Source`]'s to decide, and it decides
+    /// from the environment it is about to read — so a deployment changes it by
+    /// setting `APP_ENV` rather than by the binary being built differently.
+    ///
     /// # Errors
     ///
     /// [`Invalid`], listing every variable that could not be read.
     pub(crate) fn from_env() -> Result<Self, Invalid> {
-        Self::parse(&std::env::vars().collect())
+        Self::parse(&Source::from_env().read())
     }
 
     /// Takes the environment as a map rather than reading it, so a case can

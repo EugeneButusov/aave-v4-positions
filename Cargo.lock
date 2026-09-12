@@ -77,7 +77,6 @@ version = "0.0.0"
 dependencies = [
  "axum",
  "clickhouse-client",
- "dotenvy",
  "env",
  "ops",
  "postgres",
@@ -1073,6 +1072,7 @@ dependencies = [
 name = "env"
 version = "0.0.0"
 dependencies = [
+ "dotenvy",
  "tracing",
  "url",
 ]
