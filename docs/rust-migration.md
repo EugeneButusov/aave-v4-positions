@@ -66,6 +66,18 @@ tokens — `ChainClient`, `LogReader`, `Erc20MetadataReader`, `CursorStore`, `Bl
 set. The hexagonal shape [the design notes](design-notes.md#layout) argue for is what makes this a
 port rather than a rewrite.
 
+**Sixteen of them, as it turns out.** `HealthIndicator` was never a boundary to an external system —
+it is an extension point for a report — and the shape it has today is DI machinery: an interface, a
+multi-provider token, and a service that resolves the array. Rust has nothing to resolve it with, and
+nothing in the ecosystem stands in: the one widely-used health crate on crates.io is `tonic-health`,
+which exists because gRPC standardises a health *protocol*. Every Rust service surveyed hand-rolls the
+handler over its concrete collaborators — [Quickwit](https://github.com/quickwit-oss/quickwit/blob/main/quickwit/quickwit-serve/src/health_check_api/handler.rs)
+passes them in as arguments, [linkerd2-proxy](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/admin/src/server/readiness.rs)
+makes readiness a thirty-line type rather than a service. So `crates/ops` keeps the report, which is a
+wire contract callers read, and drops the resolution: a binary passes one closure naming its
+dependencies, and the two `ping`s behind it live on the crates that own those connections, where the
+indexer will find them.
+
 ## Target layout
 
 A Cargo workspace at the repo root, beside the pnpm one. [`compose.yaml`](../compose.yaml),
@@ -76,7 +88,7 @@ Cargo.toml                  workspace
 crates/
   aave-abi/                 vendored ABI JSON + sol! bindings + addresses   ← new, see Risk 1
   telemetry/                OTLP init for traces, metrics, logs
-  ops/                      HealthIndicator trait, probe router, graceful drain
+  ops/                      the probe report, its router, and the graceful shutdown
   clickhouse/               client   ← package `clickhouse-client`
   postgres/                 connect
   migrations/               every `.sql` this deployment applies, embedded
@@ -139,8 +151,11 @@ The single exception is `crates/clickhouse`, whose package is **`clickhouse-clie
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
 ([cargo#12891](https://github.com/rust-lang/cargo/issues/12891), open since 2023), and that crate is a
 client factory rather than "ClickHouse" anyway. It was to be a probe as well; probes went to Phase 2
-with `ops`, so today it is `Config` and `build_client` and nothing else. `crates/postgres` needs no such dodge: the
-driver here is `tokio-postgres`, not `postgres`.
+with `ops`, and arrived there — so today it is `Config`, `build_client` and the `ping` a readiness
+check runs. `crates/postgres` needs no such dodge: the driver here is `tokio-postgres`, not
+`postgres`. It has one way in, `build_pool` and a `connection` taken from it, including for the
+one-shot migrator: a job that wants a single connection takes a single connection, and a second
+constructor handing out a bare client was a second thing to keep in step.
 
 **Each binary is a boundary, not just an entry point.** In Node the image is the artifact and
 `migrate.js` ships beside `main.js` in a tree where viem is one `require` away, so "the migration tool
@@ -477,7 +492,7 @@ This phase must not be rushed; everything downstream inherits it.
 `bins/api` on axum, the `PositionStore` ClickHouse adapter, the read halves of
 `token-metadata` and `prices`, cursor signing, request validation, utoipa. Plus `telemetry` and
 `ops`, which arrive here because this is the first long-lived process: one needs a `main` that
-initialises OTLP, the other a probe router and a drain.
+initialises OTLP, the other a probe router and a shutdown flag.
 
 **`HubAssetStore` is not here — it moved to Phase 4**, with `reconcile:hub`, which is its only caller
 anywhere in the workspace. `apps/api` serves one route,
@@ -497,11 +512,46 @@ and Postgres, and a replay harness issuing several hundred requests — every wa
 page size, cursors walked to exhaustion, `asOf` pinned at fixed instants — **byte-comparing the
 JSON**. Diff the two OpenAPI documents too.
 
+**Two keys are expected to differ, and the comparator has to be told rather than left to find them.**
+This port reads as Rust rather than as a transliteration, so the two multi-word keys it owns are
+snake_case:
+
+| endpoint | TypeScript | here |
+| --- | --- | --- |
+| `GET /health/live` | `uptimeSeconds` | `uptime_seconds` |
+| any error body | `statusCode` | `status_code` |
+
+The first is free: it is the only multi-word key on the probe surface, so matching it meant a
+`serde(rename_all)` governing exactly one field, and it has no consumer — all three compose
+healthchecks and a Kubernetes probe request `/health/ready` and read only the status code, and
+nothing requests `/health/live` at all.
+
+The second is not free, and should be treated as a breaking change with a release note: error bodies
+are parsed by callers, and anything switching on `statusCode` stops seeing it. The status line still
+carries the code, which is what most clients actually read.
+
+Everything else is matched exactly, field order included — the error envelope still emits `message`,
+then `error`, then the status, which is the order the running service uses and not the order its own
+DTO class declares. A gate that reports either of these two as drift is a gate that has not been told
+the truth; a gate that reports anything else has found something.
+
 **Then capture that corpus as golden files and commit it.** Once `apps/api` is gone the oracle is
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the
 Rust API, soak, then delete `apps/api` in its own PR. The remaining `packages/*` stay — the
 TypeScript indexer still needs them, and only the ones it has stopped needing go early, as
 `packages/migrations` did in Phase 0.
+
+**Landed so far.** [#45](https://github.com/EugeneButusov/aave-v4-positions/pull/45): the
+`PositionStore` port and its ClickHouse adapter, with the port's specs as an executable contract every
+implementation runs. Then `crates/ops` and `bins/api` — the process before it serves anything: config
+parsed once and every error at once, JSON logs, `/health/live` and `/health/ready`, the
+readiness-first drain, an image and an `api-rust` compose service beside the Node one. The four probe
+bodies were captured off the running TypeScript service rather than read from its DTO classes, which
+is how the 503 turned out to be the report verbatim with no framework envelope — a shape no
+TypeScript test pins.
+
+Left: `crates/telemetry`; the read halves of `token-metadata` and `prices` plus `SyncStatusStore`; and
+the route itself — DTOs, decimal scaling, cursor signing, validation, utoipa.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
@@ -570,3 +620,29 @@ The arithmetic decisions rest on these rather than on recall:
 [primitive-types::U256](https://docs.rs/primitive-types/latest/primitive_types/struct.U256.html) ·
 [spl-math](https://docs.rs/spl-math/latest/spl_math/) ·
 [Uniswap FullMath](https://docs.uniswap.org/contracts/v3/reference/core/libraries/FullMath)
+
+The service foundation rests on these, each read rather than recalled, and each
+named beside the code it shaped:
+
+| source | what it settled |
+| --- | --- |
+| [quickwit `health_check_api/handler.rs`](https://github.com/quickwit-oss/quickwit/blob/main/quickwit/quickwit-serve/src/health_check_api/handler.rs) | a probe handler takes its real collaborators; no registry to resolve |
+| [linkerd2-proxy `admin/server/readiness.rs`](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/admin/src/server/readiness.rs) | readiness is a shared value rather than a service |
+| [linkerd2-proxy `app/src/env.rs`](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/src/env.rs) | parse every variable, defer the failure; take the environment as a map so a test can supply one |
+| [influxdb `models/health.rs`](https://github.com/influxdata/influxdb/blob/main/core/influxdb2_client/src/models/health.rs) | `skip_serializing_if` — a passing check serialises to two keys |
+| [crates.io `crates_io_env_vars`](https://github.com/rust-lang/crates.io/blob/main/crates/crates_io_env_vars/src/lib.rs) | hand-rolled env reading over a config crate, and `dotenvy` beside it |
+| [crates.io `src/middleware.rs`](https://github.com/rust-lang/crates.io/blob/main/src/middleware.rs) | `CatchPanicLayer`, so a panicking handler answers rather than dropping the socket |
+| [meilisearch `src/option.rs`](https://github.com/meilisearch/meilisearch/blob/main/crates/meilisearch/src/option.rs) | the `clap(env)` shape, measured and then declined — it reports one bad variable, not all of them |
+| [`clickhouse` 0.15.1](https://github.com/ClickHouse/clickhouse-rs) · [`deadpool` 0.12.3](https://github.com/bikeshedder/deadpool) | what `Clone` does to a client and a pool: transport shared, config copied |
+
+Still to be spent, on the route: [crates.io `util/errors.rs`](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs) and
+[Zed collab](https://github.com/zed-industries/zed/blob/main/crates/collab/src/lib.rs) converge on one error type with an
+`IntoResponse`; [crates.io `openapi.rs`](https://github.com/rust-lang/crates.io/blob/main/src/openapi.rs) registers routes with
+their documentation so neither can drift, and snapshots the document with `insta`; its
+[pagination](https://github.com/rust-lang/crates.io/blob/main/src/controllers/helpers/pagination.rs) leaves the cursor
+unsigned, which is the one place we diverge and say why.
+
+**What none of them could settle** is the wire contract. The probe payloads, their status codes and
+the drain's ordering came from measuring the running TypeScript service and reading
+`packages/ops/src/lifecycle/graceful-shutdown.ts` — this port's obligation, not the ecosystem's
+convention.

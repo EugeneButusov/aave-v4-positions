@@ -6,11 +6,17 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+# A pool rather than a connection is what a long-lived process needs, and this
+# is the pool for this driver: `sqlx` bundles one, `tokio-postgres` does not.
+deadpool-postgres = "0.14.1"
 thiserror = "2.0.19"
-tokio = { version = "1.53.1", features = ["rt"] }
 
 # Only this crate builds against the driver; everyone else goes through it.
 tokio-postgres = "0.7.18"
+
+[dev-dependencies]
+# Only the cases need a runtime; the crate itself starts none.
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
 
 [lints]
 workspace = true

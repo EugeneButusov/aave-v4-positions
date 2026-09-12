@@ -8,8 +8,8 @@
 //! five cases.
 //!
 //! An integration test rather than a module beside the adapter, because there is
-//! no adapter: everything here is public — `postgres::build_client`, refinery,
-//! and the driver the first of those re-exports.
+//! no adapter: everything here is public — `postgres::build_pool`, refinery, and
+//! the driver a checked-out connection derefs to.
 //!
 //! `clippy.toml` sets `allow-unwrap-in-tests`, and it does not reach here: that
 //! relaxation applies to `#[cfg(test)]` items, and an integration test is an
@@ -31,13 +31,18 @@ fn schema(test: &str) -> String {
 /// Dropped and recreated, so each test starts from nothing. The ledger is what
 /// would otherwise carry state between runs and make these assertions depend on
 /// whatever the last one left behind.
-async fn target(test: &str) -> (postgres::Client, String) {
+/// The pool is returned alongside the connection so the caller keeps it alive
+/// for the length of the test; a connection outliving its pool is a shape worth
+/// not depending on.
+async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
     let schema = schema(test);
     let base = std::env::var("POSTGRES_URL")
         .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
 
-    let admin = postgres::build_client(&base).await.unwrap();
-    admin
+    let admin = postgres::build_pool(&base).unwrap();
+    postgres::connection(&admin)
+        .await
+        .unwrap()
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}"
         ))
@@ -48,13 +53,13 @@ async fn target(test: &str) -> (postgres::Client, String) {
     // is what lets a schema be chosen without `crates/postgres` growing a
     // parameter only a test would ever pass.
     let separator = if base.contains('?') { '&' } else { '?' };
-    let client = postgres::build_client(&format!(
+    let pool = postgres::build_pool(&format!(
         "{base}{separator}options=-c%20search_path%3D{schema}"
     ))
-    .await
     .unwrap();
+    let client = postgres::connection(&pool).await.unwrap();
 
-    (client, schema)
+    (pool, client, schema)
 }
 
 async fn tables(client: &postgres::Client, schema: &str) -> Vec<String> {
@@ -69,9 +74,11 @@ async fn tables(client: &postgres::Client, schema: &str) -> Vec<String> {
     rows.iter().map(|row| row.get(0)).collect()
 }
 
-async fn run(client: &mut postgres::Client, set: &[Migration]) -> Result<Vec<String>, String> {
+async fn run(client: &mut postgres::Connection, set: &[Migration]) -> Result<Vec<String>, String> {
     Runner::new(set)
-        .run_async(client)
+        // Three derefs: the reference, the pooled object, and the wrapper it
+        // holds. refinery implements its traits for the driver's own client.
+        .run_async(&mut ***client)
         .await
         .map(|report| {
             report
@@ -92,7 +99,7 @@ const GADGETS: &str = "CREATE TABLE gadgets (id text PRIMARY KEY)";
 
 #[tokio::test]
 async fn creates_the_ledger_even_when_there_is_nothing_to_apply() {
-    let (mut client, schema) = target("empty").await;
+    let (_pool, mut client, schema) = target("empty").await;
 
     assert_eq!(run(&mut client, &[]).await.unwrap(), Vec::<String>::new());
 
@@ -103,7 +110,7 @@ async fn creates_the_ledger_even_when_there_is_nothing_to_apply() {
 
 #[tokio::test]
 async fn applies_each_migration_in_order_and_records_it() {
-    let (mut client, schema) = target("in_order").await;
+    let (_pool, mut client, schema) = target("in_order").await;
     let set = [at("V1__widgets", WIDGETS), at("V2__gadgets", GADGETS)];
 
     assert_eq!(
@@ -118,7 +125,7 @@ async fn applies_each_migration_in_order_and_records_it() {
 
 #[tokio::test]
 async fn applies_nothing_on_a_second_run() {
-    let (mut client, _schema) = target("second_run").await;
+    let (_pool, mut client, _schema) = target("second_run").await;
     let set = [at("V1__widgets", WIDGETS), at("V2__gadgets", GADGETS)];
 
     run(&mut client, &set).await.unwrap();
@@ -136,7 +143,7 @@ async fn applies_nothing_on_a_second_run() {
 /// failed rather than redoing the ones that worked.
 #[tokio::test]
 async fn resumes_at_the_migration_that_failed() {
-    let (mut client, schema) = target("partial").await;
+    let (_pool, mut client, schema) = target("partial").await;
     let broken = at("V2__gadgets", "CREATE TABLE gadgets (id text PRIMARY KEY,");
 
     run(&mut client, &[at("V1__widgets", WIDGETS), broken])
@@ -166,7 +173,7 @@ async fn resumes_at_the_migration_that_failed() {
 /// claim separates the two databases, so it is asserted rather than assumed.
 #[tokio::test]
 async fn rolls_back_within_a_migration_that_fails_partway() {
-    let (mut client, schema) = target("rollback").await;
+    let (_pool, mut client, schema) = target("rollback").await;
     let half_broken = at(
         "V1__widgets",
         "CREATE TABLE widgets (id text PRIMARY KEY); CREATE TABLE gadgets (id text PRIMARY KEY,",
@@ -183,18 +190,27 @@ async fn rolls_back_within_a_migration_that_fails_partway() {
 /// actually reads. `main` prints the chain, so the cause underneath matters as
 /// much as the head — it is the half that names the port.
 ///
-/// Both failure paths land on the same variant, which is what
-/// `build_client`'s docs claim: a URL that will not parse, and a server that
-/// will not have us.
-#[tokio::test]
-async fn says_it_could_not_connect_whether_the_url_or_the_server_is_wrong() {
-    for url in ["not-a-url", "postgres://postgres@127.0.0.1:1/nope"] {
-        let error = postgres::build_client(url).await.unwrap_err();
+/// **The two failure paths separated when the pool became the only way in**, and
+/// that is an improvement rather than a regression: a URL that will not parse is
+/// now caught before anything dials, so it says so instead of being reported as
+/// a connection that could not be made.
+#[test]
+fn refuses_a_url_that_will_not_parse_before_it_dials() {
+    let error = postgres::build_pool("not-a-url").unwrap_err();
 
-        assert_eq!(error.to_string(), "could not connect to Postgres", "{url}");
-        assert!(
-            std::error::Error::source(&error).is_some(),
-            "{url}: the cause is what names the port"
-        );
-    }
+    assert_eq!(error.to_string(), "could not parse the Postgres URL");
+    assert!(std::error::Error::source(&error).is_some());
+}
+
+#[tokio::test]
+async fn says_it_could_not_connect_when_the_server_will_not_have_us() {
+    let pool = postgres::build_pool("postgres://postgres@127.0.0.1:1/nope").unwrap();
+
+    let error = postgres::connection(&pool).await.unwrap_err();
+
+    assert_eq!(error.to_string(), "could not connect to Postgres");
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "the cause is what names the port"
+    );
 }
