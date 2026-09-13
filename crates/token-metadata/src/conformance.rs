@@ -29,28 +29,33 @@ pub(crate) struct Stored {
 }
 
 impl Stored {
-    pub(crate) fn labelled(token: Address, symbol: &'static str) -> Self {
+    /// Every field, named once. The three below are what a case says instead.
+    fn row(
+        chain_id: u32,
+        token: Address,
+        symbol: Option<&'static str>,
+        name: Option<&'static str>,
+    ) -> Self {
         Self {
-            chain_id: CHAIN_ID,
+            chain_id,
             token,
-            symbol: Some(symbol),
-            name: Some(symbol),
+            symbol,
+            name,
         }
+    }
+
+    pub(crate) fn labelled(token: Address, symbol: &'static str) -> Self {
+        Self::row(CHAIN_ID, token, Some(symbol), Some(symbol))
     }
 
     /// A token that answered, and had nothing to say. Conformant under EIP-20,
     /// where both fields are OPTIONAL.
     pub(crate) fn mute(token: Address) -> Self {
-        Self {
-            chain_id: CHAIN_ID,
-            token,
-            symbol: None,
-            name: None,
-        }
+        Self::row(CHAIN_ID, token, None, None)
     }
 
-    pub(crate) fn on(self, chain_id: u32) -> Self {
-        Self { chain_id, ..self }
+    pub(crate) fn on(chain_id: u32, token: Address) -> Self {
+        Self::row(chain_id, token, Some("ELSEWHERE"), Some("ELSEWHERE"))
     }
 }
 
@@ -95,7 +100,7 @@ pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<F: Fixture>() {
     fixture
         .given_labels(&[
             Stored::labelled(USDC, "USDC"),
-            Stored::labelled(WETH, "ELSEWHERE").on(OTHER_CHAIN),
+            Stored::on(OTHER_CHAIN, WETH),
         ])
         .await;
 

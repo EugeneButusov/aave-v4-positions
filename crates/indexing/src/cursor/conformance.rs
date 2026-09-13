@@ -24,26 +24,26 @@ pub(crate) struct Advanced {
 }
 
 impl Advanced {
-    /// This chain, freshly written. The one constructor; everything else below
-    /// narrows it.
-    pub(crate) fn to(last_block: u64) -> Self {
+    /// Every field, named once. The three below are what a case says instead.
+    fn row(chain_id: u32, last_block: u64, aged_seconds: u64) -> Self {
         Self {
-            chain_id: CHAIN_ID,
+            chain_id,
             last_block,
             last_hash: HEAD,
-            aged_seconds: 0,
+            aged_seconds,
         }
     }
 
-    pub(crate) fn on(self, chain_id: u32) -> Self {
-        Self { chain_id, ..self }
+    pub(crate) fn to(last_block: u64) -> Self {
+        Self::row(CHAIN_ID, last_block, 0)
     }
 
-    pub(crate) fn aged(self, seconds: u64) -> Self {
-        Self {
-            aged_seconds: seconds,
-            ..self
-        }
+    pub(crate) fn on(chain_id: u32, last_block: u64) -> Self {
+        Self::row(chain_id, last_block, 0)
+    }
+
+    pub(crate) fn aged(last_block: u64, seconds: u64) -> Self {
+        Self::row(CHAIN_ID, last_block, seconds)
     }
 }
 
@@ -88,7 +88,7 @@ pub(crate) async fn answers_none_for_a_chain_never_indexed<F: Fixture>() {
 pub(crate) async fn reads_only_the_chain_it_was_asked_about<F: Fixture>() {
     let fixture = F::fresh("reads_only_the_chain_it_was_asked_about").await;
     fixture
-        .given_cursor(&[Advanced::to(999).on(OTHER_CHAIN)])
+        .given_cursor(&[Advanced::on(OTHER_CHAIN, 999)])
         .await;
 
     assert!(status_of(&fixture).await.is_none(), "another chain's row");
@@ -96,7 +96,7 @@ pub(crate) async fn reads_only_the_chain_it_was_asked_about<F: Fixture>() {
 
 pub(crate) async fn ages_the_row_by_the_database_clock<F: Fixture>() {
     let fixture = F::fresh("ages_the_row_by_the_database_clock").await;
-    fixture.given_cursor(&[Advanced::to(100).aged(90)]).await;
+    fixture.given_cursor(&[Advanced::aged(100, 90)]).await;
 
     let age = status_of(&fixture).await.expect("indexed").age_seconds;
 
