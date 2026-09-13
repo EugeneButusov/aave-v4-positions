@@ -23,7 +23,8 @@ const STATUS: &str = "\
         updated_at, \
         floor(EXTRACT(EPOCH FROM (now() - updated_at)))::bigint AS age_seconds \
     FROM indexer_cursor \
-    WHERE chain_id = $1";
+    WHERE chain_id = $1 \
+    LIMIT 1";
 
 pub struct PostgresSyncStatusStore {
     pool: Pool,
