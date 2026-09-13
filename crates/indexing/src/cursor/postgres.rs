@@ -83,21 +83,21 @@ fn status(chain_id: u32, row: &Row) -> Result<SyncStatus, Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use crate::cursor::contract;
+    use crate::cursor::conformance;
     use crate::cursor::harness::Postgres;
 
-    macro_rules! contract {
+    macro_rules! conformance {
         ($($case:ident),* $(,)?) => {
             $(
                 #[tokio::test]
                 async fn $case() {
-                    contract::$case::<Postgres>().await;
+                    conformance::$case::<Postgres>().await;
                 }
             )*
         };
     }
 
-    contract! {
+    conformance! {
         reads_the_position_the_indexer_left,
         answers_none_for_a_chain_never_indexed,
         reads_only_the_chain_it_was_asked_about,

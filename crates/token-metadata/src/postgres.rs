@@ -62,21 +62,21 @@ fn label(row: &Row) -> Result<(Address, TokenLabel), Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use crate::contract;
+    use crate::conformance;
     use crate::harness::Postgres;
 
-    macro_rules! contract {
+    macro_rules! conformance {
         ($($case:ident),* $(,)?) => {
             $(
                 #[tokio::test]
                 async fn $case() {
-                    contract::$case::<Postgres>().await;
+                    conformance::$case::<Postgres>().await;
                 }
             )*
         };
     }
 
-    contract! {
+    conformance! {
         reads_every_label_on_the_chain,
         leaves_out_a_chain_it_was_not_asked_about,
         keeps_a_token_that_answered_with_no_symbol,

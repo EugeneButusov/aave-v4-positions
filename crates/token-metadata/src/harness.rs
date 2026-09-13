@@ -10,7 +10,7 @@ use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::PostgresTokenMetadataStore;
-use crate::contract::{Fixture, Stored};
+use crate::conformance::{Fixture, Stored};
 
 pub(crate) struct Postgres {
     pool: Pool,

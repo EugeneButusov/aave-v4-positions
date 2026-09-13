@@ -6,7 +6,7 @@ mod sync_status;
 mod sync_status_store;
 
 #[cfg(test)]
-mod contract;
+mod conformance;
 #[cfg(test)]
 mod harness;
 

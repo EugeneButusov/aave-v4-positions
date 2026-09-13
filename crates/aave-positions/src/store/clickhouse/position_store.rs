@@ -126,14 +126,14 @@ mod tests {
 
     use super::ClickHousePositionStore;
     use crate::store::clickhouse::harness::{append, index, migrated_database, store};
-    use crate::store::contract::{Fixture, Held, Listed, position_store_contract};
+    use crate::store::conformance::{Fixture, Held, Listed, position_store_conformance};
     use crate::store::fixtures::{
         ALICE, At, FIVE_PERCENT, HUB, RAY, ROUTER, T0, add, add_asset, add_reserve, ask, borrow,
         draw, supplied_by, supply, update_asset, withdraw,
     };
     use crate::store::{PositionQuery, PositionStore};
 
-    /// This store, standing up its own database, as the contract wants it.
+    /// This store, standing up its own database, as the conformance suite wants it.
     struct ClickHouseFixture {
         store: ClickHousePositionStore,
         client: Client,
@@ -143,7 +143,7 @@ mod tests {
         type Store = ClickHousePositionStore;
 
         async fn fresh(case: &str) -> Self {
-            let client = migrated_database(&format!("rust_contract_{case}")).await;
+            let client = migrated_database(&format!("rust_conformance_{case}")).await;
             Self {
                 store: ClickHousePositionStore::new(client.clone()),
                 client,
@@ -156,7 +156,7 @@ mod tests {
 
         /// Each held position as the events that fold into it.
         ///
-        /// The inversion the contract costs: it asks for a share balance and this has
+        /// The inversion the suite costs: it asks for a share balance and this has
         /// to produce a `Supply` and a `Borrow` that sum to one. Straightforward while
         /// the balances are positive, which is why
         /// `hides_a_position_whose_shares_have_netted_to_zero` stays a local case —
@@ -235,9 +235,9 @@ mod tests {
         }
     }
 
-    position_store_contract!(ClickHouseFixture);
+    position_store_conformance!(ClickHouseFixture);
 
-    /// What the contract cannot ask for, because a [`Held`] has already lost
+    /// What the suite cannot ask for, because a [`Held`] has already lost
     /// it: the fold's own behaviour, observed through this store.
     mod the_fold {
         use super::*;

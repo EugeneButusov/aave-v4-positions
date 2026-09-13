@@ -9,7 +9,7 @@ use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::PostgresReservePriceStore;
-use crate::contract::{Fixture, Quoted};
+use crate::conformance::{Fixture, Quoted};
 
 pub(crate) struct Postgres {
     pool: Pool,

@@ -534,9 +534,9 @@ pub(crate) async fn leaves_out_a_position_that_did_not_exist_yet<F: Fixture>() {
     assert_eq!(valued_at(&fixture, LATER_AT + 100).await.items.len(), 1);
 }
 
-macro_rules! position_store_contract {
+macro_rules! position_store_conformance {
     ($fixture:ty) => {
-        $crate::store::contract::position_store_contract!(@cases $fixture:
+        $crate::store::conformance::position_store_conformance!(@cases $fixture:
             returns_one_wallet_on_one_spoke_and_nobody_else
             finds_nothing_on_a_spoke_the_wallet_has_never_touched
             keeps_a_debt_only_position_with_no_supply_behind_it
@@ -559,10 +559,10 @@ macro_rules! position_store_contract {
         $(
             #[tokio::test]
             async fn $case() {
-                $crate::store::contract::$case::<$fixture>().await;
+                $crate::store::conformance::$case::<$fixture>().await;
             }
         )*
     };
 }
 
-pub(crate) use position_store_contract;
+pub(crate) use position_store_conformance;

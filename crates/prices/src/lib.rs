@@ -14,7 +14,7 @@ mod price;
 mod store;
 
 #[cfg(test)]
-mod contract;
+mod conformance;
 #[cfg(test)]
 mod harness;
 

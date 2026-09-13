@@ -95,21 +95,21 @@ fn unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use crate::contract;
+    use crate::conformance;
     use crate::harness::Postgres;
 
-    macro_rules! contract {
+    macro_rules! conformance {
         ($($case:ident),* $(,)?) => {
             $(
                 #[tokio::test]
                 async fn $case() {
-                    contract::$case::<Postgres>().await;
+                    conformance::$case::<Postgres>().await;
                 }
             )*
         };
     }
 
-    contract! {
+    conformance! {
         reads_every_price_on_the_chain,
         leaves_out_a_chain_it_was_not_asked_about,
         keeps_two_spokes_pricing_the_same_reserve_id_apart,

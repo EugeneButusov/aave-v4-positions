@@ -9,7 +9,7 @@ use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::cursor::PostgresSyncStatusStore;
-use crate::cursor::contract::{Advanced, Fixture};
+use crate::cursor::conformance::{Advanced, Fixture};
 
 pub(crate) struct Postgres {
     pool: Pool,
