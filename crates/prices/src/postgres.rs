@@ -75,8 +75,9 @@ fn priced(row: &Row) -> Result<(ReserveKey, ReservePrice), Error> {
         ReservePrice {
             price: unsigned("price", price)?,
             priced_at,
-            // Negative only if the server's clock went backwards between
-            // writing the row and reading it, which is not staleness.
+            // Clamped rather than refused: negative means the row was
+            // written by a clock ahead of the one reading it, and "not stale"
+            // is the honest answer to that.
             age_seconds: age_seconds.try_into().unwrap_or(0),
         },
     ))

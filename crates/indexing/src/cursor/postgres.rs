@@ -18,7 +18,6 @@ use crate::cursor::{Error, SyncStatus, SyncStatusStore};
 /// is precision nobody can use and everybody has to read.
 const STATUS: &str = "\
     SELECT \
-        chain_id, \
         last_block, \
         last_hash, \
         updated_at, \
@@ -43,29 +42,38 @@ impl SyncStatusStore for PostgresSyncStatusStore {
         let client = connection(&self.pool).await?;
         let row = client.query_opt(STATUS, &[&i64::from(chain_id)]).await?;
 
-        row.as_ref().map(status).transpose()
+        row.as_ref().map(|row| status(chain_id, row)).transpose()
     }
 }
 
-fn status(row: &Row) -> Result<SyncStatus, Error> {
+fn status(chain_id: u32, row: &Row) -> Result<SyncStatus, Error> {
     let last_hash: &str = row.get("last_hash");
     let last_block: i64 = row.get("last_block");
     let age_seconds: i64 = row.get("age_seconds");
 
     Ok(SyncStatus {
-        // The column is `bigint` and the port says `u32`, which is the same
-        // width every other chain id in this workspace is.
-        chain_id: row.get::<_, i64>("chain_id").try_into().unwrap_or(0),
-        // `CHECK (last_block >= 0)`, so the cast cannot lose one.
-        last_block: last_block.try_into().unwrap_or(0),
+        // The argument, not the column. `WHERE chain_id = $1` matched it, so
+        // the row cannot disagree — and reading it back would be a `bigint` to
+        // narrow with nothing sensible to do if it did not fit.
+        chain_id,
+        // `CHECK (last_block >= 0)` puts this out of reach. It refuses rather
+        // than substitutes anyway: the substitute would be 0, which reads as a
+        // chain indexed to genesis, and every payload is stamped with this.
+        last_block: last_block.try_into().map_err(|_| Error::Malformed {
+            column: "last_block",
+            expected: "non-negative",
+            value: last_block.to_string(),
+        })?,
         last_hash: last_hash.parse().map_err(|_| Error::Malformed {
             column: "last_hash",
             expected: "32-byte hash",
             value: last_hash.to_owned(),
         })?,
         updated_at: row.get::<_, OffsetDateTime>("updated_at"),
-        // Negative only if the server's clock went backwards between writing
-        // the row and reading it, which is not staleness.
+        // Clamped rather than refused, and the only one of these that is.
+        // Negative means the row was written by a clock ahead of the one
+        // reading it, and "not stale" is the honest answer to that — unlike a
+        // height or a hash, where no answer is better than a plausible one.
         age_seconds: age_seconds.try_into().unwrap_or(0),
     })
 }
