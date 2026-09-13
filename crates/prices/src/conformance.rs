@@ -42,24 +42,18 @@ impl Quoted {
         }
     }
 
-    pub(crate) fn on_spoke(spoke: Address, reserve_id: u64, price: &'static str) -> Self {
-        Self {
-            spoke,
-            ..Self::at(reserve_id, price)
-        }
+    pub(crate) fn on_spoke(self, spoke: Address) -> Self {
+        Self { spoke, ..self }
     }
 
-    pub(crate) fn on_chain(chain_id: u32, reserve_id: u64) -> Self {
-        Self {
-            chain_id,
-            ..Self::at(reserve_id, ONE_DOLLAR)
-        }
+    pub(crate) fn on_chain(self, chain_id: u32) -> Self {
+        Self { chain_id, ..self }
     }
 
-    pub(crate) fn aged(reserve_id: u64, seconds: u64) -> Self {
+    pub(crate) fn aged(self, seconds: u64) -> Self {
         Self {
             aged_seconds: seconds,
-            ..Self::at(reserve_id, ONE_DOLLAR)
+            ..self
         }
     }
 }
@@ -108,7 +102,10 @@ pub(crate) async fn reads_every_price_on_the_chain<F: Fixture>() {
 pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<F: Fixture>() {
     let fixture = F::fresh("leaves_out_a_chain_it_was_not_asked_about").await;
     fixture
-        .given_prices(&[Quoted::at(1, ONE_DOLLAR), Quoted::on_chain(OTHER_CHAIN, 2)])
+        .given_prices(&[
+            Quoted::at(1, ONE_DOLLAR),
+            Quoted::at(2, ONE_DOLLAR).on_chain(OTHER_CHAIN),
+        ])
         .await;
 
     let prices = prices_of(&fixture).await;
@@ -124,8 +121,8 @@ pub(crate) async fn keeps_two_spokes_pricing_the_same_reserve_id_apart<F: Fixtur
     let fixture = F::fresh("keeps_two_spokes_pricing_the_same_reserve_id_apart").await;
     fixture
         .given_prices(&[
-            Quoted::on_spoke(SPOKE, 1, ONE_DOLLAR),
-            Quoted::on_spoke(SECOND_SPOKE, 1, "99000000"),
+            Quoted::at(1, ONE_DOLLAR).on_spoke(SPOKE),
+            Quoted::at(1, "99000000").on_spoke(SECOND_SPOKE),
         ])
         .await;
 
@@ -180,7 +177,10 @@ pub(crate) async fn ages_a_price_by_the_database_clock<F: Fixture>() {
     // a reader subtracting its own clock reports skew as staleness.
     let fixture = F::fresh("ages_a_price_by_the_database_clock").await;
     fixture
-        .given_prices(&[Quoted::aged(1, 90), Quoted::at(2, ONE_DOLLAR)])
+        .given_prices(&[
+            Quoted::at(1, ONE_DOLLAR).aged(90),
+            Quoted::at(2, ONE_DOLLAR),
+        ])
         .await;
 
     let prices = prices_of(&fixture).await;

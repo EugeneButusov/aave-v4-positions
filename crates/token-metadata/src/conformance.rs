@@ -49,11 +49,8 @@ impl Stored {
         }
     }
 
-    pub(crate) fn on(chain_id: u32, token: Address) -> Self {
-        Self {
-            chain_id,
-            ..Self::labelled(token, "ELSEWHERE")
-        }
+    pub(crate) fn on(self, chain_id: u32) -> Self {
+        Self { chain_id, ..self }
     }
 }
 
@@ -98,7 +95,7 @@ pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<F: Fixture>() {
     fixture
         .given_labels(&[
             Stored::labelled(USDC, "USDC"),
-            Stored::on(OTHER_CHAIN, WETH),
+            Stored::labelled(WETH, "ELSEWHERE").on(OTHER_CHAIN),
         ])
         .await;
 
