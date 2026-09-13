@@ -32,7 +32,7 @@ pub(crate) struct Quoted {
 }
 
 impl Quoted {
-    /// Every field, named once. The four below are what a case says instead.
+    /// Every field, named once.
     fn row(
         chain_id: u32,
         spoke: Address,
@@ -49,20 +49,21 @@ impl Quoted {
         }
     }
 
-    pub(crate) fn at(reserve_id: u64, price: &'static str) -> Self {
-        Self::row(CHAIN_ID, SPOKE, reserve_id, price, 0)
+    pub(crate) fn at(chain_id: u32, reserve_id: u64, price: &'static str) -> Self {
+        Self::row(chain_id, SPOKE, reserve_id, price, 0)
     }
 
-    pub(crate) fn on_spoke(spoke: Address, reserve_id: u64, price: &'static str) -> Self {
-        Self::row(CHAIN_ID, spoke, reserve_id, price, 0)
+    pub(crate) fn on_spoke(
+        chain_id: u32,
+        spoke: Address,
+        reserve_id: u64,
+        price: &'static str,
+    ) -> Self {
+        Self::row(chain_id, spoke, reserve_id, price, 0)
     }
 
-    pub(crate) fn on_chain(chain_id: u32, reserve_id: u64) -> Self {
-        Self::row(chain_id, SPOKE, reserve_id, ONE_DOLLAR, 0)
-    }
-
-    pub(crate) fn aged(reserve_id: u64, seconds: u64) -> Self {
-        Self::row(CHAIN_ID, SPOKE, reserve_id, ONE_DOLLAR, seconds)
+    pub(crate) fn aged(chain_id: u32, reserve_id: u64, aged_seconds: u64) -> Self {
+        Self::row(chain_id, SPOKE, reserve_id, ONE_DOLLAR, aged_seconds)
     }
 }
 
@@ -94,7 +95,10 @@ async fn prices_of<F: Fixture>(fixture: &F) -> HashMap<ReserveKey, ReservePrice>
 pub(crate) async fn reads_every_price_on_the_chain<F: Fixture>() {
     let fixture = F::fresh("reads_every_price_on_the_chain").await;
     fixture
-        .given_prices(&[Quoted::at(1, ONE_DOLLAR), Quoted::at(2, "300000000000")])
+        .given_prices(&[
+            Quoted::at(CHAIN_ID, 1, ONE_DOLLAR),
+            Quoted::at(CHAIN_ID, 2, "300000000000"),
+        ])
         .await;
 
     let prices = prices_of(&fixture).await;
@@ -110,7 +114,10 @@ pub(crate) async fn reads_every_price_on_the_chain<F: Fixture>() {
 pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<F: Fixture>() {
     let fixture = F::fresh("leaves_out_a_chain_it_was_not_asked_about").await;
     fixture
-        .given_prices(&[Quoted::at(1, ONE_DOLLAR), Quoted::on_chain(OTHER_CHAIN, 2)])
+        .given_prices(&[
+            Quoted::at(CHAIN_ID, 1, ONE_DOLLAR),
+            Quoted::at(OTHER_CHAIN, 2, ONE_DOLLAR),
+        ])
         .await;
 
     let prices = prices_of(&fixture).await;
@@ -126,8 +133,8 @@ pub(crate) async fn keeps_two_spokes_pricing_the_same_reserve_id_apart<F: Fixtur
     let fixture = F::fresh("keeps_two_spokes_pricing_the_same_reserve_id_apart").await;
     fixture
         .given_prices(&[
-            Quoted::on_spoke(SPOKE, 1, ONE_DOLLAR),
-            Quoted::on_spoke(SECOND_SPOKE, 1, "99000000"),
+            Quoted::on_spoke(CHAIN_ID, SPOKE, 1, ONE_DOLLAR),
+            Quoted::on_spoke(CHAIN_ID, SECOND_SPOKE, 1, "99000000"),
         ])
         .await;
 
@@ -146,7 +153,9 @@ pub(crate) async fn omits_a_reserve_nobody_has_priced<F: Fixture>() {
     // zero here could only ever be our own invention, and the read path serves
     // null for a miss.
     let fixture = F::fresh("omits_a_reserve_nobody_has_priced").await;
-    fixture.given_prices(&[Quoted::at(1, ONE_DOLLAR)]).await;
+    fixture
+        .given_prices(&[Quoted::at(CHAIN_ID, 1, ONE_DOLLAR)])
+        .await;
 
     assert!(!prices_of(&fixture).await.contains_key(&key(SPOKE, 999)));
 }
@@ -154,7 +163,9 @@ pub(crate) async fn omits_a_reserve_nobody_has_priced<F: Fixture>() {
 pub(crate) async fn answers_a_checksummed_spoke_from_a_lower_cased_row<F: Fixture>() {
     // What the TypeScript's `reserveKey` exists to get right by discipline.
     let fixture = F::fresh("answers_a_checksummed_spoke_from_a_lower_cased_row").await;
-    fixture.given_prices(&[Quoted::at(1, ONE_DOLLAR)]).await;
+    fixture
+        .given_prices(&[Quoted::at(CHAIN_ID, 1, ONE_DOLLAR)])
+        .await;
 
     let checksummed: Address = "0x94E7a5DcBe816e498B89aB752661904e2F56c485"
         .parse()
@@ -169,7 +180,7 @@ pub(crate) async fn reads_a_price_past_what_a_double_can_hold<F: Fixture>() {
     const HUGE: &str = "123456789012345678901234567890";
 
     let fixture = F::fresh("reads_a_price_past_what_a_double_can_hold").await;
-    fixture.given_prices(&[Quoted::at(1, HUGE)]).await;
+    fixture.given_prices(&[Quoted::at(CHAIN_ID, 1, HUGE)]).await;
 
     assert_eq!(
         prices_of(&fixture).await[&key(SPOKE, 1)].price,
@@ -182,7 +193,10 @@ pub(crate) async fn ages_a_price_by_the_database_clock<F: Fixture>() {
     // a reader subtracting its own clock reports skew as staleness.
     let fixture = F::fresh("ages_a_price_by_the_database_clock").await;
     fixture
-        .given_prices(&[Quoted::aged(1, 90), Quoted::at(2, ONE_DOLLAR)])
+        .given_prices(&[
+            Quoted::aged(CHAIN_ID, 1, 90),
+            Quoted::at(CHAIN_ID, 2, ONE_DOLLAR),
+        ])
         .await;
 
     let prices = prices_of(&fixture).await;

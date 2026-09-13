@@ -24,8 +24,9 @@ pub(crate) struct Advanced {
 }
 
 impl Advanced {
-    /// Every field, named once. The three below are what a case says instead.
-    fn row(chain_id: u32, last_block: u64, aged_seconds: u64) -> Self {
+    /// Every field, named once. `aged_seconds` is how far in the past the
+    /// database should stamp `updated_at`.
+    pub(crate) fn aged(chain_id: u32, last_block: u64, aged_seconds: u64) -> Self {
         Self {
             chain_id,
             last_block,
@@ -34,16 +35,9 @@ impl Advanced {
         }
     }
 
-    pub(crate) fn to(last_block: u64) -> Self {
-        Self::row(CHAIN_ID, last_block, 0)
-    }
-
-    pub(crate) fn on(chain_id: u32, last_block: u64) -> Self {
-        Self::row(chain_id, last_block, 0)
-    }
-
-    pub(crate) fn aged(last_block: u64, seconds: u64) -> Self {
-        Self::row(CHAIN_ID, last_block, seconds)
+    /// The same row, written just now.
+    pub(crate) fn to(chain_id: u32, last_block: u64) -> Self {
+        Self::aged(chain_id, last_block, 0)
     }
 }
 
@@ -67,7 +61,9 @@ async fn status_of<F: Fixture>(fixture: &F) -> Option<SyncStatus> {
 
 pub(crate) async fn reads_the_position_the_indexer_left<F: Fixture>() {
     let fixture = F::fresh("reads_the_position_the_indexer_left").await;
-    fixture.given_cursor(&[Advanced::to(25_652_535)]).await;
+    fixture
+        .given_cursor(&[Advanced::to(CHAIN_ID, 25_652_535)])
+        .await;
 
     let status = status_of(&fixture).await.expect("the chain is indexed");
 
@@ -88,7 +84,7 @@ pub(crate) async fn answers_none_for_a_chain_never_indexed<F: Fixture>() {
 pub(crate) async fn reads_only_the_chain_it_was_asked_about<F: Fixture>() {
     let fixture = F::fresh("reads_only_the_chain_it_was_asked_about").await;
     fixture
-        .given_cursor(&[Advanced::on(OTHER_CHAIN, 999)])
+        .given_cursor(&[Advanced::to(OTHER_CHAIN, 999)])
         .await;
 
     assert!(status_of(&fixture).await.is_none(), "another chain's row");
@@ -96,7 +92,9 @@ pub(crate) async fn reads_only_the_chain_it_was_asked_about<F: Fixture>() {
 
 pub(crate) async fn ages_the_row_by_the_database_clock<F: Fixture>() {
     let fixture = F::fresh("ages_the_row_by_the_database_clock").await;
-    fixture.given_cursor(&[Advanced::aged(100, 90)]).await;
+    fixture
+        .given_cursor(&[Advanced::aged(CHAIN_ID, 100, 90)])
+        .await;
 
     let age = status_of(&fixture).await.expect("indexed").age_seconds;
 
@@ -110,7 +108,7 @@ pub(crate) async fn reads_a_block_height_past_what_a_double_can_hold<F: Fixture>
     const HIGH: u64 = 9_007_199_254_740_993;
 
     let fixture = F::fresh("reads_a_block_height_past_what_a_double_can_hold").await;
-    fixture.given_cursor(&[Advanced::to(HIGH)]).await;
+    fixture.given_cursor(&[Advanced::to(CHAIN_ID, HIGH)]).await;
 
     assert_eq!(status_of(&fixture).await.expect("indexed").last_block, HIGH);
 }

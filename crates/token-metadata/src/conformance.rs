@@ -29,7 +29,7 @@ pub(crate) struct Stored {
 }
 
 impl Stored {
-    /// Every field, named once. The three below are what a case says instead.
+    /// Every field, named once.
     fn row(
         chain_id: u32,
         token: Address,
@@ -44,18 +44,14 @@ impl Stored {
         }
     }
 
-    pub(crate) fn labelled(token: Address, symbol: &'static str) -> Self {
-        Self::row(CHAIN_ID, token, Some(symbol), Some(symbol))
+    pub(crate) fn labelled(chain_id: u32, token: Address, symbol: &'static str) -> Self {
+        Self::row(chain_id, token, Some(symbol), Some(symbol))
     }
 
     /// A token that answered, and had nothing to say. Conformant under EIP-20,
     /// where both fields are OPTIONAL.
-    pub(crate) fn mute(token: Address) -> Self {
-        Self::row(CHAIN_ID, token, None, None)
-    }
-
-    pub(crate) fn on(chain_id: u32, token: Address) -> Self {
-        Self::row(chain_id, token, Some("ELSEWHERE"), Some("ELSEWHERE"))
+    pub(crate) fn mute(chain_id: u32, token: Address) -> Self {
+        Self::row(chain_id, token, None, None)
     }
 }
 
@@ -82,8 +78,8 @@ pub(crate) async fn reads_every_label_on_the_chain<F: Fixture>() {
     let fixture = F::fresh("reads_every_label_on_the_chain").await;
     fixture
         .given_labels(&[
-            Stored::labelled(USDC, "USDC"),
-            Stored::labelled(WETH, "WETH"),
+            Stored::labelled(CHAIN_ID, USDC, "USDC"),
+            Stored::labelled(CHAIN_ID, WETH, "WETH"),
         ])
         .await;
 
@@ -99,8 +95,8 @@ pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<F: Fixture>() {
     let fixture = F::fresh("leaves_out_a_chain_it_was_not_asked_about").await;
     fixture
         .given_labels(&[
-            Stored::labelled(USDC, "USDC"),
-            Stored::on(OTHER_CHAIN, WETH),
+            Stored::labelled(CHAIN_ID, USDC, "USDC"),
+            Stored::labelled(OTHER_CHAIN, WETH, "ELSEWHERE"),
         ])
         .await;
 
@@ -114,7 +110,7 @@ pub(crate) async fn keeps_a_token_that_answered_with_no_symbol<F: Fixture>() {
     // The distinction the nullable columns exist for: this token was asked and
     // had nothing to say, which is not the same as never having been asked.
     let fixture = F::fresh("keeps_a_token_that_answered_with_no_symbol").await;
-    fixture.given_labels(&[Stored::mute(USDC)]).await;
+    fixture.given_labels(&[Stored::mute(CHAIN_ID, USDC)]).await;
 
     let labels = labels_of(&fixture).await;
 
@@ -133,7 +129,7 @@ pub(crate) async fn omits_a_token_with_no_row<F: Fixture>() {
     // than a null: this one is a gap for the sweep to fill.
     let fixture = F::fresh("omits_a_token_with_no_row").await;
     fixture
-        .given_labels(&[Stored::labelled(USDC, "USDC")])
+        .given_labels(&[Stored::labelled(CHAIN_ID, USDC, "USDC")])
         .await;
 
     let labels = labels_of(&fixture).await;
@@ -148,7 +144,7 @@ pub(crate) async fn answers_a_checksummed_address_from_a_lower_cased_row<F: Fixt
     // `Address`, one hash, no rule to forget.
     let fixture = F::fresh("answers_a_checksummed_address_from_a_lower_cased_row").await;
     fixture
-        .given_labels(&[Stored::labelled(USDC, "USDC")])
+        .given_labels(&[Stored::labelled(CHAIN_ID, USDC, "USDC")])
         .await;
 
     let checksummed: Address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
