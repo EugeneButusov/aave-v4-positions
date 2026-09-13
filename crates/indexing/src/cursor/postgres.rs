@@ -79,13 +79,6 @@ fn status(chain_id: u32, row: &Row) -> Result<SyncStatus, Error> {
     })
 }
 
-/// Unused outside tests, and named so the harness can spell a column the way
-/// the table's `CHECK` demands.
-#[cfg(test)]
-pub(crate) fn lower(hash: alloy_primitives::B256) -> String {
-    format!("{hash:#x}")
-}
-
 #[cfg(test)]
 mod tests {
     //! The port's specification, against a real Postgres.

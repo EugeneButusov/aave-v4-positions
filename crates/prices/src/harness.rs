@@ -4,12 +4,12 @@
 //! that owns `put` belongs to Phase 4. It is one `INSERT`, and the column list
 //! is the migration's.
 
+use alloy_primitives::Address;
 use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::PostgresReservePriceStore;
 use crate::contract::{Fixture, Quoted};
-use crate::postgres::lower;
 
 pub(crate) struct Postgres {
     pool: Pool,
@@ -98,4 +98,9 @@ async fn scratch(prefix: &str, case: &str) -> Pool {
     drop(client);
 
     pool
+}
+
+/// The spelling the table's `CHECK (spoke ~ '^0x[0-9a-f]{40}$')` demands.
+fn lower(address: Address) -> String {
+    format!("{address:#x}")
 }

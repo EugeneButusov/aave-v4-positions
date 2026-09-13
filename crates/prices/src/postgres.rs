@@ -91,13 +91,6 @@ fn unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
     })
 }
 
-/// Unused outside tests, and named so the harness can spell a column the way
-/// the table's `CHECK` demands.
-#[cfg(test)]
-pub(crate) fn lower(address: alloy_primitives::Address) -> String {
-    format!("{address:#x}")
-}
-
 #[cfg(test)]
 mod tests {
     //! The port's specification, against a real Postgres.

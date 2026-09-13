@@ -4,12 +4,12 @@
 //! which owns it, arrives with the loop in Phase 3. It is one `INSERT`, and the
 //! column list is the migration's.
 
+use alloy_primitives::B256;
 use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::cursor::PostgresSyncStatusStore;
 use crate::cursor::contract::{Advanced, Fixture};
-use crate::cursor::postgres::lower;
 
 pub(crate) struct Postgres {
     pool: Pool,
@@ -99,4 +99,9 @@ async fn scratch(prefix: &str, case: &str) -> Pool {
     drop(client);
 
     pool
+}
+
+/// The spelling the table's `CHECK (last_hash ~ '^0x[0-9a-f]{64}$')` demands.
+fn lower(hash: B256) -> String {
+    format!("{hash:#x}")
 }
