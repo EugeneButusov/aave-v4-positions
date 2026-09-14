@@ -29,15 +29,12 @@ use env::{Env, Invalid, Source};
 
 use crate::positions::MIN_SECRET_BYTES;
 
-/// A threshold past a day is one that never fires on a chain with twelve-second
-/// blocks, so bounding it costs nothing and an unbounded one is a number with
-/// no wrong value.
+/// A threshold past a day never fires on a chain with twelve-second blocks, so
+/// an unbounded one is a number with no wrong value.
 ///
 /// **A bound, not a units check.** It catches `300000` — the price default in
-/// milliseconds — and not `60000`, which is the sync default in milliseconds,
-/// under a day, and just as wrong. Reading a threshold in the wrong unit is what
-/// `API_*_STALE_AFTER_SECONDS` is named to prevent; this only stops the value
-/// being absurd.
+/// milliseconds — and not `60000`, the sync default in milliseconds, under a day
+/// and just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
 pub(crate) struct Config {
@@ -58,22 +55,17 @@ pub(crate) struct Config {
 
 /// How old a number may be before a page says so.
 ///
-/// **Two thresholds rather than one**, because the two clocks run at different
-/// rates: the indexer advances every block, the oracle is read every minute. And
-/// neither is the indexer's own `INDEXER_STALL_THRESHOLD_MS` — that one decides
-/// whether to drain traffic from a pod; these tell a reader their numbers are a
-/// minute old, which a reader wants to know long before an operator does.
-///
+/// **Two rather than one**, because the clocks run at different rates: the
+/// indexer advances every block, the oracle is read every minute. Neither is the
+/// indexer's `INDEXER_STALL_THRESHOLD_MS`, which decides whether to drain a pod.
 /// Zero is a choice, and it means every page says so.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Staleness {
     pub(crate) sync: u64,
 
-    /// **It measures how long since we last read the oracle, never how long
-    /// since a feed last moved.** That distinction is the trap §7.5 names: an
-    /// hour without an `AnswerUpdated` is ordinary Chainlink behaviour, so a
-    /// threshold derived from feed cadence would mark healthy feeds stale
-    /// forever and teach readers to ignore the flag.
+    /// **How long since we last read the oracle, never since a feed moved** —
+    /// §7.5's trap. An hour without an `AnswerUpdated` is ordinary Chainlink
+    /// behaviour, so a threshold from feed cadence flags healthy feeds forever.
     pub(crate) price: u64,
 }
 

@@ -1,36 +1,18 @@
 //! The cursor as this API publishes it.
 //!
-//! **Signing lives here, not in `aave-positions`.** That crate deals in
-//! [`PositionKey`] — keyset paging is how the database resumes a scan, and it is
-//! the same page key whether a reconciliation asks for it or an HTTP request
-//! does. Making that key opaque and unforgeable is a property of *publishing*
-//! it: it exists because this service hands the key to someone it does not trust
-//! and takes it back again. Nothing inside the fold ever holds a signed cursor,
-//! and the key that signs one is this service's configuration.
+//! **Signing belongs to publishing, not to paging** — `aave-positions` owns
+//! [`PositionKey`], and this is what makes one safe to hand to a stranger. Not
+//! confidentiality: position data is public on chain. It keeps the encoding
+//! opaque, and it stops a cursor being carried between listings, where a resume
+//! point from one wallet is well-formed in another's and silently skips every
+//! reserve below it. Hence the scope in the tag rather than in the cursor.
 //!
-//! **What signing defends against.** Position data is public on chain, so this
-//! is neither confidentiality nor access control — a caller can already ask for
-//! any wallet. It buys two other things. The cursor becomes a genuinely opaque
-//! contract, so its encoding can change without breaking anyone who hand-rolled
-//! one. And it stops a cursor being carried between listings: unsigned, a resume
-//! point from one wallet is a well-formed resume point in another's, silently
-//! skipping every reserve below it.
+//! HMAC rather than a JWT, which would add algorithm negotiation and `alg: none`
+//! to protect two short strings.
 //!
-//! That second one is why the scope is **mixed into the signature rather than
-//! stored in the cursor**. A tag over `(chain_id, user, spoke-filter)` plus the
-//! key only verifies when the caller presents the same three, so switching
-//! listings fails the same check as tampering — and the cursor stays one field
-//! long.
-//!
-//! HMAC rather than a JWT: a JWT would add a header, algorithm negotiation and
-//! the `alg: none` footgun to protect two short strings.
-//!
-//! **The key must be identical across replicas.** Each process signs with its
-//! own copy, so a per-process key means a cursor issued by one pod is rejected
-//! by the next — pagination that fails only under load, and only sometimes. The
-//! same applies across implementations: the construction below is what the
-//! TypeScript service also computes, so while both run, a cursor issued by
-//! either is accepted by the other.
+//! **The key must be identical across replicas**, or a cursor from one pod is
+//! rejected by the next. The TypeScript service computes the same tag, so while
+//! both run either accepts the other's.
 
 use aave_positions::store::PositionKey;
 use alloy_primitives::{Address, U256};
@@ -45,15 +27,9 @@ use crate::errors::{self, BoxedAppError};
 
 type Keyed = Hmac<Sha256>;
 
-/// The one separator, between every field of both the scope and the payload.
-///
-/// One rather than a hierarchy of them, because what makes a concatenation
-/// unambiguous is not picking a rare character — it is that the separator cannot
-/// appear in the values it separates. Every field here is an address, a decimal
-/// id or [`ALL_SPOKES`]: none can contain this, so `a|b|c` has exactly one
-/// reading. Were that not true, a tag issued for one listing would verify
-/// against another with the boundary moved, and no choice of character would be
-/// safe — only less obviously unsafe.
+/// The one separator. Every field it joins is an address, a decimal id or
+/// [`ALL_SPOKES`], none of which can contain it — so the concatenation has one
+/// reading, and no tag verifies with the boundary moved.
 const SEP: char = '|';
 
 /// Not a valid address, so it cannot collide with a Spoke genuinely filtered on.
@@ -62,23 +38,15 @@ const ALL_SPOKES: &str = "*";
 /// 128 bits. Full SHA-256 would triple the cursor to no benefit.
 const TAG_BYTES: usize = 16;
 
-/// A key shorter than this is guessable, and a guessable key is not a signature.
-///
-/// Enforced in `config`, where the variable is read, rather than here: a value
-/// is checked once, where it enters.
+/// A key shorter than this is guessable. Enforced in `config`, where the
+/// variable is read: a value is checked once, where it enters.
 pub(crate) const MIN_SECRET_BYTES: usize = 32;
 
-/// The listing a page belongs to: one wallet, on one chain, and either one Spoke
-/// or all of them.
+/// The listing a page belongs to.
 ///
-/// **`spoke` is the filter that was applied, not the Spoke a row came from.**
-/// `None` means the listing spanned every Spoke. The distinction is the whole
-/// point: an all-Spokes cursor is a well-formed resume point inside a
-/// single-Spoke listing, so if the two scopes signed identically a caller could
-/// carry one across and silently skip every reserve below it.
-///
-/// Not carried inside the cursor — mixed into its signature instead, so a tag
-/// only verifies against the listing it was issued for.
+/// **`spoke` is the filter that was applied, not the Spoke a row came from**,
+/// and `None` spans every Spoke. An all-Spokes resume point is well-formed
+/// inside a single-Spoke listing, so the two must not sign identically.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Scope {
     pub(crate) chain_id: u32,
@@ -96,11 +64,9 @@ pub(crate) struct Cursors {
 impl Cursors {
     /// # Errors
     ///
-    /// [`InvalidLength`], which HMAC never produces: RFC 2104 hashes a key
-    /// longer than the block size and pads a shorter one, so every length is
-    /// accepted. `new_from_slice` is fallible because the trait serves ciphers
-    /// with a fixed key size too. Propagated rather than unwrapped, because an
-    /// unconstructible arm is still not ours to panic on.
+    /// [`InvalidLength`], which HMAC never produces — RFC 2104 takes a key of
+    /// any length. Propagated rather than unwrapped: an unconstructible arm is
+    /// still not ours to panic on.
     pub(crate) fn new(secret: &str) -> Result<Self, InvalidLength> {
         Ok(Self {
             keyed: Keyed::new_from_slice(secret.as_bytes())?,
@@ -115,15 +81,12 @@ impl Cursors {
         format!("{body}.{tag}")
     }
 
-    /// Verifies before it parses — unauthenticated input is not worth decoding
-    /// into a key a query will be run with.
+    /// Verifies before it parses.
     ///
     /// # Errors
     ///
-    /// A 400 in every case. It is the caller's input being wrong, not this
-    /// service failing, and it is raised at the point of detection rather than
-    /// translated afterwards — so a genuine fault in here still surfaces as the
-    /// 500 it is, with no catch-all to swallow it.
+    /// A 400 in every case: the caller's input is wrong, not this service.
+    /// Raised where it is detected, so a genuine fault here is still a 500.
     pub(crate) fn decode(
         &self,
         encoded: &str,
@@ -142,10 +105,8 @@ impl Cursors {
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .ok_or_else(|| invalid("the payload is not base64url text"))?;
 
-        // Constant time, and `subtle`'s slice impl answers `false` for a length
-        // mismatch rather than panicking on one. A plain `==` would return on
-        // the first differing byte, which leaks how much of a guessed tag was
-        // right.
+        // Constant time, and `subtle` answers `false` for a length mismatch
+        // rather than panicking. `==` returns on the first differing byte.
         if !bool::from(self.tag(scope, &payload).as_bytes().ct_eq(tag.as_bytes())) {
             return Err(invalid("signature does not match this listing"));
         }
@@ -162,9 +123,8 @@ impl Cursors {
         })
     }
 
-    /// Signs a payload this service would never build, so a case can prove what
-    /// happens to one that is correctly signed and still wrong. Goes through the
-    /// real [`Cursors::tag`], which is the point of it.
+    /// Signs a payload this service would never build, through the real
+    /// [`Cursors::tag`], so a case can prove what a valid tag over one does.
     #[cfg(test)]
     fn sign(&self, scope: &Scope, payload: &str) -> String {
         format!(
@@ -193,27 +153,21 @@ impl Cursors {
     }
 }
 
-/// The resume point is `(spoke, reserve_id)`, because the scope pins everything
-/// above it: within one `(chain, user)` the table's sorting key has only those
-/// two left. When the listing is already narrowed to one Spoke the first half is
-/// constant, but it is still signed — that is what stops the two listings
-/// sharing a cursor.
+/// The resume point: what the sorting key leaves free once the scope pins
+/// `(chain, user)`. The Spoke is signed even when the listing pinned it, which
+/// is what stops the two listings sharing a cursor.
 ///
-/// Lower-case hex, which is both the spelling the fold stores and the one the
-/// wire carries; `Address`'s own `Display` is EIP-55 checksummed and would sign
-/// a different string for the same address.
+/// Lower-case hex, because `Address`'s own `Display` is EIP-55 checksummed and
+/// would sign a different string for the same address.
 fn payload(key: &PositionKey) -> String {
     format!("{:#x}{SEP}{}", key.spoke, key.reserve_id)
 }
 
 /// The digits of a reserve id, and only digits.
 ///
-/// **`U256::from_str` is not this check.** Measured: it answers `Ok(0)` for the
-/// empty string and reads a `0x` prefix as hex, so an id that went missing would
-/// come back as the resume point at the very start of the listing rather than as
-/// a refusal — a page silently served from the beginning. The payload is signed,
-/// so only a bug on this side could put either there, which is exactly the bug
-/// worth failing loudly on.
+/// **`U256::from_str` is not this check**: measured, it answers `Ok(0)` for the
+/// empty string and reads `0x` as hex — so a missing id would resume from the
+/// start of the listing rather than refuse.
 fn decimal(value: &str) -> Result<U256, BoxedAppError> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(invalid("the reserve id is not a number"));
@@ -295,9 +249,7 @@ mod tests {
 
     #[test]
     fn carries_the_spoke_so_an_all_spokes_walk_knows_where_it_stopped() {
-        // With `spoke` unpinned it is half of what the sorting key leaves free,
-        // so a resume point without it would restart at whichever Spoke sorts
-        // first.
+        // Without it, a resume point restarts at whichever Spoke sorts first.
         let cursors = cursors(SECRET);
         let key = PositionKey {
             spoke: address(OTHER_SPOKE),
@@ -323,8 +275,7 @@ mod tests {
 
     #[test]
     fn refuses_a_payload_edited_under_a_tag_we_issued() {
-        // The whole point: without a signature this is a valid resume point, and
-        // the caller has silently moved themselves somewhere they were not sent.
+        // Unsigned, this is a valid resume point somewhere nobody was sent.
         let issued = cursors(SECRET).encode(&scope(), &key());
         let edited = tamper(&issued, &format!("{SPOKE}|9999"));
 
@@ -340,10 +291,7 @@ mod tests {
 
     #[test]
     fn refuses_a_cursor_replayed_against_another_wallets_listing() {
-        // The correctness hole a bare signature would leave open. The key is
-        // well-formed and genuinely ours — it just names a resume point in a
-        // different listing, so the scope goes into the tag rather than beside
-        // it.
+        // The hole a bare signature leaves: genuinely ours, wrong listing.
         let issued = cursors(SECRET).encode(&scope(), &key());
         let bob = Scope {
             user: address(BOB),
@@ -360,10 +308,8 @@ mod tests {
 
     #[test]
     fn refuses_an_all_spokes_cursor_on_a_single_spoke_listing_and_the_reverse() {
-        // Both directions, because the sentinel only has to be wrong one way for
-        // this to pass by accident. An all-Spokes resume point is *well-formed*
-        // inside the narrowed listing — it names a Spoke and a reserve — so
-        // nothing downstream would notice it skipping every reserve below it.
+        // Both directions: the sentinel only has to be wrong one way for this
+        // to pass by accident, and nothing downstream would notice.
         let cursors = cursors(SECRET);
         let broad = cursors.encode(&all_spokes(), &key());
         let narrow = cursors.encode(&scope(), &key());
@@ -404,9 +350,7 @@ mod tests {
 
     #[test]
     fn refuses_a_payload_that_is_correctly_signed_and_still_not_a_key() {
-        // Reachable only through a bug on our side, since a caller cannot
-        // produce a valid tag. It fails by name here rather than as a parse
-        // error from inside a query.
+        // Reachable only through a bug here, since a caller cannot sign one.
         let cursors = cursors(SECRET);
 
         for payload in [
@@ -424,11 +368,8 @@ mod tests {
 
     #[test]
     fn takes_a_checksummed_spoke_that_we_signed_because_the_type_is_the_check() {
-        // The one place this parts company with the service it replaces, which
-        // matched the payload against a lower-case regex. `Address` is
-        // case-insensitive by construction, so the distinction has nothing left
-        // to protect: the same twenty bytes come back either way, and only our
-        // own bug could put the other spelling there.
+        // Where this parts company with the lower-case regex it replaces:
+        // `Address` is case-insensitive, so the same twenty bytes come back.
         let cursors = cursors(SECRET);
         let signed = cursors.sign(&scope(), &format!("{}|13", SPOKE.to_uppercase()));
 
@@ -437,8 +378,7 @@ mod tests {
 
     #[tokio::test]
     async fn is_a_400_that_says_which_listing_refused_it() {
-        // A forged cursor is the caller's input being wrong. A 500 here would be
-        // a page an operator gets woken for, over a query parameter.
+        // A 500 here is an operator woken over a query parameter.
         let issued = cursors(SECRET).encode(&scope(), &key());
         let (status, body) = answered(refusal(&issued, &all_spokes())).await;
 

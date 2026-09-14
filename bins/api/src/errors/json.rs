@@ -21,13 +21,11 @@
 //! A byte-comparing gate sees the difference, so the order is the contract even
 //! though the third key's spelling is not.
 //!
-//! **That third key is `status_code` where the TypeScript says `statusCode`**,
-//! the same deliberate deviation the probe surface makes and for the same
-//! reason — this port reads as Rust rather than as a transliteration. This used
-//! to be one of two such keys; it is now one instance of the rule
+//! **That third key is `status_code` where the TypeScript says `statusCode`.**
+//! One of two such keys once; now one instance of the rule
 //! `docs/rust-migration.md` states for the whole wire, which the positions
-//! payload's twenty-four made unavoidable. Callers parse error bodies, so it
-//! goes in that rule's release note rather than passing unnoticed.
+//! payload's twenty-four made unavoidable. Callers parse error bodies, so it is
+//! in that rule's release note.
 
 use std::fmt;
 
@@ -40,13 +38,10 @@ use super::{AppError, BoxedAppError};
 
 /// A failure the caller caused, carrying the status it deserves.
 ///
-/// **`String` where crates.io takes `impl Into<Cow<'static, str>>`**, because
-/// the borrowed half of that has no caller worth the type. This used to predict
-/// that the first 400 would carry a constant and earn the `Cow` back. Six of the
-/// route's refusals name the parameter and quote what was sent, so they are
-/// formatted like every other message here; the two the cursor codec raises are
-/// constants, and they allocate once on a path that is already answering an
-/// error.
+/// **`String` where crates.io takes `impl Into<Cow<'static, str>>`.** This used
+/// to predict the first 400 would carry a constant and earn the `Cow` back; six
+/// of the route's refusals quote what was sent, and the cursor codec's two
+/// constants allocate once on a path already answering an error.
 pub(crate) fn custom(status: StatusCode, message: String) -> BoxedAppError {
     Box::new(CustomApiError { status, message })
 }

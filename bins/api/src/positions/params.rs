@@ -1,21 +1,15 @@
 //! What a caller may ask for, and what happens when they ask for something else.
 //!
-//! **Every fault at once, not the first**, which is the shape `env` already
-//! establishes for configuration in this workspace: a request with a bad address
-//! *and* a bad limit learns both, rather than fixing one to be told about the
-//! next. The service this replaces reports one — its path and query run through
-//! separate pipes and the first to throw wins — so this is the behaviour kept
-//! and the wording is not.
+//! **Every fault at once, not the first**, which is what `env` already does for
+//! configuration here. The service this replaces reports one — its path and
+//! query run through separate pipes — so the behaviour is kept and the wording
+//! is not.
 //!
-//! **Unrecognised query parameters are refused.** `?limt=200` is a 400 rather
-//! than a page of fifty served silently, because the cost of being lenient is a
-//! caller who believes a parameter took effect and finds out by reading a page
-//! size they never asked for.
+//! **Unrecognised query parameters are refused.** `?limt=200` is a 400, because
+//! the cost of being lenient is a caller who believes a parameter took effect.
 //!
-//! The bounds are constants rather than configuration: a wallet holds at most
-//! one position per reserve and the Main Spoke lists fourteen, so paging is a
-//! contract formality at this size, and a knob nobody turns is configuration
-//! that only ever goes wrong.
+//! The bounds are constants: the Main Spoke lists fourteen reserves, so paging
+//! is a contract formality and a knob nobody turns only ever goes wrong.
 
 use std::collections::HashMap;
 
@@ -30,14 +24,10 @@ const MAX_LIMIT: u32 = 200;
 /// any position can be valued at.
 const GENESIS: u64 = 1_774_277_159;
 
-/// 2100-01-01, and it is a **units check rather than a policy** on how far ahead
-/// a caller may value.
-///
-/// `as_of` in milliseconds is the wrong value by far the most likely to be sent,
-/// and it is past the floor above — so without a ceiling it would be accepted,
-/// extrapolate the interest index tens of thousands of years, and return a page
-/// of enormous numbers with nothing to say they are wrong. Three orders of
-/// magnitude below a millisecond timestamp and seventy years above any real one.
+/// 2100-01-01: a **units check rather than a policy** on how far ahead a caller
+/// may value. `as_of` in milliseconds is past the floor above, so unbounded it
+/// would extrapolate the index tens of thousands of years and answer a page of
+/// enormous numbers with nothing to say they are wrong.
 const MAX_AS_OF: u64 = 4_102_444_800;
 
 /// The four this endpoint answers to. Anything else is a refusal rather than a
@@ -87,11 +77,8 @@ struct Reading {
 
 impl Reading {
     /// Reads the query string, refusing a key this endpoint does not answer to
-    /// and a key given twice.
-    ///
-    /// A repeat is refused rather than resolved because either resolution is a
-    /// guess: `?limit=1&limit=2` is a caller who does not know what they asked
-    /// for, and picking one silently answers a question they did not ask.
+    /// and a key given twice — `?limit=1&limit=2` is a caller who does not know
+    /// what they asked for, and either resolution is a guess.
     fn new(query: &str) -> Self {
         let mut reading = Self {
             query: HashMap::new(),
@@ -148,10 +135,8 @@ impl Reading {
         })
     }
 
-    /// Checksummed or lower-case, either matches — `Address` is the check, and
-    /// it is case-insensitive by construction. The fold stores one spelling and
-    /// the adapter lower-cases on the way into the query, so nothing downstream
-    /// has to care which the caller read off a block explorer.
+    /// Checksummed or lower-case, either matches: `Address` is the check and is
+    /// case-insensitive, and the adapter lower-cases into the query anyway.
     fn optional_address(&mut self, name: &str) -> Option<Address> {
         let value = self.query.get(name)?.clone();
 
@@ -281,11 +266,8 @@ mod tests {
     #[test]
     fn takes_twenty_bytes_of_hex_without_the_prefix() {
         // Measured, not intended: `Address::from_str` strips an optional `0x`,
-        // so the anchored regex this replaces refused one spelling that now
-        // resolves. Twenty bytes are twenty bytes and the answer is the same
-        // page, so it is pinned here rather than guarded against — the second
-        // place the type turns out to be more lenient than the string it
-        // replaced, and the cursor codec's checksummed Spoke is the first.
+        // so a spelling the anchored regex refused now resolves. Twenty bytes
+        // are twenty bytes, so it is pinned rather than guarded against.
         let bare = ALICE.trim_start_matches("0x");
         let listing = Listing::parse("1", bare, "").expect("twenty bytes of hex");
 

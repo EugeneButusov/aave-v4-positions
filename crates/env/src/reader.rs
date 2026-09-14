@@ -103,18 +103,14 @@ impl<'a> Env<'a> {
         self.raw(key).unwrap_or(default).to_owned()
     }
 
-    /// A shared key, and the only reader here with no default.
+    /// A shared key, and the only reader here with no default: a key every
+    /// deployment shares is not a signature, so an absent one is a problem
+    /// rather than a fallback. The empty string handed back only lets the
+    /// remaining variables still be read.
     ///
-    /// A default would be a key every deployment shares, and a shared key is
-    /// not a signature — so an absent one is a problem rather than a fallback,
-    /// and the empty string handed back is only there so the rest of the
-    /// variables still get read.
-    ///
-    /// **The value never reaches the message.** Every other reader quotes what
-    /// it was given, which is what makes a typo obvious; doing that here would
-    /// put a signing key into the logs of any deployment that mis-set it. The
-    /// length is the only thing reported, and it is bytes rather than
-    /// characters because that is what a key is measured in.
+    /// **The value never reaches the message**, unlike every other reader here —
+    /// that would put a signing key in the log of any deployment that mis-set
+    /// it. Length only, in bytes, which is what a key is measured in.
     pub fn secret(&mut self, key: &str, minimum: usize) -> String {
         let value = self.raw(key).unwrap_or_default().to_owned();
 

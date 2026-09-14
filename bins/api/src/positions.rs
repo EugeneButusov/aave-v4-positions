@@ -4,35 +4,23 @@
 //! what this service answers beyond its probes. Ordered by Spoke then reserve,
 //! paged by keyset.
 //!
-//! The split follows what each part answers to. [`params`] is what a caller may
-//! ask for, [`cursor`] is how a resume point is published and taken back, and
-//! [`scale`] is the one decision every number on the wire shares. [`page`] is
-//! the join: four reads, two of them enrichment, and the three clocks they
-//! carry.
+//! [`params`] is what a caller may ask for, [`cursor`] how a resume point is
+//! published and taken back, [`scale`] the one decision every number shares, and
+//! [`page`] the join: four reads, two of them enrichment, three clocks.
 //!
-//! **The shape that goes out lives here, beside the handler that returns it**,
-//! which is [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/controllers/krate/metadata.rs)
-//! arrangement: a type used by one endpoint is declared in that endpoint's file,
-//! and only types shared between endpoints earn a module of their own. There is
-//! one endpoint, so nothing is shared, so there is nothing to put in one.
+//! **The shape that goes out lives here, beside the handler**, which is
+//! [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/controllers/krate/metadata.rs)
+//! arrangement: only types shared *between* endpoints earn a module, and there
+//! is one endpoint.
 //!
-//! **Plain structs with no `rename_all`, which is the decision rather than the
-//! absence of one.** Every multi-word key is snake_case where the service this
-//! replaces spells it camelCase — the same deviation `errors::json` makes for
-//! `status_code` and the probe surface makes for `uptime_seconds`, applied to
-//! the payload instead of to two keys nobody reads.
-//!
-//! **They mirror the domain types rather than reusing them.** `store::Position`
-//! is free to gain a field with the next ingestion increment; the wire contract
-//! is not, and a shared type would move it without anyone deciding to. It is
-//! also why the wire item is [`Item`] rather than `Position`: one name, one
-//! meaning, in a file that holds both.
-//!
-//! **Every number is a decimal string, already scaled**, for the reason
-//! [`scale`] gives, and **a field is null when the answer is unknown, never
-//! zero** — a zero is indistinguishable from a real one, and §7.4's oracle
-//! reverts rather than answer one. Field order is declaration order, and it is
-//! the order the service beside this one emits.
+//! Four rules govern all six types. **No `rename_all` anywhere** — every
+//! multi-word key is snake_case where the service this replaces writes
+//! camelCase. **They mirror the domain rather than reuse it**, which is also why
+//! the wire item is [`Item`]: `store::Position` may gain a field, the contract
+//! may not. **Every number is a decimal string**, already scaled by [`scale`].
+//! **Null means unknown, never zero** — §7.4's oracle reverts rather than answer
+//! one, so a zero would be indistinguishable from a real one. Field order is
+//! declaration order, and it is the order the service beside this one emits.
 //!
 //! **Positions from different Spokes may be listed together but never summed.**
 //! Each Spoke is an isolated margin account with its own collateral factors,
@@ -65,9 +53,8 @@ pub(crate) fn routes() -> Router<AppState> {
     Router::new().route("/chains/{chain_id}/users/{user}/positions", get(list))
 }
 
-/// **The query arrives raw rather than deserialized**, because two of the three
-/// things this endpoint has to say about it do not survive a `Deserialize`: an
-/// unrecognised key, and every fault at once rather than the first.
+/// **The query arrives raw rather than deserialized**: neither an unrecognised
+/// key nor every fault at once survives a `Deserialize`.
 async fn list(
     State(app): State<AppState>,
     Path((chain_id, user)): Path<(String, String)>,
@@ -290,13 +277,10 @@ pub(crate) struct Value {
     pub(crate) total_debt_usd: Option<String>,
 }
 
-/// The four widths a subsecond may take, and nothing between them.
-///
-/// The SI buckets — none, milli, micro, nano — which is what `chrono` calls
-/// `SecondsFormat::AutoSi` and what the Rust services that use it put on the
-/// wire. Measured against crates.io's own API over 6,126 timestamps: 2,182 with
-/// no fraction, one with three digits, 3,943 with six, and none with any other
-/// width.
+/// The four widths a subsecond may take, and nothing between them: the SI
+/// buckets, which is `chrono`'s `SecondsFormat::AutoSi`. Measured over 6,126
+/// timestamps from crates.io's API — 2,182 with no fraction, one with three
+/// digits, 3,943 with six, none with any other width.
 const WHOLE: &[BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
 const MILLIS: &[BorrowedFormatItem<'_>] =
@@ -308,27 +292,18 @@ const NANOS: &[BorrowedFormatItem<'_>] =
 
 /// The wire's spelling of an instant: RFC 3339, in UTC, at an SI width.
 ///
-/// **Not `Date.prototype.toISOString`**, which the service beside this one uses.
-/// Measured: that emits exactly three fractional digits always and truncates
-/// below them, so `…17.221456Z` goes out as `…17.221Z` and a whole second as
-/// `….000Z`. Reproducing it would throw away the microseconds Postgres stored.
+/// **Neither of the two obvious formats.** `toISOString` emits three digits
+/// always and truncates below them, throwing away the microseconds Postgres
+/// stored. `time`'s `Rfc3339` trims *every* trailing zero, so `…00.5+00` goes
+/// out as `…00.5Z` — a width `datetime.fromisoformat` refuses before Python
+/// 3.11, and one nothing else in Rust emits.
 ///
-/// **And not `time`'s `Rfc3339` either**, which was the first thing here and is
-/// the outlier in its own ecosystem: it trims *every* trailing zero, so a
-/// `timestamptz` of `…00.5+00` goes out as `…00.5Z` — a width no strict parser
-/// expects. `datetime.fromisoformat` before Python 3.11 takes 0, 3 or 6 digits
-/// and refuses the rest. The buckets above cannot produce one of those widths
-/// from a `timestamptz`, which holds microseconds and nothing finer.
+/// **It does not fix sorting**, which it reads as though it would: `.` is below
+/// `Z`, so `…00.500Z` sorts before `…00Z` at any width. These are instants, not
+/// sort keys.
 ///
-/// **What they do not fix is sorting**, and it is worth saying so because it
-/// reads like they would: `.` is below `Z`, so `…00.500Z` sorts before `…00Z`
-/// whatever the width of the fraction. Only a fixed width would put lexical
-/// order and chronological order back together, and the ecosystem this follows
-/// does not pick one. These are instants, not sort keys.
-///
-/// Forced to UTC rather than assumed: the driver hands back a `timestamptz` at
-/// zero offset today, and a non-zero one would print `+02:00` where every reader
-/// of this field expects `Z`.
+/// UTC is forced rather than assumed — a non-zero offset would print `+02:00`
+/// where every reader of this field expects `Z`.
 ///
 /// # Errors
 ///
@@ -361,11 +336,9 @@ pub(crate) fn instant_at(seconds: u64) -> Result<String, time::Error> {
 mod tests {
     //! The route end to end, with the four ports doubled.
     //!
-    //! One case asserts a whole body and the rest assert one decision each. That
-    //! split is deliberate: the key spellings, the field order and the timestamp
-    //! format are one contract and belong in one literal, where a change to any
-    //! of them shows as a change to this file rather than as six near-identical
-    //! diffs.
+    //! One case asserts a whole body and the rest assert one decision each: the
+    //! key spellings, the field order and the timestamp format are one contract
+    //! and belong in one literal.
 
     use std::collections::HashMap;
     use std::sync::atomic::Ordering;
@@ -468,10 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn serves_the_whole_page_in_the_spelling_this_port_publishes() {
-        // The one literal. Every multi-word key is snake_case where the service
-        // beside this one writes camelCase, both timestamps are RFC 3339 with no
-        // invented milliseconds, and the field order is the order the contract
-        // declares.
+        // The one literal: key spellings, field order and both timestamps.
         let stores = Stores {
             page: PositionPage {
                 items: vec![held()],
@@ -515,8 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_chain_this_deployment_has_never_indexed_is_a_404_not_an_empty_page() {
-        // Answering `200` with nothing in it would say the wallet holds no
-        // positions, which is a different claim and a wrong one.
+        // `200` with nothing in it says the wallet holds no positions.
         let (status, body) = answer(
             Stores {
                 sync: None,
@@ -535,9 +504,8 @@ mod tests {
 
     #[tokio::test]
     async fn an_explicit_instant_skips_the_price_read_rather_than_discarding_it() {
-        // Amounts are extrapolated to that instant and prices are not, so a
-        // value mixing the two would be a number that never existed. The
-        // counter is what makes this a skip: a discarded result reads `1`.
+        // Amounts extrapolate to that instant and prices do not. The counter
+        // is what makes it a skip: a discarded result reads `1`.
         let stores = Stores {
             page: PositionPage {
                 items: vec![held()],
@@ -566,9 +534,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_page_clock_is_the_oldest_price_behind_it_not_the_newest() {
-        // Prices are normally written in one upsert and share a timestamp, so
-        // this only diverges when the oracle refused a reserve and its last good
-        // price was left to age — which is exactly the case worth surfacing.
+        // Only diverges when the oracle refused a reserve and its last good
+        // price was left to age, which is the case worth surfacing.
         let mut elsewhere = held();
         elsewhere.spoke = address(OTHER_SPOKE);
 
@@ -595,8 +562,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unresolved_reserve_nulls_the_asset_the_value_and_the_shares_together() {
-        // The scale lives on the asset, so without it there is no honest way to
-        // render a share balance — and an unscaled integer in a field the
+        // The scale lives on the asset: an unscaled integer in a field the
         // contract calls decimal is wrong by up to eighteen orders of magnitude.
         let mut unresolved = held();
         unresolved.asset = None;
@@ -628,8 +594,7 @@ mod tests {
             assert!(body.contains(null), "{null} missing from {body}");
         }
 
-        // A ray is a ratio, so its scale is the protocol's fixed 27 rather than
-        // the asset's, and it survives what nulls everything beside it.
+        // A ray's scale is the protocol's fixed 27, so it survives.
         assert!(
             body.contains(r#""premium_offset_ray":"-0.000000000000000000000000001""#),
             "{body}"
@@ -657,8 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_token_enrichment_has_not_reached_serves_a_null_label() {
-        // Absent from the map and present with a null symbol both serve null:
-        // the wire cannot express the difference and a caller has no use for it.
+        // Absent from the map and present-with-null both serve null.
         let stores = Stores {
             page: PositionPage {
                 items: vec![held()],
@@ -675,8 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn hands_back_a_cursor_it_will_take_again() {
-        // The round trip, through the router rather than through the codec: a
-        // cursor is only useful if the listing that issued it accepts it back.
+        // Through the router rather than the codec.
         let stores = Stores {
             page: PositionPage {
                 items: vec![held()],
@@ -717,8 +680,7 @@ mod tests {
         let page: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
         let cursor = page["next_cursor"].as_str().expect("a cursor").to_owned();
 
-        // The same cursor, narrowed to one Spoke. Well-formed, genuinely ours,
-        // and a resume point in a listing it was not issued for.
+        // Well-formed, genuinely ours, and a listing it was not issued for.
         let (status, body) = answer(
             Stores::default(),
             &format!("?cursor={cursor}&spoke={SPOKE}"),
@@ -748,8 +710,8 @@ mod tests {
 
     #[tokio::test]
     async fn is_mounted_under_the_prefix_and_nowhere_else() {
-        // The prefix is configuration, so the one thing worth pinning is that
-        // the route is not also reachable without it.
+        // The prefix is configuration; what is worth pinning is that the route
+        // is not also reachable without it.
         let handler = Stores::default().handler();
         let request = Request::builder()
             .uri(format!("/v1/chains/1/users/{ALICE}/positions"))

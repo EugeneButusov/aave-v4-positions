@@ -5,12 +5,11 @@
 //! reassembling one, so a wiring mistake fails them rather than hiding behind a
 //! parallel definition.
 //!
-//! **The four read ports are doubles here, and the databases behind them are
-//! not reached.** What each store does with a query is its own crate's
-//! conformance suite to prove, against a real server; what this binary adds is
-//! the join, the wire shape and the refusals, none of which needs a row in a
-//! table. The two connections below are still real, because the readiness probe
-//! pings them and that is the one case that wants them.
+//! **The four read ports are doubles and no database is reached.** What a store
+//! does with a query is its own crate's conformance suite to prove against a
+//! real server; what this binary adds is the join, the wire shape and the
+//! refusals. The two connections stay real for the readiness probe, which pings
+//! them.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -79,10 +78,8 @@ pub(crate) fn handler(postgres: Pool) -> Router {
 }
 
 /// What the four ports answer, before a case changes its mind about any of them.
-///
-/// A struct of plain fields rather than a builder: every case sets one or two
-/// and the rest are the defaults below, and a `with_` method per field would be
-/// six methods that each assign one field.
+/// Plain fields rather than a builder: a `with_` method per field would be six
+/// methods that each assign one field.
 pub(crate) struct Stores {
     /// `None` is a chain this deployment has never indexed.
     pub(crate) sync: Option<SyncStatus>,

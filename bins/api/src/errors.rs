@@ -12,21 +12,13 @@
 //! wrong and what status it deserves. That one is the wire contract, which is
 //! measured against the TypeScript and changes on a different schedule.
 //!
-//! **The 500 is fixed text, not the envelope**, which is crates.io's choice here
-//! and also the one already made beside it: `CatchPanicLayer` answers a panic
-//! the same way. This used to say the TypeScript's 500 body was unmeasured and
-//! that the shape would land with the first route that can fail. That route is
-//! [`crate::positions`], and the measurement — a `RENAME TABLE` under the running
-//! service, so the store threw rather than refused — is:
-//!
-//! ```text
-//! {"statusCode":500,"message":"Internal server error"}
-//! ```
-//!
-//! Two keys, no `error`, the status first, and lower-case where every registered
-//! reason phrase is not. It is a second envelope, and answering it here would
-//! publish the two error shapes [`json`]'s doc argues against — so the text
-//! stays, and `docs/rust-migration.md` records the difference instead.
+//! **The 500 is fixed text, not the envelope**, as crates.io and the
+//! `CatchPanicLayer` beside it both answer. This used to defer the decision
+//! until the TypeScript's 500 could be measured; it now has been, with a
+//! `RENAME TABLE` under the running service: `{"statusCode":500,"message":
+//! "Internal server error"}`. Two keys, no `error`, status first — a *second*
+//! envelope, which [`json`]'s doc argues against publishing. So the text stays
+//! and `docs/rust-migration.md` records the difference.
 
 mod json;
 
@@ -80,11 +72,9 @@ impl<E: Error + Send + 'static> AppError for E {
     }
 }
 
-/// Every `std` error becomes one, so a handler can `?` a store read.
-///
-/// No overlap with the `impl AppError for BoxedAppError` above: `dyn AppError`
-/// is not a `std::error::Error`, so `Box<dyn AppError>` is not in this impl's
-/// domain and `From<T> for T` still applies to it.
+/// Every `std` error becomes one, so a handler can `?` a store read. No overlap
+/// with the impl above: `dyn AppError` is not a `std::error::Error`, so
+/// `From<T> for T` still applies to `BoxedAppError`.
 impl<E: Error + Send + 'static> From<E> for BoxedAppError {
     fn from(error: E) -> Self {
         Box::new(error)
@@ -102,13 +92,10 @@ pub(crate) fn not_found(message: String) -> BoxedAppError {
 
 /// What the caller got wrong, said back to them.
 ///
-/// The one demotion that matters on a read API: without it a malformed address
-/// or an out-of-range limit would reach the blanket impl above and answer a 500,
-/// which tells a caller their own mistake is the server's fault.
-///
-/// The message names the parameter and what was sent, because that is what makes
-/// it actionable — and it is safe to echo for the reason [`not_found`]'s is: it
-/// came from the request line.
+/// Without it a malformed address reaches the blanket impl above and answers a
+/// 500, telling a caller their own mistake is the server's fault. The message
+/// names the parameter and quotes what was sent, which is safe to echo for the
+/// reason [`not_found`]'s is: it came from the request line.
 pub(crate) fn bad_request(message: String) -> BoxedAppError {
     json::custom(StatusCode::BAD_REQUEST, message)
 }

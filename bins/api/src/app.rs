@@ -1,22 +1,17 @@
 //! Everything a request can reach, in one struct.
 //!
-//! The shape is [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/lib.rs): an `App`
-//! holding the live resources, an `AppState` newtype the router carries, and a
-//! `handler` that composes state, routes and middleware in that order. Three
-//! separable steps, and the reason to adopt it before the positions endpoint
-//! rather than after is that the endpoint then lands *into* a structure instead
-//! of forcing one.
+//! The shape is [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/lib.rs):
+//! an `App` holding the live resources, an `AppState` newtype the router
+//! carries, and a `handler` composing state, routes and middleware in that
+//! order.
 //!
-//! **It is handed its dependencies rather than making them**, and each has its
-//! own reason. The [`ShutdownFlag`] has two holders — the readiness handler and the
-//! future `with_graceful_shutdown` waits on — so one made in here could never be
-//! flipped by the other. [`Uptime`] is read at the top of `main`, because
-//! started here it would begin counting after the config and both clients. The
-//! clients could be built from a [`crate::config::Config`] and are not, because
-//! each is about to have a second consumer: the position store takes the
-//! ClickHouse client, the read stores take the pool, and a constructor that made
-//! them would have to make those too — at which point it is the composition root
-//! rather than a description of what is served.
+//! **It is handed its dependencies rather than making them.** The
+//! [`ShutdownFlag`] has two holders — the readiness handler and the future
+//! `with_graceful_shutdown` waits on — so one made here could never be flipped
+//! by the other. [`Uptime`] is read at the top of `main`, or it would start
+//! counting after the config and both clients. The clients are passed in because
+//! each has a second consumer: the position store takes the ClickHouse client,
+//! the three read stores take the pool.
 
 use std::sync::Arc;
 
@@ -42,10 +37,9 @@ pub(crate) struct App {
     pub(crate) clickhouse: Client,
     pub(crate) postgres: Pool,
 
-    /// **Four ports, four trait objects.** The composition root reads like the
-    /// module graph it replaces, and a case can put a double in front of the
-    /// handler without a database. The cost is a boxed future per call, which
-    /// `PositionStore`'s own doc measures and accepts.
+    /// **Four ports, four trait objects**, so a case can put a double in front
+    /// of the handler without a database. A boxed future per call is the cost,
+    /// which `PositionStore`'s own doc measures and accepts.
     pub(crate) positions: Arc<dyn PositionStore>,
     pub(crate) tokens: Arc<dyn TokenMetadataStore>,
     pub(crate) prices: Arc<dyn ReservePriceStore>,
@@ -62,20 +56,14 @@ pub(crate) struct App {
 /// What the router carries, and what every handler extracts.
 ///
 /// **An `Arc`, now that a route serves real traffic and clones this per
-/// request.** This used to hold an `App` directly, on the argument that cloning
-/// four fields cost a rounding error while only the readiness probe did it — a
-/// `clickhouse::Client` shares its transport but deep-copies its url, database,
-/// auth, roles, settings and headers, and an orchestrator asks every few
-/// seconds. The note beside it said wrapping the field would be a one-line
-/// change when a handler arrived. It is this line, and it is also what makes the
-/// four trait objects shareable at all.
+/// request.** It held an `App` directly while only the readiness probe cloned
+/// it, with a note saying this would be a one-line change when a handler
+/// arrived. It is that line, and it is also what makes the four trait objects
+/// shareable at all — an `App` carrying `Box<dyn Trait>` cannot be `Clone`.
 ///
-/// This is now crates.io's shape for the same reason theirs has it: an `App`
-/// carrying `Box<dyn Trait>` cannot be `Clone`.
-///
-/// A newtype rather than a bare `Arc<App>` because it is where crates.io hangs
-/// `FromRequestParts` and `FromRef` — and `State<AppState>` needs a type this
-/// crate owns.
+/// A newtype rather than a bare `Arc<App>`: it is where crates.io hangs
+/// `FromRequestParts` and `FromRef`, and `State<_>` needs a type this crate
+/// owns.
 #[derive(Clone)]
 pub(crate) struct AppState(pub(crate) Arc<App>);
 
@@ -90,10 +78,9 @@ impl std::ops::Deref for AppState {
 /// State, then routes, then everything wrapped around them.
 ///
 /// **This is where the surface is decided, and the only place.** Which paths
-/// exist, what they hang under, and which dependencies a readiness probe answers
-/// for are all one decision — what this process *is* — and they belong beside
-/// the resources above rather than in [`crate::router`], which owns how a path
-/// nobody serves is refused and names nothing this service does.
+/// exist, what they hang under and which dependencies a probe answers for are
+/// one decision — what this process *is* — so they sit beside the resources
+/// above rather than in [`crate::router`], which names nothing this service does.
 pub(crate) fn handler(app: App) -> Router {
     let mount = router::mount(&app.prefix);
     let (uptime, shutdown) = (app.uptime, app.shutdown.clone());
@@ -115,11 +102,8 @@ fn probes(uptime: Uptime, shutdown: ShutdownFlag, state: AppState) -> Router {
     ops::probe_router(uptime, shutdown, move || {
         let state = state.clone();
         async move {
-            // Side by side rather than one after the other, as the TypeScript's
-            // `Promise.all` does: neither answer depends on the other, and a
-            // probe that serialises them reports the sum of two timeouts.
-            // `join!` keeps the order of the results, which the wire contract
-            // fixes.
+            // Side by side: a probe that serialises them reports the sum of
+            // two timeouts. `join!` keeps the order the wire contract fixes.
             let (clickhouse, postgres) = tokio::join!(
                 ops::check("clickhouse", clickhouse_client::ping(&state.clickhouse)),
                 ops::check("postgres", ::postgres::ping(&state.postgres)),
