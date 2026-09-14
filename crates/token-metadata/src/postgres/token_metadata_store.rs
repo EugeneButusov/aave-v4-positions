@@ -1,8 +1,5 @@
 //! Labels in Postgres.
 
-#[cfg(test)]
-mod harness;
-
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
@@ -65,8 +62,8 @@ fn label(row: &Row) -> Result<(Address, TokenLabel), Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use super::harness::PostgresHarness;
     use crate::conformance;
+    use crate::postgres::harness::PostgresHarness;
 
     macro_rules! conformance {
         ($($case:ident),* $(,)?) => {

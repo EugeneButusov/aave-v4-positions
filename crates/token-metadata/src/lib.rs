@@ -17,7 +17,7 @@
 mod error;
 mod label;
 mod postgres;
-mod store;
+mod token_metadata_store;
 
 #[cfg(test)]
 mod conformance;
@@ -25,4 +25,4 @@ mod conformance;
 pub use error::Error;
 pub use label::TokenLabel;
 pub use postgres::PostgresTokenMetadataStore;
-pub use store::TokenMetadataStore;
+pub use token_metadata_store::TokenMetadataStore;

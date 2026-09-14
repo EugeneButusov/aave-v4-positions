@@ -15,7 +15,7 @@
 mod error;
 mod postgres;
 mod price;
-mod store;
+mod reserve_price_store;
 
 #[cfg(test)]
 mod conformance;
@@ -23,4 +23,4 @@ mod conformance;
 pub use error::Error;
 pub use postgres::PostgresReservePriceStore;
 pub use price::{ReserveKey, ReservePrice};
-pub use store::ReservePriceStore;
+pub use reserve_price_store::ReservePriceStore;

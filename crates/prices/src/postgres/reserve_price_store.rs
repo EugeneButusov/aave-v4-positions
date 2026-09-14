@@ -1,8 +1,5 @@
 //! Prices in Postgres.
 
-#[cfg(test)]
-mod harness;
-
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
@@ -98,8 +95,8 @@ fn unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use super::harness::PostgresHarness;
     use crate::conformance;
+    use crate::postgres::harness::PostgresHarness;
 
     macro_rules! conformance {
         ($($case:ident),* $(,)?) => {

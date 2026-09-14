@@ -4,9 +4,6 @@
 //! duplicating one, because there is exactly one answer to "where is the
 //! indexer" and a second copy of it would be a second thing to keep in step.
 
-#[cfg(test)]
-mod harness;
-
 use postgres::{Pool, connection};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
@@ -86,8 +83,8 @@ fn status(chain_id: u32, row: &Row) -> Result<SyncStatus, Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use super::harness::PostgresHarness;
     use crate::cursor::conformance;
+    use crate::cursor::postgres::harness::PostgresHarness;
 
     macro_rules! conformance {
         ($($case:ident),* $(,)?) => {
