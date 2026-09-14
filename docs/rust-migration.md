@@ -189,10 +189,13 @@ time:
 | `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, the write paths |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
-The third column will be asserted in CI with `cargo tree -i`, so reaching across fails the build
-rather than passing review — from Phase 2, when `bins/api` gives it something to check. Today
-neither `axum` nor any of alloy's chain-facing crates is in the workspace and the assertion would
-pass without proving anything. `api`'s row names those crates rather than `alloy` because
+The third column is asserted in CI by `scripts/binary-boundaries.sh`, so reaching across fails the
+build rather than passing review. It landed with the route in Phase 2, which is when `bins/api`
+finally linked something worth checking — before that neither `axum` nor any of alloy's chain-facing
+crates was in the workspace, and the assertion would have passed without proving anything. It reads
+`cargo tree --edges normal` per binary rather than `cargo tree -i` per crate: the inverted form
+errors on a crate absent from the graph, which is the *passing* case, so the shape that fails cleanly
+is the one that lists what a binary links and looks for the names it may not. `api`'s row names those crates rather than `alloy` because
 `crates/aave-positions` links `alloy-primitives` for `U256` and `I256`: the prohibition is no chain
 and no socket, and integer types are neither — they are also what the Phase 3 decoders will hand
 over, so sharing them is what keeps a conversion out of the boundary.
@@ -204,7 +207,7 @@ port from `CursorStore` precisely because one process writes that row and anothe
 whole dependency surface is a `B256` and Postgres. So the prohibition stays what it always was, no
 chain and no socket, and what follows from it is that the alloy adapters land *outside*
 `crates/indexing` when Phase 3 brings them — otherwise the read API grows an HTTP client it never
-calls and `cargo tree -i alloy-provider` says so.
+calls and `scripts/binary-boundaries.sh` says so.
 
 `migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
@@ -632,7 +635,7 @@ was not even in `[workspace.dependencies]`. Six modules under `bins/api/src/posi
 caller may ask for, the HMAC over a resume point, base units to a decimal string, the wire shape, and
 the join that puts four reads and three clocks behind one response. `AppState` took the `Arc` its own
 doc had been promising since #47, `config` grew the four variables it had been predicting, and CI
-finally has something to point `cargo tree` at.
+finally has a boundary worth asserting — `scripts/binary-boundaries.sh`, runnable on its own.
 
 Three things were measured rather than assumed, and two of them were wrong first. `U256::from_str`
 answers `Ok(0)` for the empty string, so a signed cursor whose reserve id went missing would have
