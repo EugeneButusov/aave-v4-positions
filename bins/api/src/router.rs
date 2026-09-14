@@ -1,58 +1,44 @@
-//! Every path this service answers on.
+//! How a path this service does not serve is refused, and where the versioned
+//! ones hang.
 //!
-//! Probes at the root, the positions endpoint under `/{prefix}/v1`, and the two
-//! fallbacks. **The probes stay outside the prefix** and outside the version: an
-//! orchestrator's check is not part of the API's versioned surface, and all
-//! three compose healthchecks already ask for `/health/ready`.
-//!
-//! **The dependencies are named here, in a list, and that is the whole
-//! registry.** `ops` owns the report and the paths; this owns which databases
-//! this process answers for.
+//! **Nothing this service does is named here.** Which paths exist, what they
+//! are mounted under and which dependencies a readiness probe reports are all
+//! decided in [`crate::app`], which is the composition root and already holds
+//! the stores behind them. What is left is the mechanism: prefix arithmetic and
+//! two fallbacks, neither of which changes when an endpoint is added.
 
 use axum::Router;
 use axum::http::{Method, Uri};
 
-use crate::app::AppState;
 use crate::errors::{self, BoxedAppError};
-use crate::positions;
 
-pub(crate) fn build(state: AppState, prefix: &str) -> Router {
-    let (uptime, shutdown) = (state.uptime, state.shutdown.clone());
-    let positions = positions::routes().with_state(state.clone());
-
-    ops::probe_router(uptime, shutdown, move || {
-        let state = state.clone();
-        async move {
-            // Side by side rather than one after the other, as the TypeScript's
-            // `Promise.all` does: neither answer depends on the other, and a
-            // probe that serialises them reports the sum of two timeouts.
-            // `join!` keeps the order of the results, which the wire contract
-            // fixes.
-            let (clickhouse, postgres) = tokio::join!(
-                ops::check("clickhouse", clickhouse_client::ping(&state.clickhouse)),
-                ops::check("postgres", ::postgres::ping(&state.postgres)),
-            );
-            vec![clickhouse, postgres]
-        }
-    })
-    .nest(&mount(prefix), positions)
-    .fallback(not_found)
-    // After the routes, because it sets a fallback on every `MethodRouter`
-    // already registered — before them it would have none to set.
-    .method_not_allowed_fallback(not_found)
-}
-
-/// Where the versioned routes hang. An empty prefix is a deployment asking for
-/// none, so they hang at `/v1` rather than at `//v1`.
-fn mount(prefix: &str) -> String {
-    if prefix.is_empty() {
-        "/v1".to_owned()
-    } else {
-        format!("/{prefix}/v1")
+/// Where the versioned routes hang, given whatever a deployment wrote in
+/// `API_GLOBAL_PREFIX`.
+///
+/// Slashes are trimmed because a deployment may or may not have written them,
+/// and an empty prefix is one asking for none — so the routes hang at `/v1`
+/// rather than at `//v1`.
+pub(crate) fn mount(prefix: &str) -> String {
+    match prefix.trim_matches('/') {
+        "" => "/v1".to_owned(),
+        prefix => format!("/{prefix}/v1"),
     }
 }
 
-/// Both fallbacks, and that is the finding rather than a shortcut.
+/// Both fallbacks, over a router that is already finished.
+///
+/// **It takes the router rather than being called on one**, and that is the
+/// ordering made unwrongable: `method_not_allowed_fallback` sets a fallback on
+/// every `MethodRouter` already registered, so a route added after it would
+/// answer axum's default 405 instead of the 404 the contract says. As an
+/// argument there is nothing left to add.
+pub(crate) fn refuse_unmatched(router: Router) -> Router {
+    router
+        .fallback(not_found)
+        .method_not_allowed_fallback(not_found)
+}
+
+/// What both fallbacks answer, and the reason there are two of them.
 ///
 /// Express does not distinguish an unmatched path from an unmatched *method*:
 /// `POST /health/live` answers `404 Cannot POST /health/live`, not `405`.
@@ -78,9 +64,14 @@ mod tests {
     //! wrong: `ops` already proves the report and the shutdown in isolation, and
     //! what these add is that the names, the order and the two `ping`s behind
     //! them are hooked up to the databases this process actually opens.
+    //!
+    //! They drive `app::handler`, which is what composes the two — so a route
+    //! moved out from under the fallbacks fails here rather than in review.
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+
+    use super::mount;
 
     use crate::test_support::{get, handler, postgres, unreachable_postgres};
 
@@ -109,6 +100,32 @@ mod tests {
             body,
             r#"{"message":"Cannot GET /nope?a=1&b=2","error":"Not Found","status_code":404}"#
         );
+    }
+
+    #[tokio::test]
+    async fn the_method_fallback_reaches_a_nested_route_too() {
+        // The property `refuse_unmatched` exists to keep: it is applied to a
+        // finished router, so the versioned routes nested inside it are covered
+        // as well. Applied before the nesting, this answers axum's 405.
+        let (status, body) = refused(
+            "POST",
+            "/api/v1/chains/1/users/0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8/positions",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert!(
+            body.starts_with(r#"{"message":"Cannot POST /api/v1/chains/1"#),
+            "{body}"
+        );
+    }
+
+    #[test]
+    fn mounts_the_versioned_routes_under_the_prefix_and_nowhere_else() {
+        // `mount` on its own, which is the one piece of prefix arithmetic.
+        assert_eq!(mount("api"), "/api/v1");
+        assert_eq!(mount("/api/"), "/api/v1", "however a deployment wrote it");
+        assert_eq!(mount(""), "/v1", "no prefix is not an empty segment");
     }
 
     #[tokio::test]

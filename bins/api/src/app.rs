@@ -31,7 +31,7 @@ use token_metadata::TokenMetadataStore;
 
 use crate::config::Staleness;
 use crate::positions::Cursors;
-use crate::{middleware, router};
+use crate::{middleware, positions, router};
 
 /// The live resources, built once at boot and read for the process's life.
 pub(crate) struct App {
@@ -79,15 +79,6 @@ pub(crate) struct App {
 #[derive(Clone)]
 pub(crate) struct AppState(pub(crate) Arc<App>);
 
-impl App {
-    /// Where the versioned routes are mounted, with the slashes a deployment may
-    /// or may not have written. An empty prefix mounts them at `/v1`, which is a
-    /// deployment saying it wants no prefix rather than one asking for `//v1`.
-    fn prefix(&self) -> String {
-        self.prefix.trim_matches('/').to_owned()
-    }
-}
-
 impl std::ops::Deref for AppState {
     type Target = App;
 
@@ -97,9 +88,43 @@ impl std::ops::Deref for AppState {
 }
 
 /// State, then routes, then everything wrapped around them.
+///
+/// **This is where the surface is decided, and the only place.** Which paths
+/// exist, what they hang under, and which dependencies a readiness probe answers
+/// for are all one decision — what this process *is* — and they belong beside
+/// the resources above rather than in [`crate::router`], which owns how a path
+/// nobody serves is refused and names nothing this service does.
 pub(crate) fn handler(app: App) -> Router {
-    let prefix = app.prefix();
+    let mount = router::mount(&app.prefix);
+    let (uptime, shutdown) = (app.uptime, app.shutdown.clone());
     let state = AppState(Arc::new(app));
 
-    middleware::apply(router::build(state, &prefix))
+    // The probes stay outside the prefix and outside the version: an
+    // orchestrator's check is not part of the API's versioned surface, and all
+    // three compose healthchecks already ask for `/health/ready`.
+    let served =
+        probes(uptime, shutdown, state.clone()).nest(&mount, positions::routes().with_state(state));
+
+    middleware::apply(router::refuse_unmatched(served))
+}
+
+/// **The dependencies are named here, in a list, and that is the whole
+/// registry.** `ops` owns the report and the paths; this owns which databases
+/// this process answers for.
+fn probes(uptime: Uptime, shutdown: ShutdownFlag, state: AppState) -> Router {
+    ops::probe_router(uptime, shutdown, move || {
+        let state = state.clone();
+        async move {
+            // Side by side rather than one after the other, as the TypeScript's
+            // `Promise.all` does: neither answer depends on the other, and a
+            // probe that serialises them reports the sum of two timeouts.
+            // `join!` keeps the order of the results, which the wire contract
+            // fixes.
+            let (clickhouse, postgres) = tokio::join!(
+                ops::check("clickhouse", clickhouse_client::ping(&state.clickhouse)),
+                ops::check("postgres", ::postgres::ping(&state.postgres)),
+            );
+            vec![clickhouse, postgres]
+        }
+    })
 }
