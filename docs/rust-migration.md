@@ -134,10 +134,18 @@ which has one obvious right answer, and its dependency versions, which do not �
 compiles is worse than a line you delete. Features come with them, since they are per-consumer
 anyway: `crates/postgres` needs `tokio/rt`, `bins/migrate` needs `rt` and `macros`.
 
-What sharing was buying, nothing now enforces. The case that would justify a check is `tokio`: two
-of them in one graph is not a compile error but a runtime found through the wrong thread-local,
-panicking on first use. `cargo tree --duplicates`, scoped to what members declare, is the check if it
-is ever wanted — unscoped it fires on `syn`, which proc macros duplicate quite legitimately.
+What sharing was buying, `deny.toml` now enforces. The case that justified a check is `tokio`: two of
+them in one graph is not a compile error but a runtime found through the wrong thread-local,
+panicking on first use — so `[[bans.deny]]` denies multiple versions of that one crate, and every
+other duplicate is a warning. Denying them all was measured and rejected: four crates are duplicated
+today — `cpufeatures`, `getrandom`, `syn` and `wasi` — and each is a proc-macro or platform shim
+duplicated quite legitimately inside somebody else's tree, so the gate would have bought a list of
+skips that rots.
+
+`cargo deny` arrived with three checks this workspace had none of — advisories, licences and
+registries — and found two things on the way in: `chacha20 0.10.1` was yanked, and `paste` is
+archived with no successor. The first was a lockfile bump; the second is an ignore with the reason
+written beside it, because it is a proc macro that no binary links.
 
 **A crate exports the types its own signatures mention, and no more.** `build_pool` returns a
 `Pool`, `connection` a `Connection`, `ping` an `Error` — so `crates/postgres` exports those, plus the
