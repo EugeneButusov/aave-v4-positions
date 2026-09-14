@@ -18,6 +18,7 @@ mod config;
 mod errors;
 mod logging;
 mod middleware;
+mod positions;
 mod router;
 #[cfg(test)]
 mod test_support;
@@ -25,10 +26,17 @@ mod test_support;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::ExitCode;
+use std::sync::Arc;
+
+use aave_positions::store::ClickHousePositionStore;
+use indexing::PostgresSyncStatusStore;
+use ops::{ShutdownFlag, Uptime};
+use prices::PostgresReservePriceStore;
+use token_metadata::PostgresTokenMetadataStore;
 
 use app::App;
 use config::Config;
-use ops::{ShutdownFlag, Uptime};
+use positions::Cursors;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -65,9 +73,22 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let postgres = postgres::build_pool(&config.postgres_url)?;
 
     let shutdown = ShutdownFlag::new();
+
+    // **The composition root, and the whole of it.** Each store is handed the
+    // connection it needs rather than reaching for one: a store that read the
+    // environment could not be used twice in one process against two servers,
+    // which is the argument `crates/postgres` makes and this is the place that
+    // honours it. Three of the four share one pool, which is what a pool is for.
     let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
+        positions: Arc::new(ClickHousePositionStore::new(clickhouse.clone())),
+        tokens: Arc::new(PostgresTokenMetadataStore::new(postgres.clone())),
+        prices: Arc::new(PostgresReservePriceStore::new(postgres.clone())),
+        sync: Arc::new(PostgresSyncStatusStore::new(postgres.clone())),
+        cursors: Cursors::new(&config.cursor_secret)?,
+        staleness: config.staleness,
+        prefix: config.prefix,
         clickhouse,
         postgres,
     });
@@ -99,7 +120,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::test_support::{clickhouse, postgres};
+    use crate::test_support::{postgres, state};
 
     #[tokio::test]
     async fn serves_over_a_socket_and_stops_when_drained() {
@@ -112,11 +133,12 @@ mod tests {
         let (terminate, terminated) = tokio::sync::oneshot::channel::<()>();
 
         let served = tokio::spawn({
+            // The flag this case holds, rather than the one `state` makes:
+            // the readiness handler and the future `with_graceful_shutdown`
+            // waits on have to be looking at the same one.
             let handler = app::handler(App {
-                uptime: Uptime::now(),
                 shutdown: shutdown.clone(),
-                clickhouse: clickhouse(),
-                postgres: postgres(),
+                ..state(postgres())
             });
             let shutdown = shutdown.clone();
             async move {

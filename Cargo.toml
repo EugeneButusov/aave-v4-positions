@@ -10,6 +10,7 @@ rust-version = "1.96"
 publish = false
 
 [workspace.dependencies]
+aave-positions = { path = "crates/aave-positions" }
 clickhouse-client = { path = "crates/clickhouse" }
 env = { path = "crates/env" }
 indexing = { path = "crates/indexing" }

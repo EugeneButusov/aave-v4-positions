@@ -14,12 +14,19 @@
 //!
 //! **The 500 is fixed text, not the envelope**, which is crates.io's choice here
 //! and also the one already made beside it: `CatchPanicLayer` answers a panic
-//! the same way. The reason is that the TypeScript's 500 body is *unmeasured* —
-//! Nest's default filter emits a different shape for an unhandled throw than for
-//! an `HttpException`, with no `error` key and the remaining two the other way
-//! round, and nothing in this tree records which. Writing it from memory of
-//! Nest's source is the mistake [`json`]'s measured note exists to prevent, so
-//! the shape lands with the first route that can fail, measured then.
+//! the same way. This used to say the TypeScript's 500 body was unmeasured and
+//! that the shape would land with the first route that can fail. That route is
+//! [`crate::positions`], and the measurement — a `RENAME TABLE` under the running
+//! service, so the store threw rather than refused — is:
+//!
+//! ```text
+//! {"statusCode":500,"message":"Internal server error"}
+//! ```
+//!
+//! Two keys, no `error`, the status first, and lower-case where every registered
+//! reason phrase is not. It is a second envelope, and answering it here would
+//! publish the two error shapes [`json`]'s doc argues against — so the text
+//! stays, and `docs/rust-migration.md` records the difference instead.
 
 mod json;
 
@@ -73,6 +80,17 @@ impl<E: Error + Send + 'static> AppError for E {
     }
 }
 
+/// Every `std` error becomes one, so a handler can `?` a store read.
+///
+/// No overlap with the `impl AppError for BoxedAppError` above: `dyn AppError`
+/// is not a `std::error::Error`, so `Box<dyn AppError>` is not in this impl's
+/// domain and `From<T> for T` still applies to it.
+impl<E: Error + Send + 'static> From<E> for BoxedAppError {
+    fn from(error: E) -> Self {
+        Box::new(error)
+    }
+}
+
 /// What this deployment has never heard of.
 ///
 /// The message is the caller's, which is what makes it useful and what makes it
@@ -80,6 +98,19 @@ impl<E: Error + Send + 'static> AppError for E {
 /// a log and a browser. Nothing else of ours goes into it.
 pub(crate) fn not_found(message: String) -> BoxedAppError {
     json::custom(StatusCode::NOT_FOUND, message)
+}
+
+/// What the caller got wrong, said back to them.
+///
+/// The one demotion that matters on a read API: without it a malformed address
+/// or an out-of-range limit would reach the blanket impl above and answer a 500,
+/// which tells a caller their own mistake is the server's fault.
+///
+/// The message names the parameter and what was sent, because that is what makes
+/// it actionable — and it is safe to echo for the reason [`not_found`]'s is: it
+/// came from the request line.
+pub(crate) fn bad_request(message: String) -> BoxedAppError {
+    json::custom(StatusCode::BAD_REQUEST, message)
 }
 
 #[cfg(test)]

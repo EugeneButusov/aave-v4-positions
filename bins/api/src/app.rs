@@ -18,48 +18,75 @@
 //! them would have to make those too — at which point it is the composition root
 //! rather than a description of what is served.
 
+use std::sync::Arc;
+
+use aave_positions::store::PositionStore;
 use axum::Router;
 use clickhouse_client::clickhouse::Client;
+use indexing::SyncStatusStore;
 use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
+use prices::ReservePriceStore;
+use token_metadata::TokenMetadataStore;
 
+use crate::config::Staleness;
+use crate::positions::Cursors;
 use crate::{middleware, router};
 
 /// The live resources, built once at boot and read for the process's life.
-#[derive(Clone)]
 pub(crate) struct App {
     pub(crate) uptime: Uptime,
     pub(crate) shutdown: ShutdownFlag,
+
+    /// Held for the readiness probe, and to build the position store from.
     pub(crate) clickhouse: Client,
     pub(crate) postgres: Pool,
+
+    /// **Four ports, four trait objects.** The composition root reads like the
+    /// module graph it replaces, and a case can put a double in front of the
+    /// handler without a database. The cost is a boxed future per call, which
+    /// `PositionStore`'s own doc measures and accepts.
+    pub(crate) positions: Arc<dyn PositionStore>,
+    pub(crate) tokens: Arc<dyn TokenMetadataStore>,
+    pub(crate) prices: Arc<dyn ReservePriceStore>,
+    pub(crate) sync: Arc<dyn SyncStatusStore>,
+
+    pub(crate) cursors: Cursors,
+    pub(crate) staleness: Staleness,
+
+    /// Read once here rather than carried into every handler: it decides where
+    /// the router mounts, and nothing below the router asks about it.
+    pub(crate) prefix: String,
 }
 
-/// What the router carries, and what a handler will extract once one wants it.
+/// What the router carries, and what every handler extracts.
 ///
-/// **No `Arc`, while nothing needs one.** Cloning this clones the resources,
-/// and one of them is not free: `clickhouse::Client` shares its transport but
-/// deep-copies its url, database, auth, roles, settings and headers. The only
-/// path that clones per request is the readiness probe, which an orchestrator
-/// runs every few seconds — so the cost is a rounding error and the indirection
-/// would be speculative.
+/// **An `Arc`, now that a route serves real traffic and clones this per
+/// request.** This used to hold an `App` directly, on the argument that cloning
+/// four fields cost a rounding error while only the readiness probe did it — a
+/// `clickhouse::Client` shares its transport but deep-copies its url, database,
+/// auth, roles, settings and headers, and an orchestrator asks every few
+/// seconds. The note beside it said wrapping the field would be a one-line
+/// change when a handler arrived. It is this line, and it is also what makes the
+/// four trait objects shareable at all.
 ///
-/// It stops being a rounding error when a route serves real traffic and clones
-/// this per request. Wrapping the field in an `Arc` at that point is a one-line
-/// change here and invisible everywhere else, which is the reason to wait
-/// rather than the reason to hurry.
+/// This is now crates.io's shape for the same reason theirs has it: an `App`
+/// carrying `Box<dyn Trait>` cannot be `Clone`.
 ///
-/// **crates.io does hold an `Arc` here, and the difference is not taste.** Its
-/// `App` cannot be cloned at all — it carries a `HashMap<String, Box<dyn
-/// OidcKeyStore>>` among eleven fields, and `Box<dyn Trait>` has no `Clone` — so
-/// the indirection is the only way to share it. Ours is four fields that all
-/// clone, and the expensive one is expensive by a constant rather than by
-/// design. Same shape, different arithmetic.
-///
-/// A newtype rather than a bare `App` because it is where crates.io hangs
-/// `FromRequestParts` and `FromRef`. Those derives wait for a handler that takes
-/// state as an argument; the probes reach it through a closure.
+/// A newtype rather than a bare `Arc<App>` because it is where crates.io hangs
+/// `FromRequestParts` and `FromRef` — and `State<AppState>` needs a type this
+/// crate owns.
 #[derive(Clone)]
-pub(crate) struct AppState(pub(crate) App);
+pub(crate) struct AppState(pub(crate) Arc<App>);
+
+impl App {
+    /// Where the versioned routes are mounted, with the slashes a deployment may
+    /// or may not have written. An empty prefix mounts them at `/v1`, which is a
+    /// deployment saying it wants no prefix rather than one asking for `//v1`.
+    fn prefix(&self) -> String {
+        self.prefix.trim_matches('/').to_owned()
+    }
+}
 
 impl std::ops::Deref for AppState {
     type Target = App;
@@ -71,7 +98,8 @@ impl std::ops::Deref for AppState {
 
 /// State, then routes, then everything wrapped around them.
 pub(crate) fn handler(app: App) -> Router {
-    let state = AppState(app);
+    let prefix = app.prefix();
+    let state = AppState(Arc::new(app));
 
-    middleware::apply(router::build(state))
+    middleware::apply(router::build(state, &prefix))
 }

@@ -1,8 +1,9 @@
 //! Every path this service answers on.
 //!
-//! Probes and the two fallbacks, for now. The versioned routes and the prefix
-//! they sit under arrive with the positions endpoint; a prefix with nothing
-//! beneath it is configuration that cannot be observably wrong.
+//! Probes at the root, the positions endpoint under `/{prefix}/v1`, and the two
+//! fallbacks. **The probes stay outside the prefix** and outside the version: an
+//! orchestrator's check is not part of the API's versioned surface, and all
+//! three compose healthchecks already ask for `/health/ready`.
 //!
 //! **The dependencies are named here, in a list, and that is the whole
 //! registry.** `ops` owns the report and the paths; this owns which databases
@@ -13,9 +14,11 @@ use axum::http::{Method, Uri};
 
 use crate::app::AppState;
 use crate::errors::{self, BoxedAppError};
+use crate::positions;
 
-pub(crate) fn build(state: AppState) -> Router {
+pub(crate) fn build(state: AppState, prefix: &str) -> Router {
     let (uptime, shutdown) = (state.uptime, state.shutdown.clone());
+    let positions = positions::routes().with_state(state.clone());
 
     ops::probe_router(uptime, shutdown, move || {
         let state = state.clone();
@@ -32,10 +35,21 @@ pub(crate) fn build(state: AppState) -> Router {
             vec![clickhouse, postgres]
         }
     })
+    .nest(&mount(prefix), positions)
     .fallback(not_found)
     // After the routes, because it sets a fallback on every `MethodRouter`
     // already registered — before them it would have none to set.
     .method_not_allowed_fallback(not_found)
+}
+
+/// Where the versioned routes hang. An empty prefix is a deployment asking for
+/// none, so they hang at `/v1` rather than at `//v1`.
+fn mount(prefix: &str) -> String {
+    if prefix.is_empty() {
+        "/v1".to_owned()
+    } else {
+        format!("/{prefix}/v1")
+    }
 }
 
 /// Both fallbacks, and that is the finding rather than a shortcut.

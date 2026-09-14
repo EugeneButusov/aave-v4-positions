@@ -8,8 +8,10 @@
 //! `async fn list` is E0038, and the compiler's own advice is to use the
 //! concrete type instead. A boxed future per page is the price of the seam.
 //!
-//! No `Send + Sync` supertraits until something holds one as state and needs
-//! them.
+//! `Send + Sync`, because `bins/api` now does hold one: axum's state is cloned
+//! into every request and moved across worker threads, so a store that is not
+//! both cannot be reached from a handler. The three Postgres ports have carried
+//! them since they were written; this one waited for a caller, and has one.
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
@@ -91,7 +93,7 @@ pub struct PositionPage {
 /// non-zero. A closed one keeps its row and its event count, and is filtered
 /// out by the implementation rather than deleted anywhere.
 #[async_trait]
-pub trait PositionStore {
+pub trait PositionStore: Send + Sync {
     /// One wallet's open positions, valued at one instant.
     async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error>;
 }

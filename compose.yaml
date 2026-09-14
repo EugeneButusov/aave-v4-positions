@@ -161,7 +161,10 @@ services:
   # both running; it takes `api`'s name and port at cutover, once apps/api is
   # deleted.
   #
-  # Serving probes only for now, which is the whole of what this image does.
+  # Serving the same one route, in this port's own spelling: every multi-word key
+  # is snake_case, `asOf` is `as_of`, and timestamps are RFC 3339 rather than
+  # JavaScript's fixed three decimal places. `docs/rust-migration.md` carries the
+  # rule and what the gate does about it.
   api-rust:
     build:
       context: .
@@ -189,10 +192,16 @@ services:
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
       POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
-      # Deliberately none of POSITIONS_CURSOR_SECRET, the staleness thresholds
-      # or the OTEL_* group: this process reads none of them yet, and setting a
-      # variable nothing honours is how a deployment comes to believe it is
-      # configured.
+      # **The same key as `api`**, and that is the point of the default being
+      # shared rather than a second one: while both services run, a cursor
+      # issued by either verifies against the other, which is the sharpest check
+      # there is that the two HMACs agree.
+      POSITIONS_CURSOR_SECRET: ${POSITIONS_CURSOR_SECRET:-local-development-cursor-secret-0000}
+      API_SYNC_STALE_AFTER_SECONDS: '60'
+      API_PRICE_STALE_AFTER_SECONDS: '300'
+      # Deliberately none of the OTEL_* group: this process reads none of them
+      # yet, and setting a variable nothing honours is how a deployment comes to
+      # believe it is configured.
     depends_on:
       clickhouse:
         condition: service_healthy

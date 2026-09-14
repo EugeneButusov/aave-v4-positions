@@ -539,31 +539,57 @@ sum of `Int256` deltas and a negative one is drift that §9 catches by seeing it
 
 **Gate, and it has to happen before anything is deleted:** both APIs pointed at the same ClickHouse
 and Postgres, and a replay harness issuing several hundred requests — every wallet in the fold, every
-page size, cursors walked to exhaustion, `asOf` pinned at fixed instants — **byte-comparing the
-JSON**. Diff the two OpenAPI documents too.
+page size, cursors walked to exhaustion, the valuation instant pinned at fixed values (`asOf` to one
+service, `as_of` to the other) — comparing the JSON under the one transform named below. Diff the two
+OpenAPI documents too.
 
-**Two keys are expected to differ, and the comparator has to be told rather than left to find them.**
-This port reads as Rust rather than as a transliteration, so the two multi-word keys it owns are
-snake_case:
+**One rule is expected to differ, and the comparator has to be told rather than left to find it.**
+This entry used to name two keys — `uptimeSeconds` and `statusCode` — and argue each was worth
+renaming because it read as Rust rather than as a transliteration. That reasoning does not stop at
+keys with no consumers, so it now covers the payload and the exception list collapses into one rule:
 
-| endpoint | TypeScript | here |
+> **Where the shape is this service's own, it is written the Rust way and the difference is recorded.
+> Where it is a number, a quantity or an identity, it is identical.**
+
+Four classes fall under it, and nothing else does.
+
+| class | TypeScript | here |
 | --- | --- | --- |
-| `GET /health/live` | `uptimeSeconds` | `uptime_seconds` |
-| any error body | `statusCode` | `status_code` |
+| every multi-word key | `suppliedShares`, `valuedAt`, `nextCursor`, `statusCode`, `uptimeSeconds` | `supplied_shares`, `valued_at`, `next_cursor`, `status_code`, `uptime_seconds` |
+| the one multi-word query parameter | `?asOf=` | `?as_of=` |
+| the three wire clocks | `2026-07-25T17:20:00.000Z` — three decimal places always, microseconds truncated | `2026-07-25T17:20:00Z` — RFC 3339 as `time` writes it, keeping the microseconds Postgres stored |
+| a validation failure's `message` | Zod's `prettifyError` — `✖ …\n  → at user` | this service's own text, in the same envelope, naming every bad parameter rather than the first |
 
-The first is free: it is the only multi-word key on the probe surface, so matching it meant a
-`serde(rename_all)` governing exactly one field, and it has no consumer — all three compose
-healthchecks and a Kubernetes probe request `/health/ready` and read only the status code, and
-nothing requests `/health/live` at all.
+Twenty-four payload keys change, and **this is a breaking change with a release note**, on the terms
+this entry already set for `statusCode` alone. `as_of` is the sharpest edge of it: a URL that works
+against the Node service is a `400` here rather than a field quietly renamed, because unrecognised
+query parameters are refused.
 
-The second is not free, and should be treated as a breaking change with a release note: error bodies
-are parsed by callers, and anything switching on `statusCode` stops seeing it. The status line still
-carries the code, which is what most clients actually read.
+**What the gate does about it.** It can no longer byte-compare a positions body, so it compares
+through **one total key transform** — camelCase to snake_case, applied to the TypeScript side, with
+no per-key exceptions. That the transform is total is itself the assertion: the two key sets must
+agree exactly under it, so a field that is missing, extra or misspelled still fails. Values and key
+*order* are compared exactly — the error envelope still emits `message`, then `error`, then the
+status, which is the order the running service uses and not the order its own DTO class declares.
+Timestamps are compared as instants; validation bodies on status and on which parameters they name.
 
-Everything else is matched exactly, field order included — the error envelope still emits `message`,
-then `error`, then the status, which is the order the running service uses and not the order its own
-DTO class declares. A gate that reports either of these two as drift is a gate that has not been told
-the truth; a gate that reports anything else has found something.
+What that costs is the "any difference is a finding" property, for those two classes only. It is why
+the exception list was meant to stay short, and the trade is being made deliberately rather than
+discovered.
+
+**The 500 body stays fixed text and is not the envelope**, which the plan for that PR had intended to
+change. It was finally measured — a `RENAME TABLE` under the running service, so the store threw
+rather than refused — and Nest answers `{"statusCode":500,"message":"Internal server error"}`: two
+keys, no `error`, the status first, and lower-case where the reason phrase is not. That is a *second*
+envelope, and `errors/json.rs` already argues against publishing two error shapes. So this one
+answers `Internal Server Error` as `text/plain`, which is crates.io's choice here and what
+`CatchPanicLayer` beside it was already doing. A comparator is told: any 5xx, compare the status and
+nothing else.
+
+**One difference is not on this list**, and it is worth saying so: addresses still go out lower-cased,
+where `Address`'s own `Display` is EIP-55 checksummed. The fold stores one spelling, the cursor
+payload signs it, and a consumer comparing `user` against a stored string is the common case — so
+this is the one place the type's idiom loses to the wire's.
 
 **Then capture that corpus as golden files and commit it.** Once `apps/api` is gone the oracle is
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the
@@ -588,8 +614,24 @@ types: a price is keyed by a `ReserveKey { spoke, reserve_id }` rather than by a
 `${spoke}:${id}` string, and labels are keyed by `Address` — so the lower-casing rule whose omission
 its store doc warns "every price silently stops joining" over has nothing left to omit.
 
-Left: `crates/telemetry`; and the route itself — DTOs, decimal scaling, cursor signing, validation,
-utoipa.
+Then the route. `GET /{prefix}/v1/chains/{chain_id}/users/{user}/positions`, which is what the four
+ports existed for and what nothing had called: `bins/api` linked none of them, and `aave-positions`
+was not even in `[workspace.dependencies]`. Six modules under `bins/api/src/positions` — what a
+caller may ask for, the HMAC over a resume point, base units to a decimal string, the wire shape, and
+the join that puts four reads and three clocks behind one response. `AppState` took the `Arc` its own
+doc had been promising since #47, `config` grew the four variables it had been predicting, and CI
+finally has something to point `cargo tree` at.
+
+Three things were measured rather than assumed, and two of them were wrong first. `U256::from_str`
+answers `Ok(0)` for the empty string, so a signed cursor whose reserve id went missing would have
+resumed from the start of the listing rather than refusing — the digits check that stops it was added
+because the case failed without it. `Address::from_str` strips an optional `0x`, so twenty bytes of
+bare hex resolve where the anchored regex refused them; pinned rather than guarded, since the answer
+is the same page. And a ceiling of a day on the staleness thresholds catches the price default in
+milliseconds and not the sync one, which the constant now says instead of claiming to be a units
+check.
+
+Left: `crates/telemetry`, and utoipa.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 

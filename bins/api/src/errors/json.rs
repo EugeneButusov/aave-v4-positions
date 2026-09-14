@@ -40,9 +40,12 @@ use super::{AppError, BoxedAppError};
 /// A failure the caller caused, carrying the status it deserves.
 ///
 /// **`String` where crates.io takes `impl Into<Cow<'static, str>>`**, because
-/// the borrowed half of that has no caller here: every message this service
-/// builds is formatted from the request. It goes back when a failure carries a
-/// constant instead, which is the first thing a 400 will do.
+/// the borrowed half of that has no caller worth the type. This used to predict
+/// that the first 400 would carry a constant and earn the `Cow` back. Six of the
+/// route's refusals name the parameter and quote what was sent, so they are
+/// formatted like every other message here; the two the cursor codec raises are
+/// constants, and they allocate once on a path that is already answering an
+/// error.
 pub(crate) fn custom(status: StatusCode, message: String) -> BoxedAppError {
     Box::new(CustomApiError { status, message })
 }

@@ -145,6 +145,33 @@ jobs:
               ;;
           esac
 
+      # `docs/rust-migration.md` makes each binary a boundary rather than an entry
+      # point, and says the third column of its table is asserted here. The rule
+      # is **no chain and no socket**, not "no alloy": `alloy-primitives` is an
+      # address and two integers, which `api` links through `aave-positions` and
+      # is meant to. What it may not link is a provider or an HTTP transport, and
+      # the four read stores it now holds are what finally gave this something to
+      # check.
+      - name: Each binary links only what its row allows
+        run: |
+          bad=0
+          forbid() {
+            local binary="$1"
+            shift
+            local linked
+            linked=$(cargo tree --package "$binary" --edges normal --prefix none --format '{p}' \
+              | awk '{print $1}' | sort -u)
+            for crate in "$@"; do
+              if grep -qxF "$crate" <<<"$linked"; then
+                echo "::error file=bins/$binary/Cargo.toml::$binary links $crate"
+                bad=1
+              fi
+            done
+          }
+          forbid api alloy-provider alloy-transport-http alloy-rpc-client alloy-pubsub
+          forbid migrate alloy-provider alloy-transport-http alloy-rpc-client alloy-pubsub axum
+          exit $bad
+
       - name: Format
         run: cargo fmt --all --check
 

@@ -103,6 +103,31 @@ impl<'a> Env<'a> {
         self.raw(key).unwrap_or(default).to_owned()
     }
 
+    /// A shared key, and the only reader here with no default.
+    ///
+    /// A default would be a key every deployment shares, and a shared key is
+    /// not a signature — so an absent one is a problem rather than a fallback,
+    /// and the empty string handed back is only there so the rest of the
+    /// variables still get read.
+    ///
+    /// **The value never reaches the message.** Every other reader quotes what
+    /// it was given, which is what makes a typo obvious; doing that here would
+    /// put a signing key into the logs of any deployment that mis-set it. The
+    /// length is the only thing reported, and it is bytes rather than
+    /// characters because that is what a key is measured in.
+    pub fn secret(&mut self, key: &str, minimum: usize) -> String {
+        let value = self.raw(key).unwrap_or_default().to_owned();
+
+        if value.len() < minimum {
+            let length = value.len();
+            self.reject(
+                key,
+                &format!("must be at least {minimum} bytes, got {length}"),
+            );
+        }
+        value
+    }
+
     /// As lenient as `z.url()`, deliberately.
     ///
     /// Zod validates with `new URL()`, and the `url` crate implements the same
@@ -334,6 +359,34 @@ mod tests {
             assert_eq!(flag, expected, "FLAG={spelling}");
             assert!(problems.is_empty(), "FLAG={spelling}: {problems:?}");
         }
+    }
+
+    #[test]
+    fn a_secret_has_no_default_and_an_absent_one_is_a_problem() {
+        let (secret, problems) = read(&[], |env| env.secret("SECRET", 32));
+
+        assert_eq!(secret, "", "usable enough for the remaining reads");
+        assert_eq!(problems, ["SECRET: must be at least 32 bytes, got 0"]);
+    }
+
+    #[test]
+    fn a_secret_never_appears_in_the_problem_it_causes() {
+        // Every other reader quotes the value it refused. This one is a signing
+        // key, and the refusal goes to the log of whatever mis-set it.
+        let problems = problems(&[("SECRET", "too-short-but-still-a-key")], |env| {
+            env.secret("SECRET", 32)
+        });
+
+        assert_eq!(problems, ["SECRET: must be at least 32 bytes, got 25"]);
+    }
+
+    #[test]
+    fn a_secret_at_the_minimum_is_long_enough() {
+        let key = "a".repeat(32);
+        let (secret, problems) = read(&[("SECRET", &key)], |env| env.secret("SECRET", 32));
+
+        assert_eq!(secret, key);
+        assert!(problems.is_empty(), "{problems:?}");
     }
 
     #[test]
