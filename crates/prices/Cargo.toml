@@ -1,0 +1,29 @@
+[package]
+name = "prices"
+description = "What Aave prices each reserve at, read back for the page that values with it"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
+async-trait = "0.1.92"
+postgres.workspace = true
+# The `Row` a query hands back and the error it refuses with. `with-time-0_3`
+# because `timestamptz` is read off one of those rows — a feature belongs to the
+# crate that needs it, not to whoever happens to own the dependency.
+tokio-postgres = { version = "0.7.18", features = ["with-time-0_3"] }
+thiserror = "2.0.19"
+# The moment a price was read, which reaches the wire as an ISO-8601 string.
+# `time` over `chrono` and `jiff` because it is the one already in this
+# workspace's graph — `refinery-core` and `bins/migrate` both name it — and the
+# driver maps `timestamptz` straight to it.
+time = "0.3.55"
+
+[dev-dependencies]
+migrations.workspace = true
+refinery-core = { version = "0.9.2", features = ["tokio-postgres"] }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true

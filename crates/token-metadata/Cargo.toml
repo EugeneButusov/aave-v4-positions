@@ -1,0 +1,31 @@
+[package]
+name = "token-metadata"
+description = "What an ERC-20 calls itself, read back for the page that shows it"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# `Address`, which is the map's key and the reason this crate needs no
+# lower-casing rule of its own — see `store`.
+alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
+# `async fn` in a trait is still not dyn compatible, and the composition root
+# wants a trait object. Same trade `aave-positions` documents.
+async-trait = "0.1.92"
+postgres.workspace = true
+# The `Row` a query hands back and the error it refuses with. Named here rather
+# than reached through `postgres`, which exports what its own signatures
+# mention and neither of these appears in one.
+tokio-postgres = "0.7.18"
+thiserror = "2.0.19"
+
+[dev-dependencies]
+# The schema `bins/migrate` applies, so a spec's database is the deployment's.
+migrations.workspace = true
+# Applies that corpus to a scratch schema. The migrator's own dependency, used
+# here for the same job rather than a second reading of it.
+refinery-core = { version = "0.9.2", features = ["tokio-postgres"] }
+tokio = { version = "1.53.1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true

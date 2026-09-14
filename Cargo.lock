@@ -1603,6 +1603,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "indexing"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "migrations",
+ "postgres",
+ "refinery-core",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2164,6 +2179,7 @@ dependencies = [
  "bytes",
  "fallible-iterator",
  "postgres-protocol",
+ "time",
 ]
 
 [[package]]
@@ -2188,6 +2204,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
+]
+
+[[package]]
+name = "prices"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "migrations",
+ "postgres",
+ "refinery-core",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-postgres",
 ]
 
 [[package]]
@@ -3006,6 +3037,20 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "token-metadata"
+version = "0.0.0"
+dependencies = [
+ "alloy-primitives",
+ "async-trait",
+ "migrations",
+ "postgres",
+ "refinery-core",
+ "thiserror",
+ "tokio",
+ "tokio-postgres",
+]
 
 [[package]]
 name = "tokio"

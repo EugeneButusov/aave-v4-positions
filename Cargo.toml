@@ -12,9 +12,12 @@ publish = false
 [workspace.dependencies]
 clickhouse-client = { path = "crates/clickhouse" }
 env = { path = "crates/env" }
+indexing = { path = "crates/indexing" }
 migrations = { path = "crates/migrations" }
 ops = { path = "crates/ops" }
 postgres = { path = "crates/postgres" }
+prices = { path = "crates/prices" }
+token-metadata = { path = "crates/token-metadata" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

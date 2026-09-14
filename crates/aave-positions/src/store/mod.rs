@@ -14,7 +14,7 @@
 
 mod clickhouse;
 #[cfg(test)]
-mod contract;
+mod conformance;
 mod error;
 #[cfg(test)]
 mod fixtures;

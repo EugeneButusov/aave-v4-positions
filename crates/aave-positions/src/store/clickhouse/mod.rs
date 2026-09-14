@@ -6,8 +6,8 @@
 //! from.
 //!
 //! The specs split the same way. What holds for every implementation is the
-//! port's, in `store::contract`; what is left here either drives a
-//! real server through this adapter's `Fixture` or asserts on a string this
+//! port's, in `store::conformance`; what is left here either drives a
+//! real server through this adapter's `Harness` or asserts on a string this
 //! module built.
 
 #[cfg(test)]

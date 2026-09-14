@@ -139,13 +139,34 @@ of them in one graph is not a compile error but a runtime found through the wron
 panicking on first use. `cargo tree --duplicates`, scoped to what members declare, is the check if it
 is ever wanted — unscoped it fires on `syn`, which proc macros duplicate quite legitimately.
 
-**A database crate owns its driver and re-exports it.** `clickhouse` is a dependency of
-`clickhouse-client` alone and `tokio-postgres` of `postgres` alone, because both appear in those
-crates' signatures — `client` returns a `clickhouse::Client`, `connect` a `tokio_postgres::Client` —
-and a caller that cannot name the return type has been handed half an API. That is the flaw refinery
-has: it takes an `OffsetDateTime` in `Migration::applied` and re-exports no `time`, so every backend
-picks its own version and hopes. Re-exporting instead means one dependency for the consumer and no
-version for the two of them to disagree about.
+**A crate exports the types its own signatures mention, and no more.** `build_pool` returns a
+`Pool`, `connection` a `Connection`, `ping` an `Error` — so `crates/postgres` exports those, plus the
+`Client` a `Connection` derefs to, because a caller that cannot name a return type has been handed
+half an API.
+
+**It does not re-export the driver.** That rule used to read the other way round, and the first
+adapter written against it showed why it was wrong. `tokio_postgres::Row` appears in none of
+`crates/postgres`'s signatures — it is what the *driver* hands back to whoever runs a query — so
+routing it through as `postgres::tokio_postgres::Row` isolates nobody from anything and leaves a
+crate documented as connection policy acting as a conduit for an entire vendor API. A store adapter
+names `tokio-postgres` itself, at a pinned version, exactly as it already names `serde`,
+`alloy-primitives` and `tokio`.
+
+The argument for re-exporting was refinery's flaw — it takes an `OffsetDateTime` in
+`Migration::applied` and re-exports no `time`, so every backend picks its own version and hopes. That
+is a *published crate's* problem, where consumers cannot coordinate. Here there is one workspace and
+one lock file, and a mismatch is loud rather than silent: `Connection` derefs to a `Client` whose
+`query` returns that driver's own `Row`, so two versions do not compile. Features follow the same
+line — `with-time-0_3` is declared by `prices` and `indexing`, which read a `timestamptz`, and not by
+whoever happens to own the dependency; removing it from either fails with `OffsetDateTime: FromSql`
+unsatisfied.
+
+**`clickhouse-client` has not been converted yet, and it is the same smell.** It re-exports
+`clickhouse` whole, and eight sites reach through it. The conversion is not identical — `clickhouse::Row`
+is a *derive macro*, so `aave-positions` and `bins/migrate` would name that crate directly whatever
+happens, while `Client` is in `build_client`'s signature and belongs behind an alias like this crate's.
+Its own PR, because it changes code that is already merged and this rule was only tested against
+Postgres.
 
 The single exception is `crates/clickhouse`, whose package is **`clickhouse-client`**. A member
 sharing a name with a dependency makes `cargo -p <name>` ambiguous
@@ -165,7 +186,7 @@ time:
 | binary    | links                                                                | **cannot** link                       |
 | --------- | -------------------------------------------------------------------- | ------------------------------------- |
 | `migrate` | `clickhouse-client`, `postgres`, `migrations`                        | `alloy`, `axum` — no chain, no socket |
-| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, `indexing`, the write paths |
+| `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, the write paths |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
 The third column will be asserted in CI with `cargo tree -i`, so reaching across fails the build
@@ -175,6 +196,15 @@ pass without proving anything. `api`'s row names those crates rather than `alloy
 `crates/aave-positions` links `alloy-primitives` for `U256` and `I256`: the prohibition is no chain
 and no socket, and integer types are neither — they are also what the Phase 3 decoders will hand
 over, so sharing them is what keeps a conversion out of the boundary.
+
+**`indexing` left that column, and the reason is the rule itself.** It was there as a stand-in for
+the chain client, since the crate was planned as "loop, ports + alloy adapters". But `api` links it
+for `SyncStatusStore` — the read-only view of the cursor row, whose own doc argues it is a separate
+port from `CursorStore` precisely because one process writes that row and another only reads it. Its
+whole dependency surface is a `B256` and Postgres. So the prohibition stays what it always was, no
+chain and no socket, and what follows from it is that the alloy adapters land *outside*
+`crates/indexing` when Phase 3 brings them — otherwise the read API grows an HTTP client it never
+calls and `cargo tree -i alloy-provider` says so.
 
 `migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
@@ -550,8 +580,16 @@ bodies were captured off the running TypeScript service rather than read from it
 is how the 503 turned out to be the report verbatim with no framework envelope — a shape no
 TypeScript test pins.
 
-Left: `crates/telemetry`; the read halves of `token-metadata` and `prices` plus `SyncStatusStore`; and
-the route itself — DTOs, decimal scaling, cursor signing, validation, utoipa.
+Then the three read dimensions the route joins: `crates/token-metadata` and `crates/prices` (read
+halves — `put`, the enrichment sweep and the oracle reader stay with Phases 3 and 4) and
+`crates/indexing`'s `SyncStatusStore`. Each is a port, one Postgres adapter and the port's specs as
+an executable contract, as #45 established. Two things the TypeScript needs discipline for became
+types: a price is keyed by a `ReserveKey { spoke, reserve_id }` rather than by a lower-cased
+`${spoke}:${id}` string, and labels are keyed by `Address` — so the lower-casing rule whose omission
+its store doc warns "every price silently stops joining" over has nothing left to omit.
+
+Left: `crates/telemetry`; and the route itself — DTOs, decimal scaling, cursor signing, validation,
+utoipa.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
