@@ -2,7 +2,7 @@
 //!
 //! Every implementation runs it. What the port cannot supply is the rows
 //! themselves — it is read-only until the enrichment processor arrives — so an
-//! implementation also supplies a [`Fixture`] saying how state gets in front of
+//! implementation also supplies a [`Harness`] saying how state gets in front of
 //! it.
 
 use std::collections::HashMap;
@@ -55,7 +55,7 @@ impl Stored {
     }
 }
 
-pub(crate) trait Fixture {
+pub(crate) trait Harness {
     type Store: TokenMetadataStore;
 
     /// A database of its own, named for the case, so cases can run at once.
@@ -66,53 +66,53 @@ pub(crate) trait Fixture {
     async fn given_labels(&self, rows: &[Stored]);
 }
 
-async fn labels_of<F: Fixture>(fixture: &F) -> HashMap<Address, TokenLabel> {
-    fixture
+async fn labels_of<H: Harness>(harness: &H) -> HashMap<Address, TokenLabel> {
+    harness
         .store()
         .labels(CHAIN_ID)
         .await
         .expect("the dimension should read")
 }
 
-pub(crate) async fn reads_every_label_on_the_chain<F: Fixture>() {
-    let fixture = F::fresh("reads_every_label_on_the_chain").await;
-    fixture
+pub(crate) async fn reads_every_label_on_the_chain<H: Harness>() {
+    let harness = H::fresh("reads_every_label_on_the_chain").await;
+    harness
         .given_labels(&[
             Stored::labelled(CHAIN_ID, USDC, "USDC"),
             Stored::labelled(CHAIN_ID, WETH, "WETH"),
         ])
         .await;
 
-    let labels = labels_of(&fixture).await;
+    let labels = labels_of(&harness).await;
 
     assert_eq!(labels.len(), 2);
     assert_eq!(labels[&USDC].symbol.as_deref(), Some("USDC"));
     assert_eq!(labels[&WETH].symbol.as_deref(), Some("WETH"));
 }
 
-pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<F: Fixture>() {
+pub(crate) async fn leaves_out_a_chain_it_was_not_asked_about<H: Harness>() {
     // The dimension is per chain, and the same token is listed on several.
-    let fixture = F::fresh("leaves_out_a_chain_it_was_not_asked_about").await;
-    fixture
+    let harness = H::fresh("leaves_out_a_chain_it_was_not_asked_about").await;
+    harness
         .given_labels(&[
             Stored::labelled(CHAIN_ID, USDC, "USDC"),
             Stored::labelled(OTHER_CHAIN, WETH, "ELSEWHERE"),
         ])
         .await;
 
-    let labels = labels_of(&fixture).await;
+    let labels = labels_of(&harness).await;
 
     assert_eq!(labels.len(), 1, "{labels:?}");
     assert!(labels.contains_key(&USDC));
 }
 
-pub(crate) async fn keeps_a_token_that_answered_with_no_symbol<F: Fixture>() {
+pub(crate) async fn keeps_a_token_that_answered_with_no_symbol<H: Harness>() {
     // The distinction the nullable columns exist for: this token was asked and
     // had nothing to say, which is not the same as never having been asked.
-    let fixture = F::fresh("keeps_a_token_that_answered_with_no_symbol").await;
-    fixture.given_labels(&[Stored::mute(CHAIN_ID, USDC)]).await;
+    let harness = H::fresh("keeps_a_token_that_answered_with_no_symbol").await;
+    harness.given_labels(&[Stored::mute(CHAIN_ID, USDC)]).await;
 
-    let labels = labels_of(&fixture).await;
+    let labels = labels_of(&harness).await;
 
     assert!(labels.contains_key(&USDC), "the row records the question");
     assert_eq!(
@@ -124,26 +124,26 @@ pub(crate) async fn keeps_a_token_that_answered_with_no_symbol<F: Fixture>() {
     );
 }
 
-pub(crate) async fn omits_a_token_with_no_row<F: Fixture>() {
+pub(crate) async fn omits_a_token_with_no_row<H: Harness>() {
     // The other half of that distinction, and the reason it is presence rather
     // than a null: this one is a gap for the sweep to fill.
-    let fixture = F::fresh("omits_a_token_with_no_row").await;
-    fixture
+    let harness = H::fresh("omits_a_token_with_no_row").await;
+    harness
         .given_labels(&[Stored::labelled(CHAIN_ID, USDC, "USDC")])
         .await;
 
-    let labels = labels_of(&fixture).await;
+    let labels = labels_of(&harness).await;
 
     assert!(!labels.contains_key(&UNASKED));
 }
 
-pub(crate) async fn answers_a_checksummed_address_from_a_lower_cased_row<F: Fixture>() {
+pub(crate) async fn answers_a_checksummed_address_from_a_lower_cased_row<H: Harness>() {
     // What the TypeScript needs `reserveKey`-style lower-casing discipline for.
     // The column is lower-cased — its `CHECK` allows nothing else — and this
     // key was parsed from the checksummed spelling a caller would hold. One
     // `Address`, one hash, no rule to forget.
-    let fixture = F::fresh("answers_a_checksummed_address_from_a_lower_cased_row").await;
-    fixture
+    let harness = H::fresh("answers_a_checksummed_address_from_a_lower_cased_row").await;
+    harness
         .given_labels(&[Stored::labelled(CHAIN_ID, USDC, "USDC")])
         .await;
 
@@ -152,13 +152,13 @@ pub(crate) async fn answers_a_checksummed_address_from_a_lower_cased_row<F: Fixt
         .expect("a checksummed address parses");
 
     assert_eq!(
-        labels_of(&fixture).await[&checksummed].symbol.as_deref(),
+        labels_of(&harness).await[&checksummed].symbol.as_deref(),
         Some("USDC")
     );
 }
 
-pub(crate) async fn is_empty_for_a_chain_nobody_has_enriched<F: Fixture>() {
-    let fixture = F::fresh("is_empty_for_a_chain_nobody_has_enriched").await;
+pub(crate) async fn is_empty_for_a_chain_nobody_has_enriched<H: Harness>() {
+    let harness = H::fresh("is_empty_for_a_chain_nobody_has_enriched").await;
 
-    assert!(labels_of(&fixture).await.is_empty());
+    assert!(labels_of(&harness).await.is_empty());
 }

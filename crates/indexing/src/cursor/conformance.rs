@@ -1,7 +1,7 @@
 //! The [`SyncStatusStore`] port as an executable specification.
 //!
 //! Every implementation runs it. The port is read-only — the loop that writes
-//! this row arrives in Phase 3 — so an implementation supplies a [`Fixture`]
+//! this row arrives in Phase 3 — so an implementation supplies a [`Harness`]
 //! saying how state gets in front of it.
 
 use alloy_primitives::{B256, b256};
@@ -41,7 +41,7 @@ impl Advanced {
     }
 }
 
-pub(crate) trait Fixture {
+pub(crate) trait Harness {
     type Store: SyncStatusStore;
 
     async fn fresh(case: &str) -> Self;
@@ -51,64 +51,64 @@ pub(crate) trait Fixture {
     async fn given_cursor(&self, rows: &[Advanced]);
 }
 
-async fn status_of<F: Fixture>(fixture: &F) -> Option<SyncStatus> {
-    fixture
+async fn status_of<H: Harness>(harness: &H) -> Option<SyncStatus> {
+    harness
         .store()
         .get(CHAIN_ID)
         .await
         .expect("the status should read")
 }
 
-pub(crate) async fn reads_the_position_the_indexer_left<F: Fixture>() {
-    let fixture = F::fresh("reads_the_position_the_indexer_left").await;
-    fixture
+pub(crate) async fn reads_the_position_the_indexer_left<H: Harness>() {
+    let harness = H::fresh("reads_the_position_the_indexer_left").await;
+    harness
         .given_cursor(&[Advanced::to(CHAIN_ID, 25_652_535)])
         .await;
 
-    let status = status_of(&fixture).await.expect("the chain is indexed");
+    let status = status_of(&harness).await.expect("the chain is indexed");
 
     assert_eq!(status.chain_id, CHAIN_ID);
     assert_eq!(status.last_block, 25_652_535);
     assert_eq!(status.last_hash, HEAD);
 }
 
-pub(crate) async fn answers_none_for_a_chain_never_indexed<F: Fixture>() {
+pub(crate) async fn answers_none_for_a_chain_never_indexed<H: Harness>() {
     // Which the read path turns into a 404 rather than an empty page: a chain
     // this deployment does not serve is a different claim from a wallet that
     // holds nothing.
-    let fixture = F::fresh("answers_none_for_a_chain_never_indexed").await;
+    let harness = H::fresh("answers_none_for_a_chain_never_indexed").await;
 
-    assert!(status_of(&fixture).await.is_none());
+    assert!(status_of(&harness).await.is_none());
 }
 
-pub(crate) async fn reads_only_the_chain_it_was_asked_about<F: Fixture>() {
-    let fixture = F::fresh("reads_only_the_chain_it_was_asked_about").await;
-    fixture
+pub(crate) async fn reads_only_the_chain_it_was_asked_about<H: Harness>() {
+    let harness = H::fresh("reads_only_the_chain_it_was_asked_about").await;
+    harness
         .given_cursor(&[Advanced::to(OTHER_CHAIN, 999)])
         .await;
 
-    assert!(status_of(&fixture).await.is_none(), "another chain's row");
+    assert!(status_of(&harness).await.is_none(), "another chain's row");
 }
 
-pub(crate) async fn ages_the_row_by_the_database_clock<F: Fixture>() {
-    let fixture = F::fresh("ages_the_row_by_the_database_clock").await;
-    fixture
+pub(crate) async fn ages_the_row_by_the_database_clock<H: Harness>() {
+    let harness = H::fresh("ages_the_row_by_the_database_clock").await;
+    harness
         .given_cursor(&[Advanced::aged(CHAIN_ID, 100, 90)])
         .await;
 
-    let age = status_of(&fixture).await.expect("indexed").age_seconds;
+    let age = status_of(&harness).await.expect("indexed").age_seconds;
 
     assert!((90..95).contains(&age), "{age}");
 }
 
-pub(crate) async fn reads_a_block_height_past_what_a_double_can_hold<F: Fixture>() {
+pub(crate) async fn reads_a_block_height_past_what_a_double_can_hold<H: Harness>() {
     // `bigint` holds it and a JSON number does not. Nothing reaches this height
     // today; the point is that the column's width is honoured rather than
     // narrowed on the way through.
     const HIGH: u64 = 9_007_199_254_740_993;
 
-    let fixture = F::fresh("reads_a_block_height_past_what_a_double_can_hold").await;
-    fixture.given_cursor(&[Advanced::to(CHAIN_ID, HIGH)]).await;
+    let harness = H::fresh("reads_a_block_height_past_what_a_double_can_hold").await;
+    harness.given_cursor(&[Advanced::to(CHAIN_ID, HIGH)]).await;
 
-    assert_eq!(status_of(&fixture).await.expect("indexed").last_block, HIGH);
+    assert_eq!(status_of(&harness).await.expect("indexed").last_block, HIGH);
 }

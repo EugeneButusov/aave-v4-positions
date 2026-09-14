@@ -10,14 +10,14 @@ use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::PostgresTokenMetadataStore;
-use crate::conformance::{Fixture, Stored};
+use crate::conformance::{Harness, Stored};
 
-pub(crate) struct PostgresFixture {
+pub(crate) struct PostgresHarness {
     pool: Pool,
     store: PostgresTokenMetadataStore,
 }
 
-impl Fixture for PostgresFixture {
+impl Harness for PostgresHarness {
     type Store = PostgresTokenMetadataStore;
 
     /// A schema per case, not per file. `cargo` runs these concurrently and

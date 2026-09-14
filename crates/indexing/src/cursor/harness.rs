@@ -9,14 +9,14 @@ use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use crate::cursor::PostgresSyncStatusStore;
-use crate::cursor::conformance::{Advanced, Fixture};
+use crate::cursor::conformance::{Advanced, Harness};
 
-pub(crate) struct PostgresFixture {
+pub(crate) struct PostgresHarness {
     pool: Pool,
     store: PostgresSyncStatusStore,
 }
 
-impl Fixture for PostgresFixture {
+impl Harness for PostgresHarness {
     type Store = PostgresSyncStatusStore;
 
     async fn fresh(case: &str) -> Self {

@@ -126,7 +126,7 @@ mod tests {
 
     use super::ClickHousePositionStore;
     use crate::store::clickhouse::harness::{append, index, migrated_database, store};
-    use crate::store::conformance::{Fixture, Held, Listed, position_store_conformance};
+    use crate::store::conformance::{Harness, Held, Listed, position_store_conformance};
     use crate::store::fixtures::{
         ALICE, At, FIVE_PERCENT, HUB, RAY, ROUTER, T0, add, add_asset, add_reserve, ask, borrow,
         draw, supplied_by, supply, update_asset, withdraw,
@@ -134,12 +134,12 @@ mod tests {
     use crate::store::{PositionQuery, PositionStore};
 
     /// This store, standing up its own database, as the conformance suite wants it.
-    struct ClickHouseFixture {
+    struct ClickHouseHarness {
         store: ClickHousePositionStore,
         client: Client,
     }
 
-    impl Fixture for ClickHouseFixture {
+    impl Harness for ClickHouseHarness {
         type Store = ClickHousePositionStore;
 
         async fn fresh(case: &str) -> Self {
@@ -235,7 +235,7 @@ mod tests {
         }
     }
 
-    position_store_conformance!(ClickHouseFixture);
+    position_store_conformance!(ClickHouseHarness);
 
     /// What the suite cannot ask for, because a [`Held`] has already lost
     /// it: the fold's own behaviour, observed through this store.
