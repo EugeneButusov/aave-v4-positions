@@ -11,12 +11,12 @@ use refinery_core::{Migration, Runner};
 use crate::PostgresReservePriceStore;
 use crate::conformance::{Fixture, Quoted};
 
-pub(crate) struct Postgres {
+pub(crate) struct PostgresFixture {
     pool: Pool,
     store: PostgresReservePriceStore,
 }
 
-impl Fixture for Postgres {
+impl Fixture for PostgresFixture {
     type Store = PostgresReservePriceStore;
 
     async fn fresh(case: &str) -> Self {

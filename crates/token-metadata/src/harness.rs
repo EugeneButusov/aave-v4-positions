@@ -12,12 +12,12 @@ use refinery_core::{Migration, Runner};
 use crate::PostgresTokenMetadataStore;
 use crate::conformance::{Fixture, Stored};
 
-pub(crate) struct Postgres {
+pub(crate) struct PostgresFixture {
     pool: Pool,
     store: PostgresTokenMetadataStore,
 }
 
-impl Fixture for Postgres {
+impl Fixture for PostgresFixture {
     type Store = PostgresTokenMetadataStore;
 
     /// A schema per case, not per file. `cargo` runs these concurrently and

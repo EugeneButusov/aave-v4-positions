@@ -84,14 +84,14 @@ mod tests {
     //! The port's specification, against a real Postgres.
 
     use crate::cursor::conformance;
-    use crate::cursor::harness::Postgres;
+    use crate::cursor::harness::PostgresFixture;
 
     macro_rules! conformance {
         ($($case:ident),* $(,)?) => {
             $(
                 #[tokio::test]
                 async fn $case() {
-                    conformance::$case::<Postgres>().await;
+                    conformance::$case::<PostgresFixture>().await;
                 }
             )*
         };
