@@ -24,9 +24,9 @@ use prices::{ReserveKey, ReservePrice};
 use token_metadata::TokenLabel;
 
 use super::cursor::Scope;
-use super::dto;
 use super::params::Listing;
 use super::scale::{self, ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
+use super::{Asset, Item, Page, Pricing, Progress, Value, instant, instant_at};
 use crate::app::App;
 use crate::errors::{self, BoxedAppError};
 
@@ -48,7 +48,7 @@ struct Usd {
 /// A 404 when this deployment has never indexed the chain, a 400 for a cursor
 /// that does not verify against this listing, and a 500 for anything the stores
 /// or the arithmetic refuse.
-pub(crate) async fn build(app: &App, listing: &Listing) -> Result<dto::Page, BoxedAppError> {
+pub(crate) async fn build(app: &App, listing: &Listing) -> Result<Page, BoxedAppError> {
     // Read first, and fail here rather than after a query that would answer "no
     // positions" for a chain this deployment does not follow.
     let Some(sync) = app.sync.get(listing.chain_id).await? else {
@@ -105,15 +105,15 @@ pub(crate) async fn build(app: &App, listing: &Listing) -> Result<dto::Page, Box
         .map(|position| item(position, &labels, &prices))
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(dto::Page {
-        sync: dto::Progress {
+    Ok(Page {
+        sync: Progress {
             last_block: sync.last_block,
             last_block_hash: sync.last_hash.to_string(),
-            updated_at: dto::instant(sync.updated_at)?,
+            updated_at: instant(sync.updated_at)?,
             age_seconds: sync.age_seconds,
             stale: sync.age_seconds > app.staleness.sync,
         },
-        valued_at: dto::instant_at(page.valued_at)?,
+        valued_at: instant_at(page.valued_at)?,
         pricing: pricing(&page.items, &prices, app.staleness.price)?,
         items,
         next_cursor: page.next.map(|key| app.cursors.encode(&scope, &key)),
@@ -135,7 +135,7 @@ fn pricing(
     positions: &[Position],
     prices: &Prices,
     stale_after: u64,
-) -> Result<Option<dto::Pricing>, BoxedAppError> {
+) -> Result<Option<Pricing>, BoxedAppError> {
     let oldest = positions
         .iter()
         .filter_map(|position| price_for(position, prices))
@@ -149,8 +149,8 @@ fn pricing(
 
     oldest
         .map(|price| {
-            Ok(dto::Pricing {
-                updated_at: dto::instant(price.priced_at)?,
+            Ok(Pricing {
+                updated_at: instant(price.priced_at)?,
                 age_seconds: price.age_seconds,
                 stale: price.age_seconds > stale_after,
             })
@@ -172,11 +172,7 @@ fn price_for<'a>(position: &Position, prices: &'a Prices) -> Option<&'a ReserveP
     })
 }
 
-fn item(
-    position: &Position,
-    labels: &Labels,
-    prices: &Prices,
-) -> Result<dto::Position, BoxedAppError> {
+fn item(position: &Position, labels: &Labels, prices: &Prices) -> Result<Item, BoxedAppError> {
     // **The asset is what carries the scale**, so without it the share fields
     // cannot be rendered — an unscaled integer in a field the contract calls
     // decimal is not a degraded answer, it is a wrong one by up to eighteen
@@ -192,7 +188,7 @@ fn item(
         .map(|((asset, value), price)| usd(asset, value, price))
         .transpose()?;
 
-    Ok(dto::Position {
+    Ok(Item {
         chain_id: position.chain_id,
         user: format!("{:#x}", position.user),
         spoke: format!("{:#x}", position.spoke),
@@ -215,7 +211,7 @@ fn item(
             // the sweep knows what to do.
             let label = labels.get(&asset.underlying);
 
-            dto::Asset {
+            Asset {
                 asset_id: asset.asset_id.to_string(),
                 hub: format!("{:#x}", asset.hub),
                 underlying: format!("{:#x}", asset.underlying),
@@ -228,7 +224,7 @@ fn item(
             .value
             .as_ref()
             .zip(decimals)
-            .map(|(value, decimals)| dto::Value {
+            .map(|(value, decimals)| Value {
                 supplied_amount: scale::unsigned(value.supplied_amount, decimals),
                 drawn_debt: scale::unsigned(value.drawn_debt, decimals),
                 premium_debt: scale::unsigned(value.premium_debt, decimals),
