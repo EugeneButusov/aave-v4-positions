@@ -21,6 +21,7 @@ mod cursor;
 mod list;
 mod params;
 mod scale;
+mod wire;
 
 pub(crate) use cursor::{MIN_SECRET_BYTES, Signer};
 pub(crate) use list::routes;
