@@ -158,3 +158,34 @@ jobs:
       # so a codegen or link fault would otherwise reach main.
       - name: Build
         run: cargo build --workspace --release
+
+  # Its own job for the reason `rust` is one: a failure names itself. It also
+  # needs none of what that job does — no databases, no toolchain warm-up, no
+  # compilation — so living there would hang a thirty-second check on a
+  # fifteen-minute budget.
+  #
+  # **It is the one job that can fail without anybody changing this repository.**
+  # The advisory database is fetched at run time, so a crate going unmaintained
+  # or a CVE landing turns main red on the next push. That is what it is for; the
+  # alternative is learning about it from somewhere else.
+  deny:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # A prebuilt binary rather than `EmbarkStudios/cargo-deny-action`, which
+      # carries a Rust version of its own — 1.85 by default, against a workspace
+      # that declares 1.96. This way `rust-toolchain.toml` stays the only place a
+      # toolchain is named, exactly as in the job above.
+      #
+      # Pinned to the version `deny.toml` was written and measured against. The
+      # check does not go stale with it: the advisory database is fetched fresh
+      # on every run.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Advisories, licences, bans and sources
+        run: cargo deny check
