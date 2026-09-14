@@ -1,0 +1,90 @@
+# What the dependency tree is allowed to contain.
+#
+# `cargo deny` answers three questions nothing else here does: whether a crate
+# carries an advisory, whether its licence is one this deployment may ship, and
+# whether it came from somewhere other than crates.io. The workspace had none of
+# those checks; `cargo tree --duplicates` was the only one the notes ever
+# mentioned, and it was mentioned as "the check if it is ever wanted".
+#
+# **It is not where the binary boundary lives, and cannot be.** That rule is per
+# binary — `axum` is required in `api` and forbidden in `migrate` — and a ban
+# here applies to the whole graph, so it would have to pick one answer for both.
+# `scripts/binary-boundaries.sh` reads `cargo tree` per binary instead.
+
+[graph]
+# **The workspace's own features, not every transitive crate's**, which is worth
+# saying because the difference is visible: `ruint` carries an optional
+# `fastrlp`, which is MPL-2.0 and is the only copyleft crate `cargo metadata`
+# will show you — and it never enters this graph, because nothing here enables
+# that feature. `cargo deny list` is the authority on what is actually weighed.
+#
+# Measured: the licence set is identical either way today, because no member
+# declares an optional feature. This is what stops that being silently untrue
+# the day one does.
+all-features = true
+
+[advisories]
+# A yanked version is one its author withdrew. Denying it is what turns "the
+# lockfile drifted onto a bad release" into a build failure rather than a line
+# in a log nobody reads.
+yanked = "deny"
+
+ignore = [
+  # `paste`, archived by its author with no successor. It reaches this tree
+  # twice — through `alloy-primitives` and, via `polonius-the-crab`, through
+  # `clickhouse` — so there is nothing here to drop and no version to move to.
+  #
+  # It is a **proc macro**, which is why this is an ignore rather than a
+  # problem: it runs at compile time and none of it is linked into either
+  # binary. The advisory is unmaintained-status, not a vulnerability.
+  { id = "RUSTSEC-2024-0436", reason = "proc macro, unmaintained rather than vulnerable, reached only through alloy-primitives and clickhouse" },
+]
+
+[licenses]
+# **Four, and each one was removed in turn to check it does work.** Removing
+# `MIT` rejects 40 crates, `Unicode-3.0` 19, `Apache-2.0` and `BSD-3-Clause` one
+# each. Nothing else is needed, because an `OR` expression is satisfied by its
+# first allowed branch: this tree also carries `Apache-2.0 WITH LLVM-exception`,
+# `BSL-1.0`, `Unlicense`, `Zlib` and `LGPL-2.1-or-later`, and every crate
+# offering one of them offers `MIT` or `Apache-2.0` beside it.
+#
+# So they are absent rather than listed, and the list is a *permission grant*
+# rather than an inventory. An entry nobody needs is invisible — adding
+# `GPL-3.0` here changes nothing and fails nothing, which is exactly why the day
+# a GPL-only crate arrives it would sail through.
+#
+# The cost is that a dependency bump which drops a crate's `OR MIT` branch fails
+# CI. That is the intended shape: the failure names the crate and the licence,
+# and the fix is one line here with a reason beside it.
+allow = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "MIT",
+  "Unicode-3.0",
+]
+
+# The eleven workspace members, which carry no `license` field. They are
+# `publish = false`, and the notes give the reason for the neighbouring absence:
+# a field nobody publishes is a field nobody maintains.
+private = { ignore = true }
+
+[bans]
+# **A warning, not a gate**, and the reason is measured rather than assumed.
+# Four crates are duplicated today — `cpufeatures`, `getrandom`, `syn` and
+# `wasi` — and every one is a proc-macro or platform shim duplicated quite
+# legitimately inside somebody else's tree. Denying that would buy a list of
+# skips that rots, to catch nothing.
+multiple-versions = "warn"
+
+# The case that does bite, and the one the migration notes name: two `tokio`s
+# are not a compile error. They are a runtime found through the wrong
+# thread-local, panicking on first use.
+[[bans.deny]]
+crate = "tokio"
+deny-multiple-versions = true
+
+[sources]
+# Everything comes from crates.io. A git dependency or a second registry
+# appearing should be a decision somebody made, not a line in a lockfile.
+unknown-registry = "deny"
+unknown-git = "deny"
