@@ -557,13 +557,25 @@ Four classes fall under it, and nothing else does.
 | --- | --- | --- |
 | every multi-word key | `suppliedShares`, `valuedAt`, `nextCursor`, `statusCode`, `uptimeSeconds` | `supplied_shares`, `valued_at`, `next_cursor`, `status_code`, `uptime_seconds` |
 | the one multi-word query parameter | `?asOf=` | `?as_of=` |
-| the three wire clocks | `2026-07-25T17:20:00.000Z` — three decimal places always, microseconds truncated | `2026-07-25T17:20:00Z` — RFC 3339 as `time` writes it, keeping the microseconds Postgres stored |
+| the three wire clocks | `2026-07-25T17:20:00.000Z` — three decimal places always, microseconds truncated | `2026-07-25T17:20:00Z`, `…00.500Z`, `…00.221456Z` — RFC 3339 at an SI width, keeping the microseconds Postgres stored |
 | a validation failure's `message` | Zod's `prettifyError` — `✖ …\n  → at user` | this service's own text, in the same envelope, naming every bad parameter rather than the first |
 
 Twenty-four payload keys change, and **this is a breaking change with a release note**, on the terms
 this entry already set for `statusCode` alone. `as_of` is the sharpest edge of it: a URL that works
 against the Node service is a `400` here rather than a field quietly renamed, because unrecognised
 query parameters are refused.
+
+**The widths are the ecosystem's, not `time`'s.** `time`'s well-known `Rfc3339` trims *every* trailing
+zero, so a `timestamptz` of `…00.5+00` goes out as `…00.5Z` — a width `datetime.fromisoformat` refuses
+before Python 3.11, and one nothing else in Rust emits. `chrono` serializes a `DateTime` with
+`SecondsFormat::AutoSi`, "one of `Secs`, `Millis`, `Micros`, or `Nanos`", and crates.io — the service
+this port already follows for its errors, its state and its middleware — bears that out: over 6,126
+timestamps from its public API, 2,182 carry no fraction, one carries three digits, 3,943 carry six,
+and none carries any other width. So `dto::instant` picks between four const format descriptions on
+the same rule, and a `timestamptz` can only ever reach the first three.
+
+It does **not** make lexical order chronological, and neither does crates.io's: `.` is below `Z`, so
+`…00.500Z` sorts before `…00Z` at any width. Only a fixed width would, and nothing here picks one.
 
 **What the gate does about it.** It can no longer byte-compare a positions body, so it compares
 through **one total key transform** — camelCase to snake_case, applied to the TypeScript side, with

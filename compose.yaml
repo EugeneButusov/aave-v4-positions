@@ -162,9 +162,9 @@ services:
   # deleted.
   #
   # Serving the same one route, in this port's own spelling: every multi-word key
-  # is snake_case, `asOf` is `as_of`, and timestamps are RFC 3339 rather than
-  # JavaScript's fixed three decimal places. `docs/rust-migration.md` carries the
-  # rule and what the gate does about it.
+  # is snake_case, `asOf` is `as_of`, and a timestamp carries the fractional
+  # digits it has rather than JavaScript's fixed three.
+  # `docs/rust-migration.md` carries the rule and what the gate does about it.
   api-rust:
     build:
       context: .

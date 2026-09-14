@@ -47,9 +47,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 # signal.
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "sync"] }
 # The `timestamptz` the two Postgres reads hand over, and the three wire clocks
-# it becomes. `formatting` is not a default feature and is the whole reason this
-# is declared here rather than inherited: `Rfc3339` lives behind it.
-time = { version = "0.3.55", features = ["formatting"] }
+# it becomes. Neither feature is a default and both are why this is declared here
+# rather than inherited: `formatting` carries `format`, and `macros` the four
+# const format descriptions `dto` picks between.
+time = { version = "0.3.55", features = ["formatting", "macros"] }
 # `ServiceBuilder`, so the two request-id layers are ordered where a reader can
 # see it rather than by the direction `Router::layer` happens to compose.
 tower = { version = "0.5.3", features = ["util"] }
