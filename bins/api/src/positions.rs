@@ -687,8 +687,16 @@ mod tests {
         )
         .await;
 
+        // The whole body, because the demotion to a 400 and the `invalid page
+        // cursor:` prefix are this layer's — `cursor` only says `Signature`.
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(body.contains("does not match this listing"), "{body}");
+        assert_eq!(
+            body,
+            concat!(
+                r#"{"message":"invalid page cursor: signature does not match this listing","#,
+                r#""error":"Bad Request","status_code":400}"#
+            )
+        );
     }
 
     #[tokio::test]

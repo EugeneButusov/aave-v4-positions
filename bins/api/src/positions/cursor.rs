@@ -14,6 +14,8 @@
 //! rejected by the next. The TypeScript service computes the same tag, so while
 //! both run either accepts the other's.
 
+use std::fmt;
+
 use aave_positions::store::PositionKey;
 use alloy_primitives::{Address, U256};
 use base64::Engine as _;
@@ -22,8 +24,6 @@ use hmac::digest::InvalidLength;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq as _;
-
-use crate::errors::{self, BoxedAppError};
 
 type Keyed = Hmac<Sha256>;
 
@@ -85,40 +85,30 @@ impl Cursors {
     ///
     /// # Errors
     ///
-    /// A 400 in every case: the caller's input is wrong, not this service.
-    /// Raised where it is detected, so a genuine fault here is still a 500.
-    pub(crate) fn decode(
-        &self,
-        encoded: &str,
-        scope: &Scope,
-    ) -> Result<PositionKey, BoxedAppError> {
-        let (body, tag) = encoded
-            .split_once('.')
-            .ok_or_else(|| invalid("expected a payload and a tag"))?;
+    /// [`Invalid`], which says what was wrong with the cursor and nothing about
+    /// what a caller should be told — that belongs to whoever is speaking HTTP.
+    pub(crate) fn decode(&self, encoded: &str, scope: &Scope) -> Result<PositionKey, Invalid> {
+        let (body, tag) = encoded.split_once('.').ok_or(Invalid::Shape)?;
         if tag.contains('.') {
-            return Err(invalid("expected a payload and a tag"));
+            return Err(Invalid::Shape);
         }
 
         let payload = URL_SAFE_NO_PAD
             .decode(body)
             .ok()
             .and_then(|bytes| String::from_utf8(bytes).ok())
-            .ok_or_else(|| invalid("the payload is not base64url text"))?;
+            .ok_or(Invalid::Payload)?;
 
         // Constant time, and `subtle` answers `false` for a length mismatch
         // rather than panicking. `==` returns on the first differing byte.
         if !bool::from(self.tag(scope, &payload).as_bytes().ct_eq(tag.as_bytes())) {
-            return Err(invalid("signature does not match this listing"));
+            return Err(Invalid::Signature);
         }
 
-        let (spoke, reserve_id) = payload
-            .split_once(SEP)
-            .ok_or_else(|| invalid("expected a Spoke and a reserve id"))?;
+        let (spoke, reserve_id) = payload.split_once(SEP).ok_or(Invalid::Fields)?;
 
         Ok(PositionKey {
-            spoke: spoke
-                .parse()
-                .map_err(|_| invalid("the Spoke is not an address"))?,
+            spoke: spoke.parse().map_err(|_| Invalid::Spoke)?,
             reserve_id: decimal(reserve_id)?,
         })
     }
@@ -168,25 +158,49 @@ fn payload(key: &PositionKey) -> String {
 /// **`U256::from_str` is not this check**: measured, it answers `Ok(0)` for the
 /// empty string and reads `0x` as hex — so a missing id would resume from the
 /// start of the listing rather than refuse.
-fn decimal(value: &str) -> Result<U256, BoxedAppError> {
+fn decimal(value: &str) -> Result<U256, Invalid> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid("the reserve id is not a number"));
+        return Err(Invalid::ReserveId);
     }
 
-    U256::from_str_radix(value, 10).map_err(|_| invalid("the reserve id does not fit uint256"))
+    U256::from_str_radix(value, 10).map_err(|_| Invalid::TooLarge)
 }
 
-/// Named, so every refusal reads the same and none of them is a 500.
-fn invalid(reason: &str) -> BoxedAppError {
-    errors::bad_request(format!("invalid page cursor: {reason}"))
+/// What a cursor can be wrong about.
+///
+/// **Deliberately not a `std::error::Error`.** `errors`' blanket impl turns any
+/// of those into a logged 500, and every variant here is the caller's input
+/// being wrong — so a `?` that skipped the mapping would answer an operator page
+/// over a query parameter. Without the impl it does not compile, and whoever
+/// holds the HTTP vocabulary has to say what it means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Invalid {
+    Shape,
+    Payload,
+    Signature,
+    Fields,
+    Spoke,
+    ReserveId,
+    TooLarge,
+}
+
+impl fmt::Display for Invalid {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str(match self {
+            Self::Shape => "expected a payload and a tag",
+            Self::Payload => "the payload is not base64url text",
+            Self::Signature => "signature does not match this listing",
+            Self::Fields => "expected a Spoke and a reserve id",
+            Self::Spoke => "the Spoke is not an address",
+            Self::ReserveId => "the reserve id is not a number",
+            Self::TooLarge => "the reserve id does not fit uint256",
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::http::StatusCode;
-
     use super::*;
-    use crate::test_support::answered;
 
     const SECRET: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -233,7 +247,7 @@ mod tests {
         format!("{}.{tag}", URL_SAFE_NO_PAD.encode(payload))
     }
 
-    fn refusal(encoded: &str, scope: &Scope) -> BoxedAppError {
+    fn refusal(encoded: &str, scope: &Scope) -> Invalid {
         cursors(SECRET)
             .decode(encoded, scope)
             .expect_err("expected a refusal")
@@ -376,23 +390,18 @@ mod tests {
         assert_eq!(cursors.decode(&signed, &scope()).ok(), Some(key()));
     }
 
-    #[tokio::test]
-    async fn is_a_400_that_says_which_listing_refused_it() {
-        // A 500 here is an operator woken over a query parameter.
+    #[test]
+    fn says_which_of_the_seven_things_was_wrong() {
+        // What a caller is told is the route's to decide; what happened is this
+        // module's, and a refusal that only said "no" would be untestable here.
         let issued = cursors(SECRET).encode(&scope(), &key());
-        let (status, body) = answered(refusal(&issued, &all_spokes())).await;
 
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(refusal(&issued, &all_spokes()), Invalid::Signature);
+        assert_eq!(refusal("not-one-of-ours", &scope()), Invalid::Shape);
+        assert_eq!(refusal("oh hello.and again", &scope()), Invalid::Payload);
         assert_eq!(
-            body,
-            r#"{"message":"invalid page cursor: signature does not match this listing","error":"Bad Request","status_code":400}"#
+            Invalid::Signature.to_string(),
+            "signature does not match this listing"
         );
-    }
-
-    #[tokio::test]
-    async fn is_a_400_for_something_that_was_never_a_cursor() {
-        let (status, _) = answered(refusal("not-one-of-ours", &scope())).await;
-
-        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

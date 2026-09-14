@@ -66,7 +66,14 @@ pub(crate) async fn build(app: &App, listing: &Listing) -> Result<Page, BoxedApp
         after: listing
             .cursor
             .as_deref()
-            .map(|cursor| app.cursors.decode(cursor, &scope))
+            // **The codec says what was wrong; this says what it costs.** It
+            // knows nothing of statuses, so the demotion to a 400 happens here,
+            // where the answer is already an HTTP one.
+            .map(|cursor| {
+                app.cursors.decode(cursor, &scope).map_err(|invalid| {
+                    errors::bad_request(format!("invalid page cursor: {invalid}"))
+                })
+            })
             .transpose()?,
         as_of: listing.as_of,
     };
