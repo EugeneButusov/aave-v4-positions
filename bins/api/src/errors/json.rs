@@ -23,10 +23,11 @@
 //!
 //! **That third key is `status_code` where the TypeScript says `statusCode`**,
 //! the same deliberate deviation the probe surface makes and for the same
-//! reason — this port reads as Rust rather than as a transliteration. Unlike the
-//! probes, this one is parsed by callers, so it is the kind of change that goes
-//! in the release note rather than passing unnoticed. `docs/rust-migration.md`
-//! names both keys as the differential's only expected differences.
+//! reason — this port reads as Rust rather than as a transliteration. This used
+//! to be one of two such keys; it is now one instance of the rule
+//! `docs/rust-migration.md` states for the whole wire, which the positions
+//! payload's twenty-four made unavoidable. Callers parse error bodies, so it
+//! goes in that rule's release note rather than passing unnoticed.
 
 use std::fmt;
 
