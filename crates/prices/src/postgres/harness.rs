@@ -1,29 +1,29 @@
 //! A migrated schema, a store over it, and the rows put into it.
 //!
-//! **The write path is reproduced here rather than imported**: `CursorStore`,
-//! which owns it, arrives with the loop in Phase 3. It is one `INSERT`, and the
-//! column list is the migration's.
+//! **The write path is reproduced here rather than imported**: the refresher
+//! that owns `put` belongs to Phase 4. It is one `INSERT`, and the column list
+//! is the migration's.
 
-use alloy_primitives::B256;
+use alloy_primitives::Address;
 use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
-use crate::cursor::PostgresSyncStatusStore;
-use crate::cursor::conformance::{Advanced, Harness};
+use super::PostgresReservePriceStore;
+use crate::conformance::{Harness, Quoted};
 
 pub(crate) struct PostgresHarness {
     pool: Pool,
-    store: PostgresSyncStatusStore,
+    store: PostgresReservePriceStore,
 }
 
 impl Harness for PostgresHarness {
-    type Store = PostgresSyncStatusStore;
+    type Store = PostgresReservePriceStore;
 
     async fn fresh(case: &str) -> Self {
-        let pool = scratch("rust_indexing", case).await;
+        let pool = scratch("rust_prices", case).await;
 
         Self {
-            store: PostgresSyncStatusStore::new(pool.clone()),
+            store: PostgresReservePriceStore::new(pool.clone()),
             pool,
         }
     }
@@ -32,27 +32,24 @@ impl Harness for PostgresHarness {
         &self.store
     }
 
-    async fn given_cursor(&self, rows: &[Advanced]) {
+    async fn given_prices(&self, rows: &[Quoted]) {
         let client = connection(&self.pool).await.unwrap();
 
         for row in rows {
             client
                 .execute(
-                    // `updated_at` relative to the server's own clock, never
-                    // this process's — the same rule the read computes
-                    // `age_seconds` under.
-                    "INSERT INTO indexer_cursor \
-                     (chain_id, last_block, last_hash, updated_at) \
-                     VALUES ($1, $2, $3, \
-                             now() - make_interval(secs => $4::double precision))",
+                    // `priced_at` is written relative to the server's own
+                    // clock, never this process's — the same rule the read
+                    // computes `age_seconds` under.
+                    "INSERT INTO reserve_prices \
+                     (chain_id, spoke, reserve_id, price, priced_at) \
+                     VALUES ($1, $2, $3::text::numeric, $4::text::numeric, \
+                             now() - make_interval(secs => $5::double precision))",
                     &[
                         &i64::from(row.chain_id),
-                        #[expect(
-                            clippy::cast_possible_wrap,
-                            reason = "a block height, which `bigint` is signed and blocks are not"
-                        )]
-                        &(row.last_block as i64),
-                        &lower(row.last_hash),
+                        &lower(row.spoke),
+                        &row.reserve_id.to_string(),
+                        &row.price,
                         #[expect(
                             clippy::cast_precision_loss,
                             reason = "a test's staleness window, in whole seconds under a minute"
@@ -66,7 +63,9 @@ impl Harness for PostgresHarness {
     }
 }
 
-/// A schema per case, so cases can run at once.
+/// A schema per case, so cases can run at once. Shared with the other stores'
+/// harnesses in shape but not in code — each names its own prefix, and a crate
+/// that exported this would be a test-support crate nothing else wants yet.
 async fn scratch(prefix: &str, case: &str) -> Pool {
     let base = std::env::var("POSTGRES_URL")
         .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
@@ -101,7 +100,7 @@ async fn scratch(prefix: &str, case: &str) -> Pool {
     pool
 }
 
-/// The spelling the table's `CHECK (last_hash ~ '^0x[0-9a-f]{64}$')` demands.
-fn lower(hash: B256) -> String {
-    format!("{hash:#x}")
+/// The spelling the table's `CHECK (spoke ~ '^0x[0-9a-f]{40}$')` demands.
+fn lower(address: Address) -> String {
+    format!("{address:#x}")
 }

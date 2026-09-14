@@ -9,7 +9,7 @@ use alloy_primitives::Address;
 use postgres::{Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
-use crate::PostgresTokenMetadataStore;
+use super::PostgresTokenMetadataStore;
 use crate::conformance::{Harness, Stored};
 
 pub(crate) struct PostgresHarness {

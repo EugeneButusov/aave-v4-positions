@@ -1,4 +1,8 @@
 //! The row that says how far the indexer has got.
+//!
+//! **The port is this level; the adapter is a directory down.** `postgres` is
+//! the one implementation, and the harness that stands a scenario up for it
+//! lives with it rather than beside the port it is proving.
 
 mod error;
 mod postgres;
@@ -7,8 +11,6 @@ mod sync_status_store;
 
 #[cfg(test)]
 mod conformance;
-#[cfg(test)]
-mod harness;
 
 pub use error::Error;
 pub use postgres::PostgresSyncStatusStore;

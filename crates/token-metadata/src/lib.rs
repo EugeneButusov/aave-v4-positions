@@ -9,6 +9,10 @@
 //! enrichment processor, which is Phase 3's; nothing in this workspace writes a
 //! label yet, and a method with no caller is a surface with no test behind it.
 //! The trait gains it when the processor arrives.
+//!
+//! **The port is this level; the adapter is a directory down.** `postgres` is
+//! the one implementation, and the harness that stands a scenario up for it
+//! lives with it rather than beside the port it is proving.
 
 mod error;
 mod label;
@@ -17,8 +21,6 @@ mod store;
 
 #[cfg(test)]
 mod conformance;
-#[cfg(test)]
-mod harness;
 
 pub use error::Error;
 pub use label::TokenLabel;
