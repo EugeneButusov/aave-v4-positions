@@ -25,7 +25,7 @@ use prices::ReservePriceStore;
 use token_metadata::TokenMetadataStore;
 
 use crate::config::Staleness;
-use crate::positions::Cursors;
+use crate::positions::Signer;
 use crate::{middleware, positions, router};
 
 /// The live resources, built once at boot and read for the process's life.
@@ -45,7 +45,8 @@ pub(crate) struct App {
     pub(crate) prices: Arc<dyn ReservePriceStore>,
     pub(crate) sync: Arc<dyn SyncStatusStore>,
 
-    pub(crate) cursors: Cursors,
+    /// The key page cursors are signed with.
+    pub(crate) signer: Signer,
     pub(crate) staleness: Staleness,
 
     /// Read once here rather than carried into every handler: it decides where

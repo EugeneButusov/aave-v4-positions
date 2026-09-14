@@ -70,7 +70,7 @@ pub(crate) async fn build(app: &App, listing: &Listing) -> Result<Page, BoxedApp
             // knows nothing of statuses, so the demotion to a 400 happens here,
             // where the answer is already an HTTP one.
             .map(|cursor| {
-                app.cursors.decode(cursor, &scope).map_err(|invalid| {
+                app.signer.decode(cursor, &scope).map_err(|invalid| {
                     errors::bad_request(format!("invalid page cursor: {invalid}"))
                 })
             })
@@ -114,7 +114,7 @@ pub(crate) async fn build(app: &App, listing: &Listing) -> Result<Page, BoxedApp
         valued_at: instant_at(page.valued_at)?,
         pricing: pricing(&page.items, &prices, app.staleness.price)?,
         items,
-        next_cursor: page.next.map(|key| app.cursors.encode(&scope, &key)),
+        next_cursor: page.next.map(|key| app.signer.encode(&scope, &key)),
     })
 }
 

@@ -41,7 +41,7 @@ use time::OffsetDateTime;
 use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
 
-pub(crate) use cursor::{Cursors, MIN_SECRET_BYTES};
+pub(crate) use cursor::{MIN_SECRET_BYTES, Signer};
 
 use crate::app::AppState;
 use crate::errors::BoxedAppError;

@@ -33,7 +33,7 @@ use tower::ServiceExt;
 use crate::app::{self as app, App};
 use crate::config::Staleness;
 use crate::errors::BoxedAppError;
-use crate::positions::Cursors;
+use crate::positions::Signer;
 
 /// Thirty-two bytes, which is the minimum `config` enforces.
 pub(crate) const SECRET: &str = "a-test-key-that-is-long-enough!!";
@@ -141,7 +141,7 @@ impl Stores {
                 reads: Arc::clone(&self.price_reads),
             }),
             sync: Arc::new(Synced(self.sync)),
-            cursors: Cursors::new(SECRET).expect("HMAC takes a key of any length"),
+            signer: Signer::new(SECRET).expect("HMAC takes a key of any length"),
             staleness: self.staleness,
             prefix: "api".to_owned(),
         }

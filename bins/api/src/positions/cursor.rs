@@ -55,13 +55,13 @@ pub(crate) struct Scope {
 }
 
 /// Signs and verifies page cursors for this deployment.
-pub(crate) struct Cursors {
+pub(crate) struct Signer {
     /// Keyed once at boot and cloned per use. `Hmac` is `Clone`, and the key
     /// schedule is the half worth not repeating.
     keyed: Keyed,
 }
 
-impl Cursors {
+impl Signer {
     /// # Errors
     ///
     /// [`InvalidLength`], which HMAC never produces — RFC 2104 takes a key of
@@ -114,7 +114,7 @@ impl Cursors {
     }
 
     /// Signs a payload this service would never build, through the real
-    /// [`Cursors::tag`], so a case can prove what a valid tag over one does.
+    /// [`Signer::tag`], so a case can prove what a valid tag over one does.
     #[cfg(test)]
     fn sign(&self, scope: &Scope, payload: &str) -> String {
         format!(
@@ -213,8 +213,8 @@ mod tests {
         hex.parse().expect("a literal address")
     }
 
-    fn cursors(secret: &str) -> Cursors {
-        Cursors::new(secret).expect("HMAC takes a key of any length")
+    fn signer(secret: &str) -> Signer {
+        Signer::new(secret).expect("HMAC takes a key of any length")
     }
 
     fn scope() -> Scope {
@@ -248,35 +248,35 @@ mod tests {
     }
 
     fn refusal(encoded: &str, scope: &Scope) -> Invalid {
-        cursors(SECRET)
+        signer(SECRET)
             .decode(encoded, scope)
             .expect_err("expected a refusal")
     }
 
     #[test]
     fn round_trips_the_resume_point_it_was_built_from() {
-        let cursors = cursors(SECRET);
-        let encoded = cursors.encode(&scope(), &key());
+        let signer = signer(SECRET);
+        let encoded = signer.encode(&scope(), &key());
 
-        assert_eq!(cursors.decode(&encoded, &scope()).ok(), Some(key()));
+        assert_eq!(signer.decode(&encoded, &scope()).ok(), Some(key()));
     }
 
     #[test]
     fn carries_the_spoke_so_an_all_spokes_walk_knows_where_it_stopped() {
         // Without it, a resume point restarts at whichever Spoke sorts first.
-        let cursors = cursors(SECRET);
+        let signer = signer(SECRET);
         let key = PositionKey {
             spoke: address(OTHER_SPOKE),
             reserve_id: U256::from(3),
         };
-        let encoded = cursors.encode(&all_spokes(), &key);
+        let encoded = signer.encode(&all_spokes(), &key);
 
-        assert_eq!(cursors.decode(&encoded, &all_spokes()).ok(), Some(key));
+        assert_eq!(signer.decode(&encoded, &all_spokes()).ok(), Some(key));
     }
 
     #[test]
     fn stays_url_safe_so_it_needs_no_escaping_in_a_query_string() {
-        let encoded = cursors(SECRET).encode(&scope(), &key());
+        let encoded = signer(SECRET).encode(&scope(), &key());
 
         assert_eq!(encoded.matches('.').count(), 1, "{encoded}");
         assert!(
@@ -290,31 +290,31 @@ mod tests {
     #[test]
     fn refuses_a_payload_edited_under_a_tag_we_issued() {
         // Unsigned, this is a valid resume point somewhere nobody was sent.
-        let issued = cursors(SECRET).encode(&scope(), &key());
+        let issued = signer(SECRET).encode(&scope(), &key());
         let edited = tamper(&issued, &format!("{SPOKE}|9999"));
 
-        assert!(cursors(SECRET).decode(&edited, &scope()).is_err());
+        assert!(signer(SECRET).decode(&edited, &scope()).is_err());
     }
 
     #[test]
     fn refuses_a_cursor_signed_with_a_different_key() {
-        let forged = cursors("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").encode(&scope(), &key());
+        let forged = signer("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").encode(&scope(), &key());
 
-        assert!(cursors(SECRET).decode(&forged, &scope()).is_err());
+        assert!(signer(SECRET).decode(&forged, &scope()).is_err());
     }
 
     #[test]
     fn refuses_a_cursor_replayed_against_another_wallets_listing() {
         // The hole a bare signature leaves: genuinely ours, wrong listing.
-        let issued = cursors(SECRET).encode(&scope(), &key());
+        let issued = signer(SECRET).encode(&scope(), &key());
         let bob = Scope {
             user: address(BOB),
             ..scope()
         };
 
-        assert!(cursors(SECRET).decode(&issued, &bob).is_err());
+        assert!(signer(SECRET).decode(&issued, &bob).is_err());
         assert_eq!(
-            cursors(SECRET).decode(&issued, &scope()).ok(),
+            signer(SECRET).decode(&issued, &scope()).ok(),
             Some(key()),
             "and still valid for the listing it was issued for"
         );
@@ -324,17 +324,17 @@ mod tests {
     fn refuses_an_all_spokes_cursor_on_a_single_spoke_listing_and_the_reverse() {
         // Both directions: the sentinel only has to be wrong one way for this
         // to pass by accident, and nothing downstream would notice.
-        let cursors = cursors(SECRET);
-        let broad = cursors.encode(&all_spokes(), &key());
-        let narrow = cursors.encode(&scope(), &key());
+        let signer = signer(SECRET);
+        let broad = signer.encode(&all_spokes(), &key());
+        let narrow = signer.encode(&scope(), &key());
 
-        assert!(cursors.decode(&broad, &scope()).is_err());
-        assert!(cursors.decode(&narrow, &all_spokes()).is_err());
+        assert!(signer.decode(&broad, &scope()).is_err());
+        assert!(signer.decode(&narrow, &all_spokes()).is_err());
     }
 
     #[test]
     fn refuses_a_cursor_from_another_chain_or_another_spoke() {
-        let cursors = cursors(SECRET);
+        let signer = signer(SECRET);
 
         for elsewhere in [
             Scope {
@@ -346,9 +346,9 @@ mod tests {
                 ..scope()
             },
         ] {
-            let encoded = cursors.encode(&elsewhere, &key());
+            let encoded = signer.encode(&elsewhere, &key());
 
-            assert!(cursors.decode(&encoded, &scope()).is_err(), "{encoded}");
+            assert!(signer.decode(&encoded, &scope()).is_err(), "{encoded}");
         }
     }
 
@@ -356,7 +356,7 @@ mod tests {
     fn refuses_what_is_not_shaped_like_a_cursor_at_all() {
         for encoded in ["aGVsbG8", "a.b.c", "oh hello.and again", ""] {
             assert!(
-                cursors(SECRET).decode(encoded, &scope()).is_err(),
+                signer(SECRET).decode(encoded, &scope()).is_err(),
                 "{encoded:?}"
             );
         }
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn refuses_a_payload_that_is_correctly_signed_and_still_not_a_key() {
         // Reachable only through a bug here, since a caller cannot sign one.
-        let cursors = cursors(SECRET);
+        let signer = signer(SECRET);
 
         for payload in [
             format!("{SPOKE}|13; DROP"),
@@ -374,9 +374,9 @@ mod tests {
             "|13".to_owned(),
             format!("{SPOKE}13"),
         ] {
-            let signed = cursors.sign(&scope(), &payload);
+            let signed = signer.sign(&scope(), &payload);
 
-            assert!(cursors.decode(&signed, &scope()).is_err(), "{payload:?}");
+            assert!(signer.decode(&signed, &scope()).is_err(), "{payload:?}");
         }
     }
 
@@ -384,17 +384,17 @@ mod tests {
     fn takes_a_checksummed_spoke_that_we_signed_because_the_type_is_the_check() {
         // Where this parts company with the lower-case regex it replaces:
         // `Address` is case-insensitive, so the same twenty bytes come back.
-        let cursors = cursors(SECRET);
-        let signed = cursors.sign(&scope(), &format!("{}|13", SPOKE.to_uppercase()));
+        let signer = signer(SECRET);
+        let signed = signer.sign(&scope(), &format!("{}|13", SPOKE.to_uppercase()));
 
-        assert_eq!(cursors.decode(&signed, &scope()).ok(), Some(key()));
+        assert_eq!(signer.decode(&signed, &scope()).ok(), Some(key()));
     }
 
     #[test]
     fn says_which_of_the_seven_things_was_wrong() {
         // What a caller is told is the route's to decide; what happened is this
         // module's, and a refusal that only said "no" would be untestable here.
-        let issued = cursors(SECRET).encode(&scope(), &key());
+        let issued = signer(SECRET).encode(&scope(), &key());
 
         assert_eq!(refusal(&issued, &all_spokes()), Invalid::Signature);
         assert_eq!(refusal("not-one-of-ours", &scope()), Invalid::Shape);

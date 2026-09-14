@@ -36,7 +36,7 @@ use token_metadata::PostgresTokenMetadataStore;
 
 use app::App;
 use config::Config;
-use positions::Cursors;
+use positions::Signer;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -86,7 +86,7 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
         tokens: Arc::new(PostgresTokenMetadataStore::new(postgres.clone())),
         prices: Arc::new(PostgresReservePriceStore::new(postgres.clone())),
         sync: Arc::new(PostgresSyncStatusStore::new(postgres.clone())),
-        cursors: Cursors::new(&config.cursor_secret)?,
+        signer: Signer::new(&config.cursor_secret)?,
         staleness: config.staleness,
         prefix: config.prefix,
         clickhouse,
