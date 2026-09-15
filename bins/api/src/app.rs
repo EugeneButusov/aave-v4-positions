@@ -40,10 +40,14 @@ pub(crate) struct App {
     /// **Four ports, four trait objects**, so a case can put a double in front
     /// of the handler without a database. A boxed future per call is the cost,
     /// which `PositionStore`'s own doc measures and accepts.
-    pub(crate) positions: Arc<dyn PositionStore>,
-    pub(crate) tokens: Arc<dyn TokenMetadataStore>,
-    pub(crate) prices: Arc<dyn ReservePriceStore>,
-    pub(crate) sync: Arc<dyn SyncStatusStore>,
+    ///
+    /// `Box`, not `Arc`: the sharing is one level up, on [`AppState`], and each
+    /// of these is reached through `&self` and cloned by nobody. An `Arc` here
+    /// would be a second refcount that never leaves one.
+    pub(crate) positions: Box<dyn PositionStore>,
+    pub(crate) tokens: Box<dyn TokenMetadataStore>,
+    pub(crate) prices: Box<dyn ReservePriceStore>,
+    pub(crate) sync: Box<dyn SyncStatusStore>,
 
     /// The key page cursors are signed with.
     pub(crate) signer: Signer,

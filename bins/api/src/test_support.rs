@@ -134,13 +134,13 @@ impl Stores {
             shutdown: ShutdownFlag::new(),
             clickhouse: clickhouse(),
             postgres,
-            positions: Arc::new(Positions(self.page)),
-            tokens: Arc::new(Labels(self.labels)),
-            prices: Arc::new(Prices {
+            positions: Box::new(Positions(self.page)),
+            tokens: Box::new(Labels(self.labels)),
+            prices: Box::new(Prices {
                 latest: self.prices,
                 reads: Arc::clone(&self.price_reads),
             }),
-            sync: Arc::new(Synced(self.sync)),
+            sync: Box::new(Synced(self.sync)),
             signer: Signer::new(SECRET).expect("HMAC takes a key of any length"),
             staleness: self.staleness,
             prefix: "api".to_owned(),

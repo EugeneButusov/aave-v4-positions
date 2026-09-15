@@ -21,7 +21,7 @@ token-metadata.workspace = true
 # through `aave-positions`; naming it here is what lets this crate spell the
 # types in its own signatures.
 alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
-# The four ports are held as `Arc<dyn _>`, which `async fn` in a trait still
+# The four ports are held as `Box<dyn _>`, which `async fn` in a trait still
 # cannot be. Also what the test doubles in here implement.
 async-trait = "0.1.92"
 axum = "0.8.9"

@@ -26,7 +26,6 @@ mod test_support;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use aave_positions::store::ClickHousePositionStore;
 use indexing::PostgresSyncStatusStore;
@@ -82,10 +81,10 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
-        positions: Arc::new(ClickHousePositionStore::new(clickhouse.clone())),
-        tokens: Arc::new(PostgresTokenMetadataStore::new(postgres.clone())),
-        prices: Arc::new(PostgresReservePriceStore::new(postgres.clone())),
-        sync: Arc::new(PostgresSyncStatusStore::new(postgres.clone())),
+        positions: Box::new(ClickHousePositionStore::new(clickhouse.clone())),
+        tokens: Box::new(PostgresTokenMetadataStore::new(postgres.clone())),
+        prices: Box::new(PostgresReservePriceStore::new(postgres.clone())),
+        sync: Box::new(PostgresSyncStatusStore::new(postgres.clone())),
         signer: Signer::new(&config.cursor_secret)?,
         staleness: config.staleness,
         prefix: config.prefix,

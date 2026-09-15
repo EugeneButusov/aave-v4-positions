@@ -1,12 +1,13 @@
 //! The port: what a read asks for, what it gets back, and the one method
 //! between them.
 //!
-//! `bins/api` will hold this as `Arc<dyn PositionStore>` rather than a generic,
-//! so the composition root reads like the module graph it replaces — which is
-//! why it carries `#[async_trait]`. `async fn` in a trait is stable and still
-//! not dyn compatible: measured on 1.96, `Arc<dyn PositionStore>` over a plain
-//! `async fn list` is E0038, and the compiler's own advice is to use the
-//! concrete type instead. A boxed future per page is the price of the seam.
+//! `bins/api` holds this as a `Box<dyn PositionStore>` rather than a generic, so
+//! the composition root reads like the module graph it replaces — which is why
+//! it carries `#[async_trait]`. `async fn` in a trait is stable and still
+//! not dyn compatible: measured on 1.96, `dyn PositionStore` over a plain
+//! `async fn list` is E0038 whatever pointer holds it, and the compiler's own
+//! advice is to use the concrete type instead. A boxed future per page is the
+//! price of the seam.
 //!
 //! `Send + Sync`, because `bins/api` now does hold one: axum's state is cloned
 //! into every request and moved across worker threads, so a store that is not
