@@ -7,7 +7,7 @@
 //! underneath all three, `error` is what they refuse with, and `fixtures` is
 //! the vectors `asset` and `position` both build on.
 //!
-//! This file holds the wiring and the one constant they are all scaled in.
+//! This file holds the wiring and the units they are all scaled in.
 
 mod asset;
 mod error;
@@ -33,3 +33,43 @@ pub(crate) use position::PositionShares;
 /// `MathUtils`. It is the protocol's unit, and here it is the unit of
 /// [`AssetState::checkpoint_index`] and [`AssetState::drawn_rate`].
 const RAY: U256 = uint!(1_000_000_000_000_000_000_000_000_000_U256);
+
+/// How many of a ray's digits are fractional: the protocol's unit as an
+/// exponent, which is the form a caller rendering one needs.
+/// `ray_is_ten_to_its_decimals` holds it to the value this module divides by.
+pub const RAY_DECIMALS: u8 = 27;
+
+/// `WadRayMath.WAD_DECIMALS`, which [`to_value`] normalises an amount to.
+pub const WAD_DECIMALS: u8 = 18;
+
+/// `SpokeUtils.ORACLE_DECIMALS`, and what `Spoke`'s constructor requires of an
+/// oracle.
+pub const ORACLE_DECIMALS: u8 = 8;
+
+/// How many digits of a [`to_value`] result are fractional.
+///
+/// Derived rather than written: it is an amount at [`WAD_DECIMALS`] times a
+/// price at [`ORACLE_DECIMALS`], which is what makes `1e26` one dollar (§7.1).
+pub const VALUE_DECIMALS: u8 = WAD_DECIMALS + ORACLE_DECIMALS;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ray_is_ten_to_its_decimals() {
+        // The two spellings of one protocol constant, held to each other: a
+        // caller scaling by the exponent and this module dividing by the value
+        // must mean the same thing.
+        assert_eq!(
+            U256::from(10).pow(U256::from(RAY_DECIMALS)),
+            RAY,
+            "RAY_DECIMALS and RAY disagree"
+        );
+    }
+
+    #[test]
+    fn a_value_is_an_amount_times_a_price() {
+        assert_eq!(VALUE_DECIMALS, 26);
+    }
+}

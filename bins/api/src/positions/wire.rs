@@ -16,7 +16,9 @@
 use std::collections::HashMap;
 
 use aave_positions::store::{Position, PositionAsset};
-use aave_positions::valuation::{Valuation, to_value};
+use aave_positions::valuation::{
+    ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS, Valuation, to_value,
+};
 use alloy_primitives::{Address, I256};
 use prices::{ReserveKey, ReservePrice};
 use serde::Serialize;
@@ -25,7 +27,7 @@ use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
 use token_metadata::TokenLabel;
 
-use super::scale::{self, ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
+use super::scale;
 use crate::errors::BoxedAppError;
 
 /// One wallet's positions, valued at one instant.

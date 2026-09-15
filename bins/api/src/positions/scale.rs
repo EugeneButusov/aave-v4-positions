@@ -2,9 +2,9 @@
 //!
 //! The store hands back `U256` and `I256` (§7.5), so the wire format is decided
 //! here and nowhere else. Four scales meet on one page and none is the same
-//! twice: the asset's decimals, eight for an oracle answer, twenty-six for a
-//! `Value`, twenty-seven for a ray. The wrong pairing is out by ten orders of
-//! magnitude with nothing to notice.
+//! twice: the asset's own decimals, and the three
+//! [`aave_positions::valuation`] declares. The wrong pairing is out by ten
+//! orders of magnitude with nothing to notice.
 //!
 //! **Digits are sliced, never divided.** `value as f64 / 10f64.powi(n)` loses
 //! everything past 2^53, and share balances pass that routinely — a real `Repay`
@@ -14,18 +14,6 @@
 //! Postgres: `"112"` rather than `"112.00000000"`, and `"0"` for zero.
 
 use alloy_primitives::{I256, U256};
-
-/// How many digits of a ray are fractional. A fixed 27 rather than
-/// asset-derived: an index is a ratio, so its scale is the protocol's.
-pub(crate) const RAY_DECIMALS: u8 = 27;
-
-/// `IAaveOracleV4.decimals()`, and §7.4's `ORACLE_DECIMALS`.
-pub(crate) const ORACLE_DECIMALS: u8 = 8;
-
-/// How many digits of a protocol `Value` are fractional. §7.1 computes where
-/// `1e26` is one dollar — an 18-decimal amount times an 8-decimal price — so
-/// dividing by it here loses no digit on either side.
-pub(crate) const VALUE_DECIMALS: u8 = 26;
 
 /// An unsigned quantity, with `decimals` of its digits fractional.
 pub(crate) fn unsigned(value: U256, decimals: u8) -> String {
@@ -76,6 +64,7 @@ fn place(mut digits: String, decimals: u8) -> String {
 
 #[cfg(test)]
 mod tests {
+    use aave_positions::valuation::{ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
     use alloy_primitives::uint;
 
     use super::*;
