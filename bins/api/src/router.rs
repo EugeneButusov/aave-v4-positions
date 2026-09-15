@@ -105,6 +105,17 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn the_versioned_routes_are_not_reachable_without_the_prefix() {
+        let (status, _) = refused(
+            "GET",
+            "/v1/chains/1/users/0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8/positions",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
     #[test]
     fn mounts_the_versioned_routes_under_the_prefix_and_nowhere_else() {
         // `mount` on its own, which is the one piece of prefix arithmetic.
