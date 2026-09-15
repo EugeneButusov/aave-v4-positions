@@ -1,65 +1,67 @@
 //! Everything a request can reach, in one struct.
 //!
-//! The shape is [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/lib.rs): an `App`
-//! holding the live resources, an `AppState` newtype the router carries, and a
-//! `handler` that composes state, routes and middleware in that order. Three
-//! separable steps, and the reason to adopt it before the positions endpoint
-//! rather than after is that the endpoint then lands *into* a structure instead
-//! of forcing one.
+//! Three separable steps: an `App` holding the live resources, an `AppState`
+//! newtype the router carries, and a `handler` composing state, routes and
+//! middleware in that order.
 //!
-//! **It is handed its dependencies rather than making them**, and each has its
-//! own reason. The [`ShutdownFlag`] has two holders — the readiness handler and the
-//! future `with_graceful_shutdown` waits on — so one made in here could never be
-//! flipped by the other. [`Uptime`] is read at the top of `main`, because
-//! started here it would begin counting after the config and both clients. The
-//! clients could be built from a [`crate::config::Config`] and are not, because
-//! each is about to have a second consumer: the position store takes the
-//! ClickHouse client, the read stores take the pool, and a constructor that made
-//! them would have to make those too — at which point it is the composition root
-//! rather than a description of what is served.
+//! **It is handed its dependencies rather than making them.** The
+//! [`ShutdownFlag`] has two holders — the readiness handler and the future
+//! `with_graceful_shutdown` waits on — so one made here could never be flipped
+//! by the other. [`Uptime`] is read at the top of `main`, or it would start
+//! counting after the config and both clients. The clients are passed in because
+//! each has a second consumer: the position store takes the ClickHouse client,
+//! the three read stores take the pool.
 
+use std::sync::Arc;
+
+use aave_positions::store::PositionStore;
 use axum::Router;
 use clickhouse_client::clickhouse::Client;
+use indexing::SyncStatusStore;
 use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
+use prices::ReservePriceStore;
+use token_metadata::TokenMetadataStore;
 
-use crate::{middleware, router};
+use crate::config::Staleness;
+use crate::positions::Signer;
+use crate::{middleware, positions, probes, router};
 
 /// The live resources, built once at boot and read for the process's life.
-#[derive(Clone)]
 pub(crate) struct App {
     pub(crate) uptime: Uptime,
     pub(crate) shutdown: ShutdownFlag,
+
+    /// Held for the readiness probe, and to build the position store from.
     pub(crate) clickhouse: Client,
     pub(crate) postgres: Pool,
+
+    /// **Four ports, four trait objects**, so a case can put a double in front
+    /// of the handler without a database. A boxed future per call is the cost,
+    /// which `PositionStore`'s own doc measures and accepts.
+    pub(crate) positions: Box<dyn PositionStore>,
+    pub(crate) tokens: Box<dyn TokenMetadataStore>,
+    pub(crate) prices: Box<dyn ReservePriceStore>,
+    pub(crate) sync: Box<dyn SyncStatusStore>,
+
+    /// The key page cursors are signed with.
+    pub(crate) signer: Signer,
+    pub(crate) staleness: Staleness,
+
+    /// Read once here rather than carried into every handler: it decides where
+    /// the router mounts, and nothing below the router asks about it.
+    pub(crate) prefix: String,
 }
 
-/// What the router carries, and what a handler will extract once one wants it.
+/// What the router carries, and what every handler extracts.
 ///
-/// **No `Arc`, while nothing needs one.** Cloning this clones the resources,
-/// and one of them is not free: `clickhouse::Client` shares its transport but
-/// deep-copies its url, database, auth, roles, settings and headers. The only
-/// path that clones per request is the readiness probe, which an orchestrator
-/// runs every few seconds — so the cost is a rounding error and the indirection
-/// would be speculative.
+/// The `Arc` is here rather than on the fields: a request clones this, and an
+/// `App` carrying `Box<dyn Trait>` cannot be `Clone`.
 ///
-/// It stops being a rounding error when a route serves real traffic and clones
-/// this per request. Wrapping the field in an `Arc` at that point is a one-line
-/// change here and invisible everywhere else, which is the reason to wait
-/// rather than the reason to hurry.
-///
-/// **crates.io does hold an `Arc` here, and the difference is not taste.** Its
-/// `App` cannot be cloned at all — it carries a `HashMap<String, Box<dyn
-/// OidcKeyStore>>` among eleven fields, and `Box<dyn Trait>` has no `Clone` — so
-/// the indirection is the only way to share it. Ours is four fields that all
-/// clone, and the expensive one is expensive by a constant rather than by
-/// design. Same shape, different arithmetic.
-///
-/// A newtype rather than a bare `App` because it is where crates.io hangs
-/// `FromRequestParts` and `FromRef`. Those derives wait for a handler that takes
-/// state as an argument; the probes reach it through a closure.
+/// A newtype rather than a bare `Arc<App>`, because `State<_>` needs a type
+/// this crate owns.
 #[derive(Clone)]
-pub(crate) struct AppState(pub(crate) App);
+pub(crate) struct AppState(pub(crate) Arc<App>);
 
 impl std::ops::Deref for AppState {
     type Target = App;
@@ -70,8 +72,21 @@ impl std::ops::Deref for AppState {
 }
 
 /// State, then routes, then everything wrapped around them.
+///
+/// **This is where the surface is decided, and the only place.** Which paths
+/// exist, what they hang under and which dependencies a probe answers for are
+/// one decision — what this process *is* — so they sit beside the resources
+/// above rather than in [`crate::router`], which names nothing this service does.
 pub(crate) fn handler(app: App) -> Router {
-    let state = AppState(app);
+    let mount = router::mount(&app.prefix);
+    let state = AppState(Arc::new(app));
 
-    middleware::apply(router::build(state))
+    // The probes take no prefix and no version: a readiness check is not part
+    // of the API's versioned surface, and all three compose healthchecks ask
+    // for `/health/ready`.
+    let served = Router::new()
+        .merge(probes::routes(state.clone()))
+        .nest(&mount, positions::routes().with_state(state));
+
+    middleware::apply(router::refuse_unmatched(served))
 }

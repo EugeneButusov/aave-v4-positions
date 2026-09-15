@@ -1,0 +1,44 @@
+//! What a page looks like on the wire, and how a folded position becomes one.
+//!
+//! [`page`] is what wraps the positions and the two clocks beside them,
+//! [`item`](mod@item) is one position, and [`instant`](mod@instant) is how any
+//! of their timestamps is spelled. Each holds the shapes it owns and the
+//! conversion that builds them.
+//!
+//! Four rules govern all six types. **No `rename_all` anywhere** — every
+//! multi-word key is snake_case. **They mirror the domain rather than reuse
+//! it**, which is why the wire item is `Item` and not `Position`: the domain may
+//! gain a field, the contract may not. **Every number is a decimal string**,
+//! scaled by `aave_positions::scale`. **Null means unknown, never zero** —
+//! §7.4's oracle reverts rather than answer one, so a zero could not be told
+//! from a real one. Field order is declaration order.
+
+mod instant;
+mod item;
+mod page;
+
+use std::collections::HashMap;
+
+use aave_positions::store::Position;
+use prices::{ReserveKey, ReservePrice};
+
+pub(crate) use instant::{instant, instant_at};
+pub(crate) use item::item;
+pub(crate) use page::{Page, Progress, pricing};
+
+/// Prices, keyed as the store hands them back.
+pub(crate) type Prices = HashMap<ReserveKey, ReservePrice>;
+
+/// The price this position would be valued with, if there is one.
+///
+/// Gated on `value` as well as `asset`: with nothing to price, a price is not
+/// "used" and must not drag the page's clock backwards.
+fn price_for<'a>(position: &Position, prices: &'a Prices) -> Option<&'a ReservePrice> {
+    position.asset.as_ref()?;
+    position.value.as_ref()?;
+
+    prices.get(&ReserveKey {
+        spoke: position.spoke,
+        reserve_id: position.reserve_id,
+    })
+}

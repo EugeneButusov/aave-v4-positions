@@ -1,32 +1,17 @@
 //! The failures that answer with a JSON body, and what that body looks like.
 //!
-//! Separate from its parent for the reason
-//! [crates.io](https://github.com/rust-lang/crates.io/blob/main/src/util/errors/json.rs)
-//! separates it: the two halves change for different reasons. The wire shape
-//! below moves when the contract the callers parse moves, which is a release
-//! note; the trait beside it moves when this service grows a new way to fail,
-//! which nobody outside can see.
+//! Separate from its parent because the two halves change for different
+//! reasons: the wire shape below moves when the contract callers parse moves,
+//! which is a release note, and the trait beside it moves when this service
+//! grows a new way to fail, which nobody outside can see.
 //!
-//! **The envelope is Nest's, deliberately.** `api-error.dto.ts` explains why it
-//! is not a custom one: the default filter already produces this shape for every
-//! `HttpException` in the application, "including the ones Nest raises itself for
-//! an unknown route — inventing a different one would mean either catching those
-//! too or publishing a contract with two error shapes in it". crates.io's own
-//! envelope is `{"errors":[{"detail":…}]}`, which is the registry API's
-//! convention and not ours to borrow — the module is the thing worth taking,
-//! not the JSON in it.
+//! **One envelope for every refusal**, including the ones the framework raises
+//! for an unknown route — a second shape would mean either catching those too
+//! or publishing a contract with two of them.
 //!
-//! **The field order is measured**, and it is not the order the DTO class
-//! declares: the running service emits `message`, then `error`, then the status.
-//! A byte-comparing gate sees the difference, so the order is the contract even
-//! though the third key's spelling is not.
-//!
-//! **That third key is `status_code` where the TypeScript says `statusCode`**,
-//! the same deliberate deviation the probe surface makes and for the same
-//! reason — this port reads as Rust rather than as a transliteration. Unlike the
-//! probes, this one is parsed by callers, so it is the kind of change that goes
-//! in the release note rather than passing unnoticed. `docs/rust-migration.md`
-//! names both keys as the differential's only expected differences.
+//! **Field order is part of the contract**: `message`, then `error`, then the
+//! status. So is the spelling of the third key, which
+//! `docs/rust-migration.md` covers under the rule it states for the whole wire.
 
 use std::fmt;
 
@@ -39,10 +24,9 @@ use super::{AppError, BoxedAppError};
 
 /// A failure the caller caused, carrying the status it deserves.
 ///
-/// **`String` where crates.io takes `impl Into<Cow<'static, str>>`**, because
-/// the borrowed half of that has no caller here: every message this service
-/// builds is formatted from the request. It goes back when a failure carries a
-/// constant instead, which is the first thing a 400 will do.
+/// `String` rather than `Cow`: six of the route's refusals quote what was sent,
+/// and the cursor codec's two constants allocate once on a path that is already
+/// answering an error.
 pub(crate) fn custom(status: StatusCode, message: String) -> BoxedAppError {
     Box::new(CustomApiError { status, message })
 }
@@ -50,7 +34,6 @@ pub(crate) fn custom(status: StatusCode, message: String) -> BoxedAppError {
 /// **Deliberately not a `std::error::Error`**, which is why `Display` is written
 /// out rather than derived with `thiserror`: implementing it would overlap the
 /// blanket impl in the parent and the two would no longer be distinguishable.
-/// crates.io hand-writes the same `Display` for the same reason.
 #[derive(Debug)]
 struct CustomApiError {
     status: StatusCode,
@@ -67,9 +50,9 @@ impl AppError for CustomApiError {
     fn response(&self) -> Response {
         let body = ApiErrorResponse {
             message: &self.message,
-            // Derived rather than passed, because Nest derives it: the `error`
-            // key is the status's reason phrase and nothing else. Every status
-            // reaching here is a registered one, so the fallback has no case.
+            // Derived rather than passed: the `error` key is the status's
+            // reason phrase and nothing else, and every status reaching here is
+            // a registered one, so the fallback has no case.
             error: self.status.canonical_reason().unwrap_or("Error"),
             status_code: self.status,
         };
@@ -98,10 +81,8 @@ mod tests {
     use crate::test_support::answered;
 
     #[tokio::test]
-    async fn serialises_in_the_order_the_typescript_emits() {
-        // Measured off the running service, and the order is load-bearing: the
-        // Phase 2 gate compares bytes, and the DTO class declares these three
-        // the other way round.
+    async fn serialises_in_the_order_the_contract_fixes() {
+        // The order is load-bearing: a comparator reads it.
         let (status, body) = answered(errors::not_found("Cannot GET /nope".to_owned())).await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);

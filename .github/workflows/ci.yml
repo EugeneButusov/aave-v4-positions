@@ -145,6 +145,12 @@ jobs:
               ;;
           esac
 
+      # No chain and no socket — the third column of the table in
+      # `docs/rust-migration.md`. The script names the crates and the reason, and
+      # runs on its own so it is answerable before a push rather than after one.
+      - name: Each binary links only what its row allows
+        run: ./scripts/binary-boundaries.sh
+
       - name: Format
         run: cargo fmt --all --check
 

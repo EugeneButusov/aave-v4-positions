@@ -6,18 +6,18 @@
 //!
 //! Boot order is config, logging, dependencies, state, listener — one parsed
 //! configuration flowing downward, and nothing reading the environment behind
-//! it. The TypeScript could not do this: its telemetry SDK is preloaded and
-//! reads `process.env` before Nest exists, which is what its `env.ts` spends a
-//! paragraph explaining. That paragraph has nothing to describe here.
+//! it.
 //!
-//! What this file does **not** do is name a route or a layer. Those are
-//! [`router`] and [`middleware`], composed by [`app::handler`].
+//! What this file does **not** do is name a route or a layer. [`app::handler`]
+//! composes them.
 
 mod app;
 mod config;
 mod errors;
 mod logging;
 mod middleware;
+mod positions;
+mod probes;
 mod router;
 #[cfg(test)]
 mod test_support;
@@ -26,9 +26,15 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::process::ExitCode;
 
+use aave_positions::store::ClickHousePositionStore;
+use indexing::PostgresSyncStatusStore;
+use ops::{ShutdownFlag, Uptime};
+use prices::PostgresReservePriceStore;
+use token_metadata::PostgresTokenMetadataStore;
+
 use app::App;
 use config::Config;
-use ops::{ShutdownFlag, Uptime};
+use positions::Signer;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -65,9 +71,17 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let postgres = postgres::build_pool(&config.postgres_url)?;
 
     let shutdown = ShutdownFlag::new();
+
     let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
+        positions: Box::new(ClickHousePositionStore::new(clickhouse.clone())),
+        tokens: Box::new(PostgresTokenMetadataStore::new(postgres.clone())),
+        prices: Box::new(PostgresReservePriceStore::new(postgres.clone())),
+        sync: Box::new(PostgresSyncStatusStore::new(postgres.clone())),
+        signer: Signer::new(&config.cursor_secret)?,
+        staleness: config.staleness,
+        prefix: config.prefix,
         clickhouse,
         postgres,
     });
@@ -99,7 +113,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::test_support::{clickhouse, postgres};
+    use crate::test_support::{postgres, state};
 
     #[tokio::test]
     async fn serves_over_a_socket_and_stops_when_drained() {
@@ -112,11 +126,12 @@ mod tests {
         let (terminate, terminated) = tokio::sync::oneshot::channel::<()>();
 
         let served = tokio::spawn({
+            // The flag this case holds, rather than the one `state` makes:
+            // the readiness handler and the future `with_graceful_shutdown`
+            // waits on have to be looking at the same one.
             let handler = app::handler(App {
-                uptime: Uptime::now(),
                 shutdown: shutdown.clone(),
-                clickhouse: clickhouse(),
-                postgres: postgres(),
+                ..state(postgres())
             });
             let shutdown = shutdown.clone();
             async move {

@@ -8,6 +8,7 @@ use alloy_primitives::{U256, U512};
 
 use super::Error;
 use super::math::narrow;
+use crate::scale::WAD_DECIMALS;
 
 /// `SpokeUtils.toValue` — an amount in token units, priced.
 ///
@@ -43,14 +44,14 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
     // more than eighteen decimals, which no listed asset has. Continuing the
     // same arithmetic by dividing is not a different rule, and it keeps a
     // hypothetical listing from taking a whole page down with it.
-    let scaled = if decimals <= 18 {
-        let exponent = U512::from(18u32.saturating_sub(u32::from(decimals)));
+    let scaled = if decimals <= WAD_DECIMALS {
+        let exponent = U512::from(u32::from(WAD_DECIMALS).saturating_sub(u32::from(decimals)));
         let scale = U512::from(10)
             .checked_pow(exponent)
             .ok_or(Error::OutOfRange)?;
         product.checked_mul(scale).ok_or(Error::OutOfRange)?
     } else {
-        let exponent = U512::from(u32::from(decimals).saturating_sub(18));
+        let exponent = U512::from(u32::from(decimals).saturating_sub(u32::from(WAD_DECIMALS)));
         match U512::from(10).checked_pow(exponent) {
             Some(scale) => product.wrapping_div(scale),
             // A divisor past `U512::MAX` exceeds any dividend this can hold, so

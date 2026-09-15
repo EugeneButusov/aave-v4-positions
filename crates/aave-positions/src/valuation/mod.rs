@@ -7,7 +7,7 @@
 //! underneath all three, `error` is what they refuse with, and `fixtures` is
 //! the vectors `asset` and `position` both build on.
 //!
-//! This file holds the wiring and the one constant they are all scaled in.
+//! This file holds the wiring and the one value they are all scaled in.
 
 mod asset;
 mod error;
@@ -33,3 +33,21 @@ pub(crate) use position::PositionShares;
 /// `MathUtils`. It is the protocol's unit, and here it is the unit of
 /// [`AssetState::checkpoint_index`] and [`AssetState::drawn_rate`].
 const RAY: U256 = uint!(1_000_000_000_000_000_000_000_000_000_U256);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scale::RAY_DECIMALS;
+
+    #[test]
+    fn ray_is_ten_to_its_decimals() {
+        // The two spellings of one protocol constant, held to each other: a
+        // caller scaling by the exponent and this module dividing by the value
+        // must mean the same thing.
+        assert_eq!(
+            U256::from(10).pow(U256::from(RAY_DECIMALS)),
+            RAY,
+            "RAY_DECIMALS and RAY disagree"
+        );
+    }
+}
