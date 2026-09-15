@@ -600,6 +600,20 @@ What that costs is the "any difference is a finding" property, for those two cla
 the exception list was meant to stay short, and the trade is being made deliberately rather than
 discovered.
 
+**Two behaviours are the predecessor's and are pinned by test rather than by comment.** An unmatched
+*method* answers `404`, not axum's default `405` with an `allow` header — Express does not
+distinguish an unmatched method from an unmatched path — and the body echoes the whole request
+target, query string included, because Express builds it from `req.originalUrl`. `uri.path()` would
+have been the obvious reach and would have dropped the query. Both were measured against the running
+service and both are asserted in `bins/api/src/router.rs`; neither is explained there, because the
+port does not name what it replaces.
+
+**The page cursor is byte-identical across the two services** while both run, because the HMAC
+construction is the same: same key from `POSITIONS_CURSOR_SECRET`, same `chain_id|user|spoke|payload`
+over `|`, same 128-bit truncation, same unpadded base64url. Either service accepts a cursor the other
+issued — verified on one pair of databases — which is the sharpest single check the replay harness
+inherits, and the reason the construction must not change while both are deployed.
+
 **The 500 body stays fixed text and is not the envelope**, which the plan for that PR had intended to
 change. It was finally measured — a `RENAME TABLE` under the running service, so the store threw
 rather than refused — and Nest answers `{"statusCode":500,"message":"Internal server error"}`: two

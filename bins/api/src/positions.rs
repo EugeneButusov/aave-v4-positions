@@ -6,10 +6,9 @@
 //!
 //! [`list`] is the endpoint. [`params`] is what a caller may ask for, [`cursor`]
 //! how a resume point is published and taken back, and [`scale`] the one
-//! decision every number on the wire shares. The shape is
-//! [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/controllers/krate.rs):
-//! a module declares its endpoints and holds only what they share, and the
-//! endpoint holds its own handler, its own types and its own assembly.
+//! decision every number on the wire shares. A module declares its endpoints and
+//! holds only what they share; the endpoint holds its own handler, its own types
+//! and its own assembly.
 //!
 //! **Positions from different Spokes may be listed together but never summed.**
 //! Each Spoke is an isolated margin account with its own collateral factors,

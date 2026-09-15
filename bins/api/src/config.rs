@@ -7,13 +7,11 @@
 //! environment to a running service, and it is the only place that mapping
 //! exists.
 //!
-//! **Every variable here has a reader.** The TypeScript declares the whole
-//! contract in one schema, including the `OTEL_*` group its own comment admits
-//! is read elsewhere; here a field nobody uses is `dead_code`, which the
-//! workspace denies. So the list grows with the code that needs it —
-//! `API_GLOBAL_PREFIX` and the cursor secret arrived with the route, the
-//! `OTEL_*` group arrives with `telemetry` — and it cannot drift from what the
-//! process actually honours.
+//! **Every variable here has a reader**, because a field nobody uses is
+//! `dead_code` and the workspace denies it. So the list grows with the code that
+//! needs it — `API_GLOBAL_PREFIX` and the cursor secret arrived with the route,
+//! the `OTEL_*` group arrives with `telemetry` — and it cannot drift from what
+//! the process honours.
 //!
 //! **One variable has no default.** A cursor signing key every deployment shares
 //! is not a signature, so an unset `POSITIONS_CURSOR_SECRET` is a process that

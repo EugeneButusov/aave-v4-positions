@@ -1,9 +1,8 @@
 //! Everything a request can reach, in one struct.
 //!
-//! The shape is [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/lib.rs):
-//! an `App` holding the live resources, an `AppState` newtype the router
-//! carries, and a `handler` composing state, routes and middleware in that
-//! order.
+//! Three separable steps: an `App` holding the live resources, an `AppState`
+//! newtype the router carries, and a `handler` composing state, routes and
+//! middleware in that order.
 //!
 //! **It is handed its dependencies rather than making them.** The
 //! [`ShutdownFlag`] has two holders — the readiness handler and the future
@@ -59,9 +58,8 @@ pub(crate) struct App {
 /// The `Arc` is here rather than on the fields: a request clones this, and an
 /// `App` carrying `Box<dyn Trait>` cannot be `Clone`.
 ///
-/// A newtype rather than a bare `Arc<App>`: it is where crates.io hangs
-/// `FromRequestParts` and `FromRef`, and `State<_>` needs a type this crate
-/// owns.
+/// A newtype rather than a bare `Arc<App>`, because `State<_>` needs a type
+/// this crate owns.
 #[derive(Clone)]
 pub(crate) struct AppState(pub(crate) Arc<App>);
 

@@ -35,13 +35,13 @@ pub(crate) fn refuse_unmatched(router: Router) -> Router {
 
 /// What both fallbacks answer, and the reason there are two of them.
 ///
-/// Express does not distinguish an unmatched path from an unmatched *method*:
-/// `POST /health/live` answers `404 Cannot POST /health/live`, not `405`. Both
-/// measured, because axum's default is a 405 with an `allow` header and an empty
-/// body, and neither suite covers a route it does not serve.
+/// The contract does not distinguish an unmatched path from an unmatched
+/// *method*: `POST /health/live` is `404 Cannot POST /health/live`, not a 405.
+/// axum's default is a 405 with an `allow` header and an empty body, so both
+/// fallbacks are set to this.
 ///
 /// **The whole request target, not just the path**: `GET /nope?a=1&b=2` comes
-/// back verbatim, because Express builds the message from `req.originalUrl`.
+/// back verbatim, which `uri.path()` would not give.
 async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
     let target = uri
         .path_and_query()
@@ -64,9 +64,8 @@ mod tests {
 
     use crate::test_support::{get, handler, postgres, unreachable_postgres};
 
-    /// Every literal below was measured against the running TypeScript service.
-    /// It answers a 404 for a path it does not serve *and* for a method it does
-    /// not serve on a path it does, and it echoes the whole request target.
+    /// A 404 for a path this service does not serve *and* for a method it does
+    /// not serve on a path it does, echoing the whole request target.
     async fn refused(method: &str, uri: &str) -> (StatusCode, String) {
         let request = Request::builder()
             .method(method)
@@ -142,8 +141,7 @@ mod tests {
         let (status, body, _) = get(handler(postgres()), ready()).await;
 
         assert_eq!(status, StatusCode::OK);
-        // Byte for byte what the TypeScript service answered when both were
-        // reachable, measured rather than transcribed from its DTOs.
+        // Byte for byte, because the report is the contract.
         assert_eq!(
             body,
             r#"{"status":"ok","checks":[{"name":"clickhouse","status":"up"},{"name":"postgres","status":"up"}]}"#

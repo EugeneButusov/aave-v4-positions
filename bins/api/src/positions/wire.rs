@@ -241,9 +241,8 @@ struct Value {
 }
 
 /// The four widths a subsecond may take, and nothing between them: the SI
-/// buckets, which is `chrono`'s `SecondsFormat::AutoSi`. Measured over 6,126
-/// timestamps from crates.io's API — 2,182 with no fraction, one with three
-/// digits, 3,943 with six, none with any other width.
+/// buckets. A `timestamptz` holds microseconds and nothing finer, so only the
+/// first three are reachable.
 const WHOLE: &[BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]Z");
 const MILLIS: &[BorrowedFormatItem<'_>] =
@@ -255,11 +254,9 @@ const NANOS: &[BorrowedFormatItem<'_>] =
 
 /// The wire's spelling of an instant: RFC 3339, in UTC, at an SI width.
 ///
-/// **Neither of the two obvious formats.** `toISOString` emits three digits
-/// always and truncates below them, throwing away the microseconds Postgres
-/// stored. `time`'s `Rfc3339` trims *every* trailing zero, so `…00.5+00` goes
-/// out as `…00.5Z` — a width `datetime.fromisoformat` refuses before Python
-/// 3.11, and one nothing else in Rust emits.
+/// **Not `time`'s `Rfc3339`**, which trims *every* trailing zero: a
+/// `timestamptz` of `…00.5+00` goes out as `…00.5Z`, a width strict parsers
+/// refuse. The SI buckets above cannot produce one.
 ///
 /// **It does not fix sorting**, which it reads as though it would: `.` is below
 /// `Z`, so `…00.500Z` sorts before `…00Z` at any width. These are instants, not
@@ -460,8 +457,7 @@ mod tests {
 
     #[test]
     fn writes_a_whole_second_without_a_fractional_part() {
-        // Where `toISOString` writes `.000Z`. The difference is the declared
-        // one, and it is pinned here so it cannot drift back by accident.
+        // Pinned so the width cannot drift back by accident.
         assert_eq!(
             instant_at(1_788_796_630).ok().as_deref(),
             Some("2026-09-07T15:57:10Z")
@@ -506,8 +502,8 @@ mod tests {
 
     #[test]
     fn keeps_the_microseconds_postgres_stored() {
-        // `toISOString` truncates these to three digits. Postgres holds six, and
-        // this is the field a caller compares against a row.
+        // Postgres holds six, and this is the field a caller compares against
+        // a row.
         let at = OffsetDateTime::from_unix_timestamp_nanos(1_785_000_000_221_456_000)
             .expect("a representable instant");
 

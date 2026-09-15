@@ -1,24 +1,18 @@
 //! How this service represents a failure, and what a caller learns from one.
 //!
-//! A trait object rather than a type, which is
-//! [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs)
-//! shape: one blanket impl turns any `std` error into a logged 500, so a
-//! handler can `?` a store read without writing a conversion, and the
-//! constructors beside it demote the failures a caller caused. Two jobs in that
-//! order, which is what Nest's exception filter does and what replaces it.
+//! A trait object rather than a type: one blanket impl turns any `std` error
+//! into a logged 500, so a handler can `?` a store read without writing a
+//! conversion, and the constructors beside it demote the failures a caller
+//! caused.
 //!
-//! **The envelope lives in [`json`], not here**, and that boundary is
-//! crates.io's too. This module is the vocabulary of failures — what can go
-//! wrong and what status it deserves. That one is the wire contract, which is
-//! measured against the TypeScript and changes on a different schedule.
+//! **The envelope lives in [`json`], not here.** This module is the vocabulary
+//! of failures — what can go wrong and what status it deserves. That one is the
+//! wire contract, and the two move on different schedules.
 //!
-//! **The 500 is fixed text, not the envelope**, as crates.io and the
-//! `CatchPanicLayer` beside it both answer. This used to defer the decision
-//! until the TypeScript's 500 could be measured; it now has been, with a
-//! `RENAME TABLE` under the running service: `{"statusCode":500,"message":
-//! "Internal server error"}`. Two keys, no `error`, status first — a *second*
-//! envelope, which [`json`]'s doc argues against publishing. So the text stays
-//! and `docs/rust-migration.md` records the difference.
+//! **A 5xx answers fixed text rather than the envelope**, which is what
+//! `CatchPanicLayer` beside it already does. Publishing a second error shape is
+//! what [`json`]'s doc argues against; `docs/rust-migration.md` records what a
+//! comparator should do with the difference.
 
 mod json;
 
@@ -30,9 +24,9 @@ use axum::response::{IntoResponse, Response};
 
 /// Anything that knows what it looks like to a caller.
 ///
-/// `response` takes `&self` rather than consuming, as crates.io's does: it is
-/// what lets the error be logged and answered from the same value, and it is
-/// the difference between this and a plain `IntoResponse` impl.
+/// `response` takes `&self` rather than consuming, which is what lets an error
+/// be logged and answered from the same value — the difference between this and
+/// a plain `IntoResponse` impl.
 pub(crate) trait AppError: Send + fmt::Display + fmt::Debug + 'static {
     fn response(&self) -> Response;
 }

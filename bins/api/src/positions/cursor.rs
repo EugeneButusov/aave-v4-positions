@@ -11,8 +11,7 @@
 //! to protect two short strings.
 //!
 //! **The key must be identical across replicas**, or a cursor from one pod is
-//! rejected by the next. The TypeScript service computes the same tag, so while
-//! both run either accepts the other's.
+//! rejected by the next — pagination that fails only under load.
 
 use std::fmt;
 

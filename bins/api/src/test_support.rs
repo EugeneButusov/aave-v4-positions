@@ -1,9 +1,7 @@
 //! One `App` from the environment's defaults, so a case says what it is testing.
 //!
-//! [crates.io's `TestApp`](https://github.com/rust-lang/crates.io/blob/main/src/tests/util/test_app.rs)
-//! at this service's scale: the cases below drive the real router rather than
-//! reassembling one, so a wiring mistake fails them rather than hiding behind a
-//! parallel definition.
+//! The cases below drive the real router rather than reassembling one, so a
+//! wiring mistake fails them rather than hiding behind a parallel definition.
 //!
 //! **The four read ports are doubles and no database is reached.** What a store
 //! does with a query is its own crate's conformance suite to prove against a

@@ -31,9 +31,8 @@ unreachable_pub = "deny"
 # silent wrong number.
 #
 # Absent on purpose: `arithmetic_side_effects` belongs on the valuation crate,
-# not every loop counter; `indexing_slicing` is not the
-# `noUncheckedIndexedAccess` analogue it resembles, since Rust panics where
-# TypeScript returns `undefined`.
+# not every loop counter; `indexing_slicing` reads like a bounds-check lint and
+# is not one, since an out-of-range index panics rather than yielding nothing.
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 cast_lossless = "deny"

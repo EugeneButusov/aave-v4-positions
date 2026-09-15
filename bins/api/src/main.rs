@@ -6,9 +6,7 @@
 //!
 //! Boot order is config, logging, dependencies, state, listener — one parsed
 //! configuration flowing downward, and nothing reading the environment behind
-//! it. The TypeScript could not do this: its telemetry SDK is preloaded and
-//! reads `process.env` before Nest exists, which is what its `env.ts` spends a
-//! paragraph explaining. That paragraph has nothing to describe here.
+//! it.
 //!
 //! What this file does **not** do is name a route or a layer. Those are
 //! [`router`] and [`middleware`], composed by [`app::handler`].

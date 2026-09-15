@@ -1,30 +1,15 @@
 //! One variable at a time, and everything wrong with the lot of them.
 //!
-//! **Every error at once, not the first.** That is what `z.prettifyError` buys
-//! the service this replaces: a deployment with three variables wrong learns all
-//! three on the first boot instead of one per crash loop. Every reader below
-//! therefore returns a usable value *and* records a problem, so parsing
+//! **Every error at once, not the first**: a deployment with three variables
+//! wrong learns all three on the first boot instead of one per crash loop. Every
+//! reader below returns a usable value *and* records a problem, so parsing
 //! continues past a bad variable and [`Env::finish`] reports the lot.
 //!
-//! **Which is why this is hand-rolled, and the reason is measured.** The two
-//! candidates were `clap`'s derive with `env =` on each field — what
-//! `meilisearch` and `influxdb3` do, and by volume the ecosystem's default — and
-//! `figment`, whose `Error` documents itself as possibly holding more than one.
-//! Given `API_PORT=0`, `API_HOST=nowhere` and `SHUTDOWN_GRACE_SECONDS=600`, both
-//! report exactly one: `figment`'s `count()` is 1 because serde stops at the
-//! first bad field, and `clap` exits on the first it reaches. Neither can say
-//! all three, so neither preserves the behaviour under a migration whose whole
-//! rule is not changing behaviour.
-//!
-//! The shape is [linkerd2-proxy's](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/src/env.rs),
-//! arrived at independently and for the same reason — its `parse_config` says
-//! "parse all the environment variables … defer returning any errors until all
-//! of them have been parsed", and it takes its input through a trait so a test
-//! can hand it a map instead of the process environment. It spends 1090 lines on
-//! that; this spends a tenth of it on ten variables.
-//!
-//! `clap` still arrives with Phase 4's five CLIs, where the argument parsing is
-//! the point. The binaries here take no arguments.
+//! **Which is why it is hand-rolled.** The derive-based readers stop at the
+//! first bad field — measured, against `API_PORT=0`, `API_HOST=nowhere` and
+//! `SHUTDOWN_GRACE_SECONDS=600`, which they report one of. The environment is
+//! taken as a map rather than read, so a case can name three bad variables
+//! without touching what the other tests are running against.
 //!
 //! **[`Invalid`] lives here rather than in an `error.rs`** of its own, which is
 //! what the other crates in this workspace have. Nothing else produces it and it
@@ -59,11 +44,11 @@ impl fmt::Display for Invalid {
 
 impl std::error::Error for Invalid {}
 
-/// The seven `pino` accepts, so a deployment's existing value keeps working.
+/// The seven spellings a deployment may already be setting.
 ///
 /// `fatal` and `silent` have no `tracing` counterpart of their own — the first
-/// is an error and the second is the absence of a level — and mapping them here
-/// is cheaper than a migration note nobody reads at three in the morning.
+/// is an error, the second the absence of a level — and mapping them is cheaper
+/// than a release note nobody reads at three in the morning.
 const LEVELS: [(&str, LevelFilter); 7] = [
     ("fatal", LevelFilter::ERROR),
     ("error", LevelFilter::ERROR),
@@ -74,7 +59,7 @@ const LEVELS: [(&str, LevelFilter); 7] = [
     ("silent", LevelFilter::OFF),
 ];
 
-/// The four spellings the TypeScript accepts for a boolean.
+/// The four spellings a boolean may arrive as.
 const FLAGS: [(&str, bool); 4] = [("true", true), ("1", true), ("false", false), ("0", false)];
 
 impl<'a> Env<'a> {
@@ -124,13 +109,11 @@ impl<'a> Env<'a> {
         value
     }
 
-    /// As lenient as `z.url()`, deliberately.
+    /// As lenient as the WHATWG standard `url` implements, deliberately.
     ///
-    /// Zod validates with `new URL()`, and the `url` crate implements the same
-    /// WHATWG standard, so the two accept and reject exactly the same strings —
-    /// `clickhouse:8123` included, which both read as a scheme and a path.
-    /// Requiring `http` here would be a stricter boot contract than the service
-    /// being replaced, and the driver is the authority on its own URL anyway:
+    /// `clickhouse:8123` is a valid URL — a scheme and a path — and is accepted.
+    /// Requiring `http` here would be a stricter boot contract than a deployment
+    /// expects, and the driver is the authority on its own URL anyway:
     /// `build_pool` parses this again with libpq's rules.
     pub fn url(&mut self, key: &str, default: &str) -> String {
         let value = self.text(key, default);
@@ -338,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn maps_the_log_levels_pino_spells_differently() {
+    fn maps_the_log_levels_that_have_no_counterpart() {
         // A deployment already setting either of these keeps working.
         let (fatal, _) = read(&[("LEVEL", "fatal")], |env| env.level("LEVEL"));
         let (silent, _) = read(&[("LEVEL", "silent")], |env| env.level("LEVEL"));
