@@ -87,11 +87,16 @@ pub(crate) fn handler(app: App) -> Router {
     let (uptime, shutdown) = (app.uptime, app.shutdown.clone());
     let state = AppState(Arc::new(app));
 
-    // The probes stay outside the prefix and outside the version: an
-    // orchestrator's check is not part of the API's versioned surface, and all
-    // three compose healthchecks already ask for `/health/ready`.
-    let served =
-        probes(uptime, shutdown, state.clone()).nest(&mount, positions::routes().with_state(state));
+    // A router, then what it answers on. **Neither half is the base**: starting
+    // from the probes and nesting the rest into them reads as though an
+    // orchestrator's check were the service and the API hung off it.
+    //
+    // The probes take no prefix and no version — a readiness check is not part
+    // of the API's versioned surface, and all three compose healthchecks
+    // already ask for `/health/ready`.
+    let served = Router::new()
+        .merge(probes(uptime, shutdown, state.clone()))
+        .nest(&mount, positions::routes().with_state(state));
 
     middleware::apply(router::refuse_unmatched(served))
 }
