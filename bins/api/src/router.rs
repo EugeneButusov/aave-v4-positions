@@ -52,17 +52,15 @@ async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
 
 #[cfg(test)]
 mod tests {
-    //! Against real servers, because the wiring is all that is left to get
-    //! wrong: `ops` proves the report and the shutdown in isolation. They drive
-    //! `app::handler`, so a route moved out from under the fallbacks fails here
-    //! rather than in review.
+    //! Driven through `app::handler`, so a route moved out from under the
+    //! fallbacks fails here rather than in review.
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
 
     use super::mount;
 
-    use crate::test_support::{get, handler, postgres, unreachable_postgres};
+    use crate::test_support::{get, handler, postgres};
 
     /// A 404 for a path this service does not serve *and* for a method it does
     /// not serve on a path it does, echoing the whole request target.
@@ -78,9 +76,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unknown_path_answers_the_envelope_the_typescript_does() {
-        // Query string included, because `req.originalUrl` carries it — the
-        // obvious `uri.path()` would drop it and the gate would say so.
+    async fn an_unknown_path_answers_the_envelope_a_refusal_carries() {
+        // Query string included: the obvious `uri.path()` would drop it.
         let (status, body) = refused("GET", "/nope?a=1&b=2").await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);
@@ -126,43 +123,6 @@ mod tests {
         assert_eq!(
             body,
             r#"{"message":"Cannot POST /health/live","error":"Not Found","status_code":404}"#
-        );
-    }
-
-    fn ready() -> Request<Body> {
-        Request::builder()
-            .uri("/health/ready")
-            .body(Body::empty())
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn reports_both_databases_up_against_the_real_servers() {
-        let (status, body, _) = get(handler(postgres()), ready()).await;
-
-        assert_eq!(status, StatusCode::OK);
-        // Byte for byte, because the report is the contract.
-        assert_eq!(
-            body,
-            r#"{"status":"ok","checks":[{"name":"clickhouse","status":"up"},{"name":"postgres","status":"up"}]}"#
-        );
-    }
-
-    #[tokio::test]
-    async fn names_postgres_when_only_postgres_is_unreachable() {
-        // Which is the half a single aggregated boolean would lose, and the
-        // reason the report carries names at all.
-        let (status, body, _) = get(handler(unreachable_postgres()), ready()).await;
-
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert!(body.starts_with(r#"{"status":"degraded","#), "{body}");
-        assert!(
-            body.contains(r#"{"name":"clickhouse","status":"up"}"#),
-            "{body}"
-        );
-        assert!(
-            body.contains(r#"{"name":"postgres","status":"down","error":"#),
-            "{body}"
         );
     }
 }

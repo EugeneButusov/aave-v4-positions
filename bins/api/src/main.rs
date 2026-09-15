@@ -17,6 +17,7 @@ mod errors;
 mod logging;
 mod middleware;
 mod positions;
+mod probes;
 mod router;
 #[cfg(test)]
 mod test_support;

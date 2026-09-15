@@ -81,10 +81,8 @@ mod tests {
     use crate::test_support::answered;
 
     #[tokio::test]
-    async fn serialises_in_the_order_the_typescript_emits() {
-        // Measured off the running service, and the order is load-bearing: the
-        // Phase 2 gate compares bytes, and the DTO class declares these three
-        // the other way round.
+    async fn serialises_in_the_order_the_contract_fixes() {
+        // The order is load-bearing: a comparator reads it.
         let (status, body) = answered(errors::not_found("Cannot GET /nope".to_owned())).await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);

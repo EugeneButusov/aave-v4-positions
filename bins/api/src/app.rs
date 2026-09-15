@@ -25,7 +25,7 @@ use token_metadata::TokenMetadataStore;
 
 use crate::config::Staleness;
 use crate::positions::Signer;
-use crate::{middleware, positions, router};
+use crate::{middleware, positions, probes, router};
 
 /// The live resources, built once at boot and read for the process's life.
 pub(crate) struct App {
@@ -79,33 +79,14 @@ impl std::ops::Deref for AppState {
 /// above rather than in [`crate::router`], which names nothing this service does.
 pub(crate) fn handler(app: App) -> Router {
     let mount = router::mount(&app.prefix);
-    let (uptime, shutdown) = (app.uptime, app.shutdown.clone());
     let state = AppState(Arc::new(app));
 
     // The probes take no prefix and no version: a readiness check is not part
     // of the API's versioned surface, and all three compose healthchecks ask
     // for `/health/ready`.
     let served = Router::new()
-        .merge(probes(uptime, shutdown, state.clone()))
+        .merge(probes::routes(state.clone()))
         .nest(&mount, positions::routes().with_state(state));
 
     middleware::apply(router::refuse_unmatched(served))
-}
-
-/// **The dependencies are named here, in a list, and that is the whole
-/// registry.** `ops` owns the report and the paths; this owns which databases
-/// this process answers for.
-fn probes(uptime: Uptime, shutdown: ShutdownFlag, state: AppState) -> Router {
-    ops::probe_router(uptime, shutdown, move || {
-        let state = state.clone();
-        async move {
-            // Side by side: a probe that serialises them reports the sum of
-            // two timeouts. `join!` keeps the order the wire contract fixes.
-            let (clickhouse, postgres) = tokio::join!(
-                ops::check("clickhouse", clickhouse_client::ping(&state.clickhouse)),
-                ops::check("postgres", ::postgres::ping(&state.postgres)),
-            );
-            vec![clickhouse, postgres]
-        }
-    })
 }
