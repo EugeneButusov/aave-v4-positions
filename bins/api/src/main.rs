@@ -8,8 +8,8 @@
 //! configuration flowing downward, and nothing reading the environment behind
 //! it.
 //!
-//! What this file does **not** do is name a route or a layer. Those are
-//! [`router`] and [`middleware`], composed by [`app::handler`].
+//! What this file does **not** do is name a route or a layer. [`app::handler`]
+//! composes them.
 
 mod app;
 mod config;
@@ -72,11 +72,6 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
 
     let shutdown = ShutdownFlag::new();
 
-    // **The composition root, and the whole of it.** Each store is handed the
-    // connection it needs rather than reaching for one: a store that read the
-    // environment could not be used twice in one process against two servers,
-    // which is the argument `crates/postgres` makes and this is the place that
-    // honours it. Three of the four share one pool, which is what a pool is for.
     let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
