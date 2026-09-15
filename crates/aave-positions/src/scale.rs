@@ -1,10 +1,13 @@
 //! Base units to a decimal string, exactly.
 //!
-//! The store hands back `U256` and `I256` (§7.5), so the wire format is decided
-//! here and nowhere else. Four scales meet on one page and none is the same
-//! twice: the asset's own decimals, and the three
-//! [`aave_positions::valuation`] declares. The wrong pairing is out by ten
-//! orders of magnitude with nothing to notice.
+//! The protocol's units, and the one way to render a quantity in them.
+//!
+//! [`store`](crate::store) hands back `U256` and `I256` — the fold's columns are
+//! 256-bit and a JSON number has lost its tail before a process sees it (§7.5) —
+//! so anything showing one to a person converts here. Four scales meet on one
+//! page and none is the same twice: the asset's own decimals, and the three
+//! below. The wrong pairing is out by ten orders of magnitude with nothing to
+//! notice.
 //!
 //! **Digits are sliced, never divided.** `value as f64 / 10f64.powi(n)` loses
 //! everything past 2^53, and share balances pass that routinely — a real `Repay`
@@ -15,8 +18,29 @@
 
 use alloy_primitives::{I256, U256};
 
+/// How many of a ray's digits are fractional: the protocol's unit as an
+/// exponent, which is the form a caller rendering one needs.
+/// `valuation`'s `ray_is_ten_to_its_decimals` holds it to the value that module
+/// divides by.
+pub const RAY_DECIMALS: u8 = 27;
+
+/// `WadRayMath.WAD_DECIMALS`, which [`valuation::to_value`](crate::valuation::to_value)
+/// normalises an amount to.
+pub const WAD_DECIMALS: u8 = 18;
+
+/// `SpokeUtils.ORACLE_DECIMALS`, and what `Spoke`'s constructor requires of an
+/// oracle.
+pub const ORACLE_DECIMALS: u8 = 8;
+
+/// How many digits of a [`valuation::to_value`](crate::valuation::to_value)
+/// result are fractional.
+///
+/// Derived rather than written: it is an amount at [`WAD_DECIMALS`] times a
+/// price at [`ORACLE_DECIMALS`], which is what makes `1e26` one dollar (§7.1).
+pub const VALUE_DECIMALS: u8 = WAD_DECIMALS + ORACLE_DECIMALS;
+
 /// An unsigned quantity, with `decimals` of its digits fractional.
-pub(crate) fn unsigned(value: U256, decimals: u8) -> String {
+pub fn unsigned(value: U256, decimals: u8) -> String {
     place(value.to_string(), decimals)
 }
 
@@ -25,7 +49,7 @@ pub(crate) fn unsigned(value: U256, decimals: u8) -> String {
 /// A share column cannot go negative on chain, so a negative one is drift and
 /// §9 catches it by seeing it. Padding the signed string rather than its
 /// magnitude renders `-42` at eight decimals as `-0.0000-42`.
-pub(crate) fn signed(value: I256, decimals: u8) -> String {
+pub fn signed(value: I256, decimals: u8) -> String {
     // `unsigned_abs` rather than negating: `I256::MIN` has no positive twin,
     // and this is the only reachable value where that matters.
     let digits = place(value.unsigned_abs().to_string(), decimals);
@@ -48,11 +72,11 @@ fn place(mut digits: String, decimals: u8) -> String {
     }
 
     if digits.len() <= decimals {
-        let padding = decimals + 1 - digits.len();
+        let padding = decimals.saturating_add(1).saturating_sub(digits.len());
         digits.insert_str(0, &"0".repeat(padding));
     }
 
-    let (whole, fraction) = digits.split_at(digits.len() - decimals);
+    let (whole, fraction) = digits.split_at(digits.len().saturating_sub(decimals));
     let fraction = fraction.trim_end_matches('0');
 
     if fraction.is_empty() {
@@ -64,7 +88,6 @@ fn place(mut digits: String, decimals: u8) -> String {
 
 #[cfg(test)]
 mod tests {
-    use aave_positions::valuation::{ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
     use alloy_primitives::uint;
 
     use super::*;

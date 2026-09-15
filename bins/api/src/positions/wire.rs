@@ -8,17 +8,16 @@
 //! multi-word key is snake_case where the service this replaces writes
 //! camelCase. **They mirror the domain rather than reuse it**, which is also why
 //! the wire item is [`Item`]: `store::Position` may gain a field, the contract
-//! may not. **Every number is a decimal string**, already scaled by [`scale`].
+//! may not. **Every number is a decimal string**, already scaled by `aave_positions::scale`.
 //! **Null means unknown, never zero** — §7.4's oracle reverts rather than answer
 //! one, so a zero would be indistinguishable from a real one. Field order is
 //! declaration order, and it is the order the service beside this one emits.
 
 use std::collections::HashMap;
 
+use aave_positions::scale::{self, ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
 use aave_positions::store::{Position, PositionAsset};
-use aave_positions::valuation::{
-    ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS, Valuation, to_value,
-};
+use aave_positions::valuation::{Valuation, to_value};
 use alloy_primitives::{Address, I256};
 use prices::{ReserveKey, ReservePrice};
 use serde::Serialize;
@@ -27,7 +26,6 @@ use time::format_description::BorrowedFormatItem;
 use time::macros::format_description;
 use token_metadata::TokenLabel;
 
-use super::scale;
 use crate::errors::BoxedAppError;
 
 /// One wallet's positions, valued at one instant.

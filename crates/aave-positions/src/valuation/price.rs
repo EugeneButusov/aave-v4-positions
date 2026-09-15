@@ -6,8 +6,9 @@
 
 use alloy_primitives::{U256, U512};
 
+use super::Error;
 use super::math::narrow;
-use super::{Error, WAD_DECIMALS};
+use crate::scale::WAD_DECIMALS;
 
 /// `SpokeUtils.toValue` — an amount in token units, priced.
 ///

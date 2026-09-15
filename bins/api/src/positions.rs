@@ -5,8 +5,8 @@
 //! paged by keyset.
 //!
 //! [`list`] is the endpoint. [`params`] is what a caller may ask for, [`cursor`]
-//! how a resume point is published and taken back, and [`scale`] the one
-//! decision every number on the wire shares. A module declares its endpoints and
+//! how a resume point is published and taken back, and [`wire`] the shape that
+//! goes out — every number in it scaled by `aave_positions::scale`. A module declares its endpoints and
 //! holds only what they share; the endpoint holds its own handler, its own types
 //! and its own assembly.
 //!
@@ -19,7 +19,6 @@
 mod cursor;
 mod list;
 mod params;
-mod scale;
 mod wire;
 
 pub(crate) use cursor::{MIN_SECRET_BYTES, Signer};

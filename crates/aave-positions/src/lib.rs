@@ -1,8 +1,8 @@
 //! Aave v4 positions: what a wallet holds, and what it is worth.
 //!
-//! Two modules. [`valuation`] is the arithmetic, transcribed from the
-//! contracts; [`store`] is the read side over the fold, and the only thing that
-//! calls it. Nothing here writes — the fold is materialized views over the
+//! Three modules. [`valuation`] is the arithmetic, transcribed from the
+//! contracts; [`store`] is the read side over the fold; [`scale`] is the units
+//! both are expressed in, and the one way to render a quantity in them. Nothing here writes — the fold is materialized views over the
 //! event ledger, which `bins/indexer` fills.
 //!
 //! **Every arithmetic operation in this crate is checked.** The workspace lint
@@ -23,5 +23,6 @@
 //! separate call the API makes, on a number the store already returned.
 #![deny(clippy::arithmetic_side_effects)]
 
+pub mod scale;
 pub mod store;
 pub mod valuation;
