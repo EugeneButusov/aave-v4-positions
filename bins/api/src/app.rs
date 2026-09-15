@@ -40,10 +40,6 @@ pub(crate) struct App {
     /// **Four ports, four trait objects**, so a case can put a double in front
     /// of the handler without a database. A boxed future per call is the cost,
     /// which `PositionStore`'s own doc measures and accepts.
-    ///
-    /// `Box`, not `Arc`: the sharing is one level up, on [`AppState`], and each
-    /// of these is reached through `&self` and cloned by nobody. An `Arc` here
-    /// would be a second refcount that never leaves one.
     pub(crate) positions: Box<dyn PositionStore>,
     pub(crate) tokens: Box<dyn TokenMetadataStore>,
     pub(crate) prices: Box<dyn ReservePriceStore>,
@@ -60,11 +56,8 @@ pub(crate) struct App {
 
 /// What the router carries, and what every handler extracts.
 ///
-/// **An `Arc`, now that a route serves real traffic and clones this per
-/// request.** It held an `App` directly while only the readiness probe cloned
-/// it, with a note saying this would be a one-line change when a handler
-/// arrived. It is that line, and it is also what makes the four trait objects
-/// shareable at all — an `App` carrying `Box<dyn Trait>` cannot be `Clone`.
+/// The `Arc` is here rather than on the fields: a request clones this, and an
+/// `App` carrying `Box<dyn Trait>` cannot be `Clone`.
 ///
 /// A newtype rather than a bare `Arc<App>`: it is where crates.io hangs
 /// `FromRequestParts` and `FromRef`, and `State<_>` needs a type this crate
@@ -91,13 +84,9 @@ pub(crate) fn handler(app: App) -> Router {
     let (uptime, shutdown) = (app.uptime, app.shutdown.clone());
     let state = AppState(Arc::new(app));
 
-    // A router, then what it answers on. **Neither half is the base**: starting
-    // from the probes and nesting the rest into them reads as though an
-    // orchestrator's check were the service and the API hung off it.
-    //
-    // The probes take no prefix and no version — a readiness check is not part
-    // of the API's versioned surface, and all three compose healthchecks
-    // already ask for `/health/ready`.
+    // The probes take no prefix and no version: a readiness check is not part
+    // of the API's versioned surface, and all three compose healthchecks ask
+    // for `/health/ready`.
     let served = Router::new()
         .merge(probes(uptime, shutdown, state.clone()))
         .nest(&mount, positions::routes().with_state(state));
