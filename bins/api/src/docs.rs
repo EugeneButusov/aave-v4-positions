@@ -63,9 +63,9 @@ pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
         .route(&format!("{mount}/openapi.json"), document)
         .route(&format!("{mount}/openapi.yaml"), yaml);
 
-    // Both spellings, because a viewer reached without the trailing slash would
-    // otherwise resolve its own relative assets one segment too high. An empty
-    // mount is already `/` and cannot be registered twice.
+    // Both spellings, because axum matches them as two paths and either is what
+    // somebody types. An empty mount is already `/` and cannot be registered
+    // twice.
     for at in if mount.is_empty() {
         vec!["/".to_owned()]
     } else {

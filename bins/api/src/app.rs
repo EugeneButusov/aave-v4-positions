@@ -91,10 +91,8 @@ pub(crate) fn handler(app: App) -> Router {
 
     // **Split before the probes and the document are merged in**, so neither
     // appears in what is published. The contract describes the versioned API:
-    // the probes by the decision `openapi` records, and the two routes that
-    // serve the document because a document describing its own address is
-    // circular — which is also why the TypeScript's path list has three entries
-    // and not five.
+    // the probes by the decision `openapi` records, and the routes that serve
+    // the document because a document describing its own address is circular.
     let (versioned, api) = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
         .nest(&mount, positions::routes().with_state(state.clone()))
         .split_for_parts();
