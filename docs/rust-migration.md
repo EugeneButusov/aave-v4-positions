@@ -236,7 +236,7 @@ graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 | `@clickhouse/client` | `clickhouse` crate | 19 call sites, all `JSONEachRow` today; inserts move to RowBinary and `JSONEachRow` stays only where a `body` column is genuinely JSON |
 | `postgres` (postgres.js) | `tokio-postgres` + `deadpool-postgres` | see [Port notes](#port-notes) |
 | `pino` + `nestjs-pino` | `tracing` + `tracing-subscriber` JSON | one JSON object per line is preserved |
-| OpenTelemetry JS SDK | `opentelemetry` + `opentelemetry-otlp` + `tracing-opentelemetry` | see Risk 2 |
+| OpenTelemetry JS SDK | `opentelemetry` + `opentelemetry-otlp` + `tracing-opentelemetry` | done. Pinned at 0.31 rather than 0.32, because that is what the `clickhouse` crate's own optional `opentelemetry` unifies with — and two versions means two propagator registries and `traceparent` injection that silently does nothing. OTLP over HTTP/protobuf on hyper, not the default `reqwest-blocking-client`. See Risk 2 |
 | `bigint` | `alloy_primitives::U256` / `I256` (ruint) | see [Port notes](#port-notes) |
 | `node:crypto` HMAC | `hmac` + `sha2` + `subtle` | cursor signing; `subtle` for the constant-time compare |
 | `vitest` | `cargo test` | store specs keep running against real servers, reached through `CLICKHOUSE_URL` / `POSTGRES_URL` exactly as the vitest configs reach them, with CI providing both as service containers |
@@ -264,15 +264,29 @@ build rather than a silent divergence.
 ### 2. There is no auto-instrumentation in Rust
 
 The TypeScript build gets HTTP, undici, NestJS and pino spans from four `registerInstrumentations`
-entries. Rust has no equivalent: `tower-http::trace` gives inbound HTTP, `tokio-postgres` gives
-Postgres, and everything else — the ClickHouse client, every alloy RPC call — is instrumented by hand.
+entries. Rust has no equivalent, and the shape of the replacement came out differently from this
+paragraph's first guess in both directions:
+
+- **Inbound HTTP is hand-written, and so is its metric.** `bins/api/src/requests.rs` makes the span,
+  the log line and `http.server.request.duration` in one pass over the request — which is also the
+  only way the route, the status and the latency reach all three without being carried between
+  layers. That histogram is the one the dashboard's three API panels are written against, and the
+  service this replaces publishes it without writing a line.
+- **Postgres is hand-written too**, which the line below this section got wrong: `tokio-postgres`
+  depends on `log`, not `tracing`, and opens no span at all. `postgres::query_span` names the shape
+  once for the three crates that read.
+- **ClickHouse is not hand-written after all.** The `clickhouse` crate already opens
+  `clickhouse.query`; its `opentelemetry` feature makes it a client span and puts `traceparent` on
+  the request, so the server records the same trace — checked against
+  `system.opentelemetry_span_log`, which is more than the TypeScript does.
 
 The span names and attributes are already written down in
 [Tracing and metrics](design-notes.md#tracing-and-metrics), and all sixteen metric names are fixed and
-verified against a live Prometheus. Port them as an explicit inventory and assert on it: a test that
-force-flushes an in-memory exporter and checks the exact set of instrument names, so a missing span
-fails CI rather than a dashboard. Provider health gets _easier_ — alloy's transport layers offer a
-proper hook where viem needed `fetchFn`.
+verified against a live Prometheus. **All sixteen belong to the indexer**, so they arrive with it in
+Phase 3; the API defines none of its own on either side. The inventory test exists now with the one
+name the API records — `names_every_instrument_this_binary_records`, asserting the whole set rather
+than looking one up — and the fifteen join it there. Provider health gets _easier_ — alloy's transport
+layers offer a proper hook where viem needed `fetchFn`.
 
 ### 3. Each cutover destroys its own oracle
 
@@ -392,16 +406,21 @@ are already covered by store specs that run against a real server.
 
 Parameters stay bound (`$1`, `$2`), so the parameterisation property the catalog comment praises
 holds, and the only unbound string remains the DDL in the migration runner, which is a repo file.
-`tracing` spans come natively, which means
 [`traced-sql.ts`](../packages/postgres/src/traced-sql.ts) — the `Proxy` over `Sql` with the shadowed
-`then` — is **deleted rather than ported.**
+`then` — is **deleted rather than ported**, but not for the reason first written here: the driver
+emits nothing, because `tokio-postgres` speaks `log` rather than `tracing`. What goes instead is one
+`instrument` per read against `postgres::query_span`, which is four lines rather than a hundred and
+publishes `db.query.text` safely — every statement is a `const` and every value a bind parameter,
+where the TypeScript needed `strings.raw` to keep interpolated values off a span.
 
 ### Config ordering
 
-`OTEL_*` is read by the preloaded SDK before Nest exists, which is why
-[Configuration](design-notes.md#configuration) carries a paragraph explaining that one group of
-variables does not go through Zod. In Rust `main()` initialises telemetry and then the app, from one
-parsed config. Delete the explanation along with the problem.
+`OTEL_*` was read by the preloaded SDK before Nest existed, which is why
+[Configuration](design-notes.md#configuration) carried a paragraph explaining that one group of
+variables did not go through Zod. In Rust `main()` initialises telemetry and then the app, from one
+parsed config, and both the exception and the explanation are gone. `OTEL_SERVICE_NAME` is the second
+variable in `bins/api/src/config.rs` with no default, refused on the same grounds as the cursor
+secret.
 
 ## Phases
 
@@ -722,7 +741,12 @@ The binary ends up at 5.8 MB, the routes name the three files one by one so noth
 path is reachable, and a process without the directory serves the document with no viewer in front of
 it, which is what a `cargo run` outside the image gets.
 
-Left: `crates/telemetry`.
+`crates/telemetry` closes it: three signals over OTLP from one parsed config, the HTTP seam in
+`bins/api/src/requests.rs`, and both database seams. Measured on the musl image rather than guessed —
+the binary goes 7,072,072 bytes to 12,321,608, and RSS 2.7 MiB to 4.1 MiB against the +23 MiB the
+TypeScript SDK costs. `OTEL_SDK_DISABLED=true` still serves and still logs.
+
+Nothing left. Phase 2 is done, and what follows is the replay harness and the cutover.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
