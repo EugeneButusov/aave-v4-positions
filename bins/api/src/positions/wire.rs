@@ -19,10 +19,16 @@ mod page;
 use std::collections::HashMap;
 
 use aave_positions::store::Position;
+use aave_positions::valuation;
 use prices::{ReserveKey, ReservePrice};
 
 pub(crate) use item::item;
 pub(crate) use page::{Page, Progress, pricing};
+
+/// A folded position this port could not render.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub(crate) struct Error(#[from] valuation::Error);
 
 /// Prices, keyed as the store hands them back.
 pub(crate) type Prices = HashMap<ReserveKey, ReservePrice>;

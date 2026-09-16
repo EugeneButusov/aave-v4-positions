@@ -50,6 +50,7 @@ tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "s
 # it becomes. Neither feature is a default and both are why this is declared here
 # rather than inherited: `formatting` carries `format`, and `macros` the four
 # const format descriptions `dto` picks between.
+thiserror = "2.0.19"
 time = { version = "0.3.55", features = ["formatting", "serde"] }
 # `ServiceBuilder`, so the two request-id layers are ordered where a reader can
 # see it rather than by the direction `Router::layer` happens to compose.

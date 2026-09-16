@@ -4,13 +4,13 @@ use std::collections::HashMap;
 
 use aave_positions::scale::{self, ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
 use aave_positions::store::{Position, PositionAsset};
-use aave_positions::valuation::{self, Valuation, to_value};
+use aave_positions::valuation::{Valuation, to_value};
 use alloy_primitives::{Address, I256};
 use prices::ReservePrice;
 use serde::Serialize;
 use token_metadata::TokenLabel;
 
-use super::{Prices, price_for};
+use super::{Error, Prices, price_for};
 
 type Labels = HashMap<Address, TokenLabel>;
 
@@ -159,11 +159,7 @@ struct Value {
     total_debt_usd: Option<String>,
 }
 
-pub(crate) fn item(
-    position: &Position,
-    labels: &Labels,
-    prices: &Prices,
-) -> Result<Item, valuation::Error> {
+pub(crate) fn item(position: &Position, labels: &Labels, prices: &Prices) -> Result<Item, Error> {
     // **The asset carries the scale.** An unscaled integer in a field the
     // contract calls decimal is wrong by up to eighteen orders of magnitude.
     let decimals = position.asset.as_ref().map(|asset| asset.decimals);
@@ -231,11 +227,7 @@ pub(crate) fn item(
 ///
 /// `decimals` is the **Hub's**, from `AddAsset`, never the token's own. Where
 /// they disagree, the Hub's is what the position is worth to Aave.
-fn usd(
-    asset: &PositionAsset,
-    value: &Valuation,
-    price: &ReservePrice,
-) -> Result<Usd, valuation::Error> {
+fn usd(asset: &PositionAsset, value: &Valuation, price: &ReservePrice) -> Result<Usd, Error> {
     Ok(Usd {
         price: scale::unsigned(price.price, ORACLE_DECIMALS),
         supplied_amount: scale::unsigned(
