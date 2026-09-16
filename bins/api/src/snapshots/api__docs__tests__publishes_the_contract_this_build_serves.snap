@@ -297,7 +297,7 @@ expression: document().await
         "type": "object"
       },
       "Worth": {
-        "description": "What one position is worth at `valued_at`.\n\n**Not `Value`.** utoipa matches type names by their last segment, so a schema\ncalled that is documented as `serde_json::Value` — every field below vanishes\nfrom the contract and nothing fails.",
+        "description": "What one position is worth at `valued_at`.",
         "properties": {
           "drawn_debt": {
             "description": "Principal debt, rounded up as the Spoke does.",

@@ -445,13 +445,10 @@ async fn stamps_a_page_stale_when_the_indexer_has_stopped_advancing() {
 
 #[tokio::test]
 async fn documents_the_bounds_the_parser_enforces() {
-    // The four numbers are written twice — once where `params` enforces them and
-    // once where `#[utoipa::path]` publishes them, because utoipa's attribute
-    // parser takes a literal and not a `const`. This is what keeps them equal.
-    //
-    // The default is the one bound with no key of its own: `default` is an
-    // `IntoParams` feature and the inline form has no equivalent, so it lives in
-    // the parameter's prose and is checked there.
+    // The four are written twice — where `params` enforces them and where
+    // `#[utoipa::path]` publishes them, the attribute parser taking a literal
+    // and not a `const`. The default has no key of its own in the inline form,
+    // so it lives in the parameter's prose and is checked there.
     let request = Request::builder()
         .uri("/docs/openapi.json")
         .body(Body::empty())

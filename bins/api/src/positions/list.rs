@@ -24,8 +24,6 @@ pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list))
 }
 
-/// What a caller is told this endpoint does, as opposed to what the doc comment
-/// below tells whoever maintains it.
 const DESCRIPTION: &str = "\
 One wallet, on one chain, on one Spoke or on all of them. Ordered by Spoke then \
 reserve, paged by keyset.
@@ -59,9 +57,6 @@ behind unrelated collateral. Every row names the Spoke it came from.";
 /// **The query arrives raw rather than deserialized**: neither an unrecognised
 /// key nor every fault at once survives a `Deserialize`.
 ///
-/// The published text is [`DESCRIPTION`] and the attribute below, not this
-/// comment — utoipa would otherwise put `# Errors` in the contract.
-///
 /// # Errors
 ///
 /// A 404 when this deployment has never indexed the chain, a 400 for a cursor
@@ -88,11 +83,9 @@ behind unrelated collateral. Every row names the Spoke it came from.";
                            touched.",
             example = "0x94e7a5dcbe816e498b89ab752661904e2f56c485",
         ),
-        // The bounds are literals because utoipa's attribute parser takes
-        // nothing else here — not a `const`, and not a `default`, which only the
-        // `IntoParams` derive carries and which would cost a third declaration
-        // of these four names. `documents_the_bounds_the_parser_enforces` is
-        // what keeps the numbers equal to `params`'.
+        // Literals because the attribute parser takes nothing else, and no
+        // `default` because only `IntoParams` carries one.
+        // `documents_the_bounds_the_parser_enforces` keeps them equal to `params`'.
         (
             "limit" = Option<u32>,
             Query,

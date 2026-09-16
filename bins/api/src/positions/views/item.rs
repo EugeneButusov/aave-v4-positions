@@ -185,11 +185,9 @@ impl Asset {
     }
 }
 
+// Not `Value`: utoipa matches type names by their last segment, so a schema
+// called that is published as `serde_json::Value`, losing every field below.
 /// What one position is worth at `valued_at`.
-///
-/// **Not `Value`.** utoipa matches type names by their last segment, so a schema
-/// called that is documented as `serde_json::Value` — every field below vanishes
-/// from the contract and nothing fails.
 #[derive(Debug, Serialize, ToSchema)]
 struct Worth {
     /// Underlying redeemable for the supplied shares, in whole tokens, rounded

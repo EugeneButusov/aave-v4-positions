@@ -55,32 +55,28 @@ time = { version = "0.3.55", features = ["formatting", "serde"] }
 # `ServiceBuilder`, so the two request-id layers are ordered where a reader can
 # see it rather than by the direction `Router::layer` happens to compose.
 tower = { version = "0.5.3", features = ["util"] }
-# `fs` for the three Swagger UI files, which are served off disk rather than
-# embedded: `utoipa-swagger-ui` bakes 11 MB into the binary to ship the 2 MB a
-# page actually loads, and most of the rest is source maps.
+# `fs` for the three Swagger UI files, served off disk rather than embedded:
+# `utoipa-swagger-ui` bakes 11 MB in to ship the 2 MB a page loads.
 tower-http = { version = "0.7.0", features = ["catch-panic", "fs", "request-id"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json"] }
-# The document is generated from the handler and the view types rather than
-# written beside them, so a route or a field that moves takes the contract with
-# it. `time` because three fields are `OffsetDateTime`; `preserve_order` because
-# `errors::json` and `views` both say field order is contractual and the default
-# map alphabetises it; `yaml` because `/docs/openapi.yaml` is part of the surface
-# this replaces. No `axum_extras`: the document is byte-identical without it, and
-# it pulls `regex` into the graph.
+# The document, generated from the handler and the view types so a route or a
+# field that moves takes the contract with it. `time` for the three
+# `OffsetDateTime` fields; `preserve_order` because the default map alphabetises
+# and two files here call field order contractual; `yaml` for the second spelling
+# of the document. No `axum_extras` — byte-identical output, and it pulls `regex`
+# into the graph.
 utoipa = { version = "5.5.0", features = ["preserve_order", "time", "yaml"] }
-# Registers a route with its documentation in one call, so neither can drift —
-# and rewrites the documented path when the router is nested, so the document
-# describes what this deployment serves rather than what a literal claims.
+# Registers a route with its documentation in one call, and rewrites the
+# documented path when the router is nested, so neither can drift.
 utoipa-axum = "0.2.0"
 
 [dev-dependencies]
-# The document is too large to assert as a literal and too small to describe:
-# a snapshot is the only shape that answers "what changed" in a diff. `json` so
-# the committed form is the document rather than a `Debug` of it.
+# The document is too large to assert as a literal and too small to describe.
+# `json` so the committed form is the document rather than a `Debug` of it.
 insta = { version = "1.48.0", features = ["json"] }
-# Reading one field back out of a body a case has already asserted whole, and the
-# document back out of the route that serves it.
+# Reading one field back out of a body a case has already asserted whole, and
+# the document back out of the route that serves it.
 serde_json = "1.0.151"
 
 [lints]

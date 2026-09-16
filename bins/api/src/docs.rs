@@ -1,20 +1,11 @@
-//! Where the contract is published, and in what.
+//! Where the contract is published: the viewer at `API_DOCS_PATH`, and the
+//! document as JSON and as YAML beneath it.
 //!
-//! Three addresses, the same three the service this replaces serves: the viewer
-//! at `API_DOCS_PATH`, and the document itself as JSON and as YAML beneath it.
-//! **Always served**, with no flag to turn it off — a contract absent from the
-//! environment people actually call is not much of a contract.
-//!
-//! **The viewer's files are on disk, not in the binary.** `utoipa-swagger-ui`
-//! embeds the whole `swagger-ui-dist` release, which is 11 MB to ship the 2 MB a
-//! page loads — the rest is source maps and bundles nobody fetches — and it
-//! carries a build script and a `Zlib`-licensed unzipper to do it. The three
-//! files below are copied into the image instead, and named one by one rather
-//! than served from a directory: nothing else under that path is reachable.
-//!
-//! The page itself is written here rather than taken from the release, whose
-//! `index.html` points at the Petstore. It is the only part of the viewer this
-//! repository owns, and the only part that knows where the document is.
+//! **The viewer's files are on disk rather than in the binary** —
+//! `utoipa-swagger-ui` embeds 11 MB to ship the 2 MB a page loads. They are
+//! named one by one rather than served from a directory, so nothing else under
+//! that path is reachable, and the page is written here because the release's
+//! own points at the Petstore.
 
 use std::path::Path;
 
@@ -40,10 +31,9 @@ const ASSETS: [&str; 3] = [
 pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
     let page = page(mount);
 
-    // Rendered per request from a clone rather than once into bytes. `Arc` is
-    // not an option — `Serialize` for it is behind serde's `rc` feature — and
-    // rendering once would have to answer for a failure with no request in front
-    // of it. The document is sixteen kilobytes and this route is cold.
+    // Per request from a clone: `Serialize for Arc` is behind serde's `rc`
+    // feature, and rendering once would have to answer for a failure with no
+    // request in front of it. Sixteen kilobytes, on a cold route.
     let rendered = api.clone();
     let document = get(move || {
         let api = rendered.clone();
@@ -63,9 +53,8 @@ pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
         .route(&format!("{mount}/openapi.json"), document)
         .route(&format!("{mount}/openapi.yaml"), yaml);
 
-    // Both spellings, because axum matches them as two paths and either is what
-    // somebody types. An empty mount is already `/` and cannot be registered
-    // twice.
+    // Both spellings, because axum matches them as two paths. An empty mount is
+    // already `/` and cannot be registered twice.
     for at in if mount.is_empty() {
         vec!["/".to_owned()]
     } else {
@@ -85,8 +74,7 @@ pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
     router
 }
 
-/// The page, pointing at this deployment's own document rather than at the
-/// Petstore the release ships.
+/// The page, pointing at this deployment's own document.
 fn page(mount: &str) -> String {
     format!(
         r##"<!doctype html>
@@ -118,9 +106,8 @@ fn page(mount: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    //! Read back through the router, never rebuilt. A document a test assembles
-    //! for itself is a second definition, and the thing most worth catching is
-    //! the two disagreeing.
+    //! Read back through the router, never rebuilt: a document a test assembles
+    //! for itself is a second definition.
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -154,8 +141,8 @@ mod tests {
         &document["components"]["schemas"][schema]["properties"][field]
     }
 
-    /// `type` is one name or a list of them in OpenAPI 3.1, and a nullable field
-    /// is spelled as the list. Both answer here as a list.
+    /// `type` is one name or a list of them in 3.1; a nullable field is the
+    /// list. Both answer here as a list.
     fn types(schema: &Value) -> Vec<&str> {
         match &schema["type"] {
             Value::String(one) => vec![one.as_str()],
@@ -175,17 +162,16 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_the_contract_this_build_serves() {
-        // The guard. Everything below names one rule and would survive the rest
-        // of the document changing; this is what notices that it did.
+        // The guard: everything below names one rule and would survive the rest
+        // of the document changing.
         insta::assert_json_snapshot!(document().await);
     }
 
     #[tokio::test]
     async fn gives_every_operation_a_typed_success_response() {
         // A route registered without a response body still routes and still
-        // appears, but with nothing describing what it returns — and the
-        // schemas it would have pulled in disappear with it, because a
-        // component is only reachable through a response.
+        // appears, describing nothing — and the schemas it would have pulled in
+        // go with it, a component being reachable only through a response.
         let document = document().await;
 
         let mut missing = Vec::new();
@@ -211,9 +197,8 @@ mod tests {
 
     #[tokio::test]
     async fn documents_exactly_the_path_this_service_versions() {
-        // One, and the two routes serving the document are not among them: a
-        // contract describing its own address is circular. The probes are
-        // absent by the decision `crate::openapi` records.
+        // The probes are absent by the decision `crate::openapi` records, and
+        // the routes serving the document because that would be circular.
         let document = document().await;
 
         let paths: Vec<_> = document["paths"]
@@ -228,9 +213,9 @@ mod tests {
 
     #[tokio::test]
     async fn documents_the_path_as_deployed_rather_than_as_written() {
-        // The route is declared as `/chains/{chain_id}/...` and the prefix is
-        // the deployment's. `OpenApiRouter::nest` composes the two, so the
-        // document cannot describe an address the router does not serve.
+        // `OpenApiRouter::nest` composes the declared route with the
+        // deployment's prefix, so the document cannot describe an address the
+        // router does not serve.
         let mut app = Stores::default().app(postgres());
         app.prefix = "gateway".to_owned();
 
@@ -257,8 +242,8 @@ mod tests {
 
     #[tokio::test]
     async fn types_every_share_and_amount_as_a_string() {
-        // §7.5: a share balance has more significant digits than a double keeps,
-        // so a schema calling one a number is an invitation to lose the tail.
+        // §7.5: a share balance has more significant digits than a double
+        // keeps, so a schema calling one a number loses the tail.
         let document = document().await;
 
         for field in [
@@ -291,9 +276,8 @@ mod tests {
 
     #[tokio::test]
     async fn marks_the_scale_dependent_fields_nullable_and_the_ray_not() {
-        // The distinction the field docs draw: a share needs the asset's
-        // decimals to render and a ray does not, so one survives an unresolved
-        // reserve and the others cannot.
+        // A share needs the asset's decimals to render and a ray does not, so
+        // one survives an unresolved reserve and the others cannot.
         let document = document().await;
 
         for field in [
@@ -319,8 +303,8 @@ mod tests {
 
     #[tokio::test]
     async fn marks_a_nullable_field_required_because_it_is_still_sent() {
-        // utoipa reads an `Option` as optional; serde emits it as `null`. The
-        // second is what a caller parses, so every one of them is listed.
+        // utoipa reads an `Option` as optional; serde emits it as `null`, which
+        // is what a caller parses.
         let document = document().await;
 
         for (schema, field) in [
@@ -343,14 +327,11 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_each_schema_in_the_order_the_wire_writes_it() {
-        // `errors::json` calls the envelope's field order part of the contract
-        // and `views` calls the page's declaration order. utoipa's default map
-        // is a `BTreeMap`, which would publish `error` before `message` and
-        // `items` before `sync`; `preserve_order` is what stops it.
+        // `errors::json` and `views` both call field order contractual, and
+        // utoipa's default map would publish `error` before `message`.
         //
-        // **Against the bytes, not a parsed value.** `serde_json::Value` sorts
-        // its keys, so the snapshot beside this one reads the same document
-        // either way and cannot see this at all.
+        // **Against the bytes, not a parsed value**: `serde_json::Value` sorts
+        // its keys, so the snapshot cannot see this at all.
         let (_, body) = fetch("/docs/openapi.json").await;
 
         assert!(
@@ -381,8 +362,7 @@ mod tests {
 
     #[tokio::test]
     async fn describes_the_refusals_and_not_only_the_page() {
-        // A contract that documents the happy path alone leaves a caller to
-        // discover the two refusals by causing them.
+        // Otherwise a caller discovers the two refusals by causing them.
         let document = document().await;
 
         let statuses: Vec<_> = positions(&document)["responses"]
@@ -420,8 +400,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_wrong_method_on_the_document_is_a_404_and_not_a_405() {
-        // The property `router::refuse_unmatched` exists to keep, over routes
-        // merged in after the versioned ones.
+        // `router::refuse_unmatched`'s property, over routes merged in after
+        // the versioned ones.
         let request = Request::builder()
             .method("POST")
             .uri("/docs/openapi.json")

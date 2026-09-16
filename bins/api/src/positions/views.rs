@@ -16,10 +16,9 @@
 //! §7.4's oracle reverts rather than answer one, so a zero could not be told
 //! from a real one. Field order is declaration order.
 //!
-//! **Nothing is ever omitted.** There is no `skip_serializing_if` here, so an
-//! `Option` is a key that is present and `null` rather than a key that is
-//! missing — which is why every one of them carries `#[schema(required = true)]`
-//! against utoipa's default of treating an `Option` as optional.
+//! **Nothing is omitted.** There is no `skip_serializing_if` here, so an
+//! `Option` is a key present and `null` — hence `#[schema(required = true)]` on
+//! every one, against utoipa's default of reading an `Option` as optional.
 
 mod item;
 mod page;

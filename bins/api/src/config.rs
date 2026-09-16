@@ -46,16 +46,14 @@ pub(crate) struct Config {
     /// every compose healthcheck already asks for `/health/ready`.
     pub(crate) prefix: String,
 
-    /// Where the OpenAPI document and its UI are served, outside the prefix for
-    /// the same reason. **Always served**, with no flag to turn it off: the docs
-    /// are the API's contract, and one absent from the environment people call
-    /// is not much of a contract.
+    /// Where the document and its viewer are served, outside the prefix for the
+    /// same reason. **Always served**: a contract absent from the environment
+    /// people call is not much of a contract.
     pub(crate) docs_path: String,
 
-    /// Where the Swagger UI's three files are on disk. **Not in the binary**:
-    /// embedding them costs 11 MB to ship the 2 MB a page loads, and the rest is
-    /// source maps. Absent is a working document with no viewer in front of it,
-    /// which is what a `cargo run` outside the image gets.
+    /// Where the viewer's three files are on disk — the image copies them in.
+    /// Absent is the document with no viewer in front of it, which is what a
+    /// `cargo run` outside the image gets.
     pub(crate) docs_assets: String,
     pub(crate) cursor_secret: String,
     pub(crate) staleness: Staleness,

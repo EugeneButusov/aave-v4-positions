@@ -55,7 +55,6 @@ pub(crate) struct App {
     pub(crate) prefix: String,
 
     /// Where the document is published, and where the viewer's files are.
-    /// Read once here for the same reason.
     pub(crate) docs_path: String,
     pub(crate) docs_assets: String,
 }
@@ -89,18 +88,16 @@ pub(crate) fn handler(app: App) -> Router {
     let assets = app.docs_assets.clone();
     let state = AppState(Arc::new(app));
 
-    // **Split before the probes and the document are merged in**, so neither
-    // appears in what is published. The contract describes the versioned API:
-    // the probes by the decision `openapi` records, and the routes that serve
-    // the document because a document describing its own address is circular.
+    // Split before the probes and the document are merged in, so neither
+    // appears in what is published — the probes by the decision `openapi`
+    // records, the document's own routes because that would be circular.
     let (versioned, api) = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
         .nest(&mount, positions::routes().with_state(state.clone()))
         .split_for_parts();
 
     // The probes take no prefix and no version: a readiness check is not part
     // of the API's versioned surface, and all three compose healthchecks ask
-    // for `/health/ready`. The document takes no prefix either, and for the
-    // reason `router::docs` gives.
+    // for `/health/ready`. Nor does the document.
     let served = Router::new()
         .merge(probes::routes(state))
         .merge(versioned)

@@ -60,16 +60,12 @@ USER nobody
 ENTRYPOINT ["/usr/local/bin/migrate"]
 
 # -------------------------------------------------------------- docs-assets --
-# The Swagger UI, taken from its own release rather than compiled into the
-# binary. `utoipa-swagger-ui` embeds the whole `swagger-ui-dist` — 11 MB, to ship
-# the 2 MB a page actually loads, the rest being source maps and bundles nobody
-# fetches — and carries a build script and a `Zlib`-licensed unzipper to do it.
-# Measured: embedding took the release binary from 4.9 MB to 17.4 MB.
+# The Swagger UI, from its own release rather than compiled into the binary:
+# `utoipa-swagger-ui` embeds the whole 11 MB `swagger-ui-dist` to ship the 2 MB a
+# page loads, and took the release binary from 4.9 MB to 17.4 MB when measured.
 #
 # Pinned by version *and* by digest. Three files plus the licence, which is the
-# whole of what the page in `bins/api/src/docs.rs` references; nothing else in
-# the release is copied and nothing else is reachable, because the routes name
-# the files one by one rather than serving a directory.
+# whole of what the page in `bins/api/src/docs.rs` references.
 FROM alpine:${ALPINE_VERSION} AS docs-assets
 ARG SWAGGER_UI_VERSION=5.33.0
 ARG SWAGGER_UI_SHA256=434c69385aa02154348e6dcce0076df3a25ed88f673ac16cf4fed3fcf62c3b1b

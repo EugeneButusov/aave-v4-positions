@@ -74,8 +74,6 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
 
     let shutdown = ShutdownFlag::new();
 
-    // Worked out here as well as inside the router, because the line below is
-    // the only place anybody is told where the contract went.
     let document = format!("{}/openapi.json", router::docs(&config.docs_path));
 
     let handler = app::handler(App {
