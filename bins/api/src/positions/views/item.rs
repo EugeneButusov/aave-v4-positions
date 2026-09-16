@@ -6,11 +6,12 @@ use aave_positions::valuation::{Valuation, to_value};
 use alloy_primitives::I256;
 use prices::ReservePrice;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 use super::{Error, Labels, Prices, price_for};
 
 /// One user's stake in one reserve on one Spoke.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct Item {
     chain_id: u32,
 
@@ -36,12 +37,15 @@ pub(crate) struct Item {
     /// so without it there is no honest way to render this, and an unscaled
     /// integer in a field documented as decimal would be wrong by orders of
     /// magnitude.
+    #[schema(required = true)]
     supplied_shares: Option<String>,
 
     /// Borrowed balance, in shares. Null on the same terms as `supplied_shares`.
+    #[schema(required = true)]
     drawn_shares: Option<String>,
 
     /// Accrued risk premium, in shares. Null on the same terms.
+    #[schema(required = true)]
     premium_shares: Option<String>,
 
     /// Premium offset, as a ray ratio. **Never null**, unlike the share fields
@@ -53,9 +57,11 @@ pub(crate) struct Item {
     /// Net principal supplied, in asset units. A *flow*, not a balance: it sums
     /// what the events carried, and between events the interest index accrues
     /// while emitting nothing. Null on the same terms as `supplied_shares`.
+    #[schema(required = true)]
     net_supplied_amount: Option<String>,
 
     /// Net principal borrowed, in asset units. Also a flow.
+    #[schema(required = true)]
     net_borrowed_amount: Option<String>,
 
     /// The user's own collateral flag, and only that. It is not the `collateral`
@@ -71,13 +77,15 @@ pub(crate) struct Item {
 
     /// What `reserve_id` actually refers to, once the registry and the Hub have
     /// both been read. Null with `value` when the join has nothing to offer.
+    #[schema(required = true)]
     asset: Option<Asset>,
 
     /// The shares above, converted to whole tokens at `valued_at`. Null when
     /// `asset` is, and also when the Hub has listed the asset but not yet
     /// checkpointed its index — a zero there could not be told apart from a real
     /// zero balance.
-    value: Option<Value>,
+    #[schema(required = true)]
+    value: Option<Worth>,
 }
 
 impl Item {
@@ -125,13 +133,13 @@ impl Item {
                 .value
                 .as_ref()
                 .zip(decimals)
-                .map(|(value, decimals)| Value::new(value, decimals, usd.as_ref())),
+                .map(|(value, decimals)| Worth::new(value, decimals, usd.as_ref())),
         })
     }
 }
 
 /// What a reserve refers to, once the registry and the Hub have both been read.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct Asset {
     /// The Hub's id for the asset, which is what makes it comparable across
     /// Spokes.
@@ -151,9 +159,11 @@ struct Asset {
     /// two tokens claiming the same one. `underlying` is the identity. Null when
     /// the token has no `symbol()`, which ERC-20 permits, and also in the window
     /// before enrichment has reached a newly listed asset.
+    #[schema(required = true)]
     symbol: Option<String>,
 
     /// The token's own `name()`. Null on the same terms as `symbol`.
+    #[schema(required = true)]
     name: Option<String>,
 }
 
@@ -175,9 +185,11 @@ impl Asset {
     }
 }
 
+// Not `Value`: utoipa matches type names by their last segment, so a schema
+// called that is published as `serde_json::Value`, losing every field below.
 /// What one position is worth at `valued_at`.
-#[derive(Debug, Serialize)]
-struct Value {
+#[derive(Debug, Serialize, ToSchema)]
+struct Worth {
     /// Underlying redeemable for the supplied shares, in whole tokens, rounded
     /// down as the Hub does.
     supplied_amount: String,
@@ -200,22 +212,25 @@ struct Value {
     /// protocol's view rather than the market's, which is the right one for a
     /// position: it is the number that drives liquidation. Null when the oracle
     /// has not been read for this reserve yet, or when `as_of` is set.
+    #[schema(required = true)]
     price_usd: Option<String>,
 
     /// What `supplied_amount` is worth, in dollars. Every digit the protocol
     /// computed is kept — §7.1's unit puts `1e26` at one dollar, and this is
     /// that number divided rather than rounded, so it still reconciles against
     /// `getUserAccountData` exactly. Null on the same terms as `price_usd`.
+    #[schema(required = true)]
     supplied_amount_usd: Option<String>,
 
     /// What `total_debt` is worth, in dollars. Note this prices the **rounded**
     /// token amount, which is what is owed and what a caller should display. The
     /// health factor is computed from an unrounded ray-scaled debt instead, so
     /// the two will differ in the last digits by design.
+    #[schema(required = true)]
     total_debt_usd: Option<String>,
 }
 
-impl Value {
+impl Worth {
     fn new(value: &Valuation, decimals: u8, usd: Option<&Usd>) -> Self {
         Self {
             supplied_amount: scale::unsigned(value.supplied_amount, decimals),

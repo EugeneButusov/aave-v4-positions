@@ -1,0 +1,481 @@
+---
+source: bins/api/src/docs.rs
+expression: document().await
+---
+{
+  "components": {
+    "schemas": {
+      "ApiErrorResponse": {
+        "description": "The JSON body returned for API errors.",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status_code": {
+            "example": 404,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "message",
+          "error",
+          "status_code"
+        ],
+        "type": "object"
+      },
+      "Asset": {
+        "description": "What a reserve refers to, once the registry and the Hub have both been read.",
+        "properties": {
+          "asset_id": {
+            "description": "The Hub's id for the asset, which is what makes it comparable across\nSpokes.",
+            "type": "string"
+          },
+          "decimals": {
+            "description": "Token decimals, as the Hub listed them.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "hub": {
+            "description": "The Hub holding the liquidity.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The token's own `name()`. Null on the same terms as `symbol`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "description": "The token's own `symbol()`. **A label, not an identity** — nothing stops\ntwo tokens claiming the same one. `underlying` is the identity. Null when\nthe token has no `symbol()`, which ERC-20 permits, and also in the window\nbefore enrichment has reached a newly listed asset.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "underlying": {
+            "description": "The ERC-20 itself. It appears in no Spoke event — resolving it needs the\nreserve registry and the Hub's own asset listing.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "asset_id",
+          "hub",
+          "underlying",
+          "decimals",
+          "symbol",
+          "name"
+        ],
+        "type": "object"
+      },
+      "Item": {
+        "description": "One user's stake in one reserve on one Spoke.",
+        "properties": {
+          "asset": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Asset",
+                "description": "What `reserve_id` actually refers to, once the registry and the Hub have\nboth been read. Null with `value` when the join has nothing to offer."
+              }
+            ]
+          },
+          "chain_id": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "drawn_shares": {
+            "description": "Borrowed balance, in shares. Null on the same terms as `supplied_shares`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "events": {
+            "description": "Ledger rows folded into this position. Never zero for a returned one.",
+            "format": "int32",
+            "type": "integer"
+          },
+          "net_borrowed_amount": {
+            "description": "Net principal borrowed, in asset units. Also a flow.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "net_supplied_amount": {
+            "description": "Net principal supplied, in asset units. A *flow*, not a balance: it sums\nwhat the events carried, and between events the interest index accrues\nwhile emitting nothing. Null on the same terms as `supplied_shares`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "premium_offset_ray": {
+            "description": "Premium offset, as a ray ratio. **Never null**, unlike the share fields\nbeside it: a ray's scale is the protocol's fixed 27 rather than the\nasset's, so it can be rendered whether or not the registry has resolved\nthe reserve.",
+            "type": "string"
+          },
+          "premium_shares": {
+            "description": "Accrued risk premium, in shares. Null on the same terms.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reserve_id": {
+            "description": "The Spoke's own index for the reserve, and the only asset identity a\nposition has today. Not a protocol-wide asset id and not a token address\n— no Spoke event carries one. The same id on two Spokes means two\ndifferent things.",
+            "type": "string"
+          },
+          "spoke": {
+            "description": "The Spoke this position lives on. Always present, including when the\nrequest did not filter on one. Two Spokes are two isolated margin\naccounts with their own collateral factors, oracle and health factor, so\npositions on them may be listed together but must never be summed.",
+            "type": "string"
+          },
+          "supplied_shares": {
+            "description": "Supplied balance, in shares, scaled by the asset's decimals. Not an asset\namount. **Null exactly when `asset` is**: the scale lives on the asset,\nso without it there is no honest way to render this, and an unscaled\ninteger in a field documented as decimal would be wrong by orders of\nmagnitude.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user": {
+            "description": "The position owner, lower-cased. Never the caller that routed the action\n— position managers act on behalf of users, and crediting them would\nattribute large parts of the book to a handful of router addresses.",
+            "type": "string"
+          },
+          "using_as_collateral": {
+            "description": "The user's own collateral flag, and only that. It is not the `collateral`\nposition type, which additionally requires a non-zero collateral factor\nunder the version of the reserve config the user is pinned to — config\nevents this build does not ingest. Five of the Main Spoke's fourteen\nreserves sit at a zero factor, so this flag alone overstates collateral\nfor those.",
+            "type": "boolean"
+          },
+          "value": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Worth",
+                "description": "The shares above, converted to whole tokens at `valued_at`. Null when\n`asset` is, and also when the Hub has listed the asset but not yet\ncheckpointed its index — a zero there could not be told apart from a real\nzero balance."
+              }
+            ]
+          }
+        },
+        "required": [
+          "chain_id",
+          "user",
+          "spoke",
+          "reserve_id",
+          "supplied_shares",
+          "drawn_shares",
+          "premium_shares",
+          "premium_offset_ray",
+          "net_supplied_amount",
+          "net_borrowed_amount",
+          "using_as_collateral",
+          "events",
+          "asset",
+          "value"
+        ],
+        "type": "object"
+      },
+      "Page": {
+        "description": "One wallet's positions, valued at one instant.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Item"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "description": "Hand back verbatim as `cursor` to fetch the next page. `null` is the last\npage. Opaque and signed: it is only valid for the listing that issued it,\nso changing the wallet, chain or Spoke filter while reusing it is refused\nrather than silently resuming somewhere else.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pricing": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Pricing",
+                "description": "How current the prices behind this page are — **a third clock**, beside\n`sync` and `valued_at`, because prices have their own source and their\nown cadence. Null when nothing here is priced, and null whenever `as_of`\nis set: amounts are extrapolated to that instant and prices are not, so a\nvalue mixing the two would be a number that never existed."
+              }
+            ]
+          },
+          "sync": {
+            "$ref": "#/components/schemas/Progress",
+            "description": "How current this payload is. Present on every page, because amounts are\nper-block quantities and a page whose sync differs from the previous one\nis the honest signal that the indexer advanced mid-walk."
+          },
+          "valued_at": {
+            "description": "When every amount on this page was computed — one instant for the whole\npage, so two positions in it cannot disagree about the time. Defaults to\nnow, which is the same choice the chain makes. Distinct from\n`sync.last_block`: the shares are as far as the indexer has folded, the\namounts are those shares valued at this instant.\n\nThe `as_of` **query parameter** that sets it is Unix seconds, so\nround-tripping this value means converting it.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sync",
+          "valued_at",
+          "pricing",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "Pricing": {
+        "description": "How current the prices behind this page are.",
+        "properties": {
+          "age_seconds": {
+            "description": "Seconds since then, measured by the database clock rather than this\nprocess's, so clock skew between the two cannot be reported as staleness.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stale": {
+            "description": "Whether that exceeds this deployment's threshold. It measures how long\nsince **we** last read the oracle, never how long since a feed last\nmoved — an hour without a Chainlink update is normal behaviour, and a\nthreshold set from feed cadence would flag healthy feeds forever.",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "description": "When the oldest price behind any number on this page was read.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "updated_at",
+          "age_seconds",
+          "stale"
+        ],
+        "type": "object"
+      },
+      "Progress": {
+        "description": "How far the indexer has got on this chain.",
+        "properties": {
+          "age_seconds": {
+            "description": "Seconds since the indexer last advanced. Measured on the server that\nwrote the timestamp, so it is not affected by clock skew between hosts.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_block": {
+            "description": "The last block the indexer processed on this chain.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_block_hash": {
+            "description": "The hash the indexer saw at that height.",
+            "type": "string"
+          },
+          "stale": {
+            "description": "Whether `age_seconds` has passed this deployment's freshness threshold. A\nstale response is still served — the numbers were true as of\n`last_block` — but they are behind the chain.",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "description": "When the indexer last advanced, by the database clock that recorded it.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "last_block",
+          "last_block_hash",
+          "updated_at",
+          "age_seconds",
+          "stale"
+        ],
+        "type": "object"
+      },
+      "Worth": {
+        "description": "What one position is worth at `valued_at`.",
+        "properties": {
+          "drawn_debt": {
+            "description": "Principal debt, rounded up as the Spoke does.",
+            "type": "string"
+          },
+          "drawn_index": {
+            "description": "The interest index this valuation used: the last checkpoint extrapolated\nto `valued_at`, as a ray ratio where `1` is no accrual. Published so a\ncaller can reproduce the arithmetic rather than trust it.",
+            "type": "string"
+          },
+          "premium_debt": {
+            "description": "Accrued risk premium, in whole tokens.",
+            "type": "string"
+          },
+          "price_usd": {
+            "description": "What Aave's own oracle prices one whole token at, in dollars. This is the\nprotocol's view rather than the market's, which is the right one for a\nposition: it is the number that drives liquidation. Null when the oracle\nhas not been read for this reserve yet, or when `as_of` is set.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supplied_amount": {
+            "description": "Underlying redeemable for the supplied shares, in whole tokens, rounded\ndown as the Hub does.",
+            "type": "string"
+          },
+          "supplied_amount_usd": {
+            "description": "What `supplied_amount` is worth, in dollars. Every digit the protocol\ncomputed is kept — §7.1's unit puts `1e26` at one dollar, and this is\nthat number divided rather than rounded, so it still reconciles against\n`getUserAccountData` exactly. Null on the same terms as `price_usd`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total_debt": {
+            "description": "`drawn_debt + premium_debt`.",
+            "type": "string"
+          },
+          "total_debt_usd": {
+            "description": "What `total_debt` is worth, in dollars. Note this prices the **rounded**\ntoken amount, which is what is owed and what a caller should display. The\nhealth factor is computed from an unrounded ray-scaled debt instead, so\nthe two will differ in the last digits by design.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "supplied_amount",
+          "drawn_debt",
+          "premium_debt",
+          "total_debt",
+          "drawn_index",
+          "price_usd",
+          "supplied_amount_usd",
+          "total_debt_usd"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Indexed Aave v4 user positions, enriched and served for querying.\n\nPositions in v4 have no token representation — no `aToken`, no `Transfer` events. They exist only as structs in Spoke storage, so everything served here is folded from the Spoke and Hub event streams rather than read back from chain state. Protocol details and the derivations behind each field are in `docs/aave-v4-protocol-analysis.md`.\n\n**Integer amounts are strings.** Share balances exceed the 53-bit mantissa of a JSON number, and the failure mode of getting this wrong is a few wei of drift that reads as a rounding bug rather than a parse error.",
+    "license": {
+      "name": "MIT"
+    },
+    "title": "Aave v4 Positions API",
+    "version": "0.2.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/chains/{chain_id}/users/{user}/positions": {
+      "get": {
+        "description": "One wallet, on one chain, on one Spoke or on all of them. Ordered by Spoke then reserve, paged by keyset.\n\n**Every number is a decimal string, already scaled.** Amounts are in whole tokens, `price_usd` and the `*_usd` fields are in dollars, and `drawn_index` and `premium_offset_ray` are ray ratios where `1` is no accrual. Nothing on the wire is in base units, so no caller has to know that a Value is `1e26` to the dollar or that a ray is `1e27` — but they are **strings**, and parsing one into a float undoes the point: a share balance of `422166581625087.607993` has 21 significant digits and a double keeps 17. Use a decimal type.\n\n**Balances are shares, not asset amounts.** A share is not a balance: the Hub index accrues every second and emits nothing, so `value` carries the shares converted at `valued_at` and the top-level figures are what the events themselves said. `net_supplied_amount` is a flow — what went in less what came out — and the difference between it and `value.supplied_amount` is interest.\n\n**A field is null when the answer is unknown, never zero.** `asset` and `value` are null together when the registry has not resolved the reserve, and the share fields go with them, because the decimals that scale them live on the asset. The `*_usd` fields are null when the oracle has not priced the reserve, and whenever `as_of` is set. No health factor yet; the derivation is in `docs/aave-v4-protocol-analysis.md`.\n\n**Positions from different Spokes may be listed together but never summed.** Each Spoke is an isolated margin account with its own collateral factors, oracle and health factor, so a total across two of them hides an imminent liquidation behind unrelated collateral. Every row names the Spoke it came from.",
+        "operationId": "list",
+        "parameters": [
+          {
+            "description": "The chain to read. Required.",
+            "example": 1,
+            "in": "path",
+            "name": "chain_id",
+            "required": true,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The position owner. Checksummed or lower-case, either matches.",
+            "example": "0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8",
+            "in": "path",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Narrow to one Spoke. Omit to list every Spoke this wallet has touched.",
+            "example": "0x94e7a5dcbe816e498b89ab752661904e2f56c485",
+            "in": "query",
+            "name": "spoke",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many positions to return. Defaults to 50.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "A `next_cursor` from a previous page, handed back verbatim. Only valid for the listing that issued it.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Unix seconds to value the page at. Defaults to now — amounts accrue every second and the chain emits nothing while they do, so naming the instant is what makes a response reproducible. Echoed back as `valued_at`.",
+            "in": "query",
+            "name": "as_of",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "maximum": 4102444800,
+              "minimum": 1774277159,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            },
+            "description": "One page of this wallet's positions."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "A malformed address, a limit outside its bounds, an unrecognised query parameter, or a cursor this service did not issue for this listing."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "This deployment has never indexed that chain, so it cannot answer for it. Also returned in the window between an indexer starting and recording its first block."
+          }
+        },
+        "summary": "List a wallet's positions",
+        "tags": [
+          "positions"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Folded from the Spoke event stream, enriched from the Hub and the reserve registry. Balances are shares; `value` is what they are worth at the instant the page names. Every response carries the block it is true as of, and the two clocks beside it.",
+      "name": "positions"
+    }
+  ]
+}

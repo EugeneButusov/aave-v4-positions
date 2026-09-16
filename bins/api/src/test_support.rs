@@ -142,6 +142,8 @@ impl Stores {
             signer: Signer::new(SECRET).expect("HMAC takes a key of any length"),
             staleness: self.staleness,
             prefix: "api".to_owned(),
+            docs_path: "docs".to_owned(),
+            docs_assets: "/usr/share/api/docs".to_owned(),
         }
     }
 

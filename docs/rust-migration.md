@@ -230,7 +230,7 @@ graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 | --- | --- | --- |
 | NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become trait objects rather than generics, so the composition root reads like the module graph it replaces — `Box<dyn Trait>` where one owner holds one, which is what `bins/api` does with its four, and `Arc` only where something genuinely shares one. An async port therefore carries `#[async_trait]`: `async fn` in a trait is stable and still not dyn compatible, measured on 1.96, and a boxed future per call is the price of the seam |
 | `@nestjs/platform-express` | `axum` + `tower-http` | |
-| `@nestjs/swagger` | `utoipa` + `utoipa-swagger-ui` | derive-based, so it maps onto the hand-decorated DTOs directly; the OpenAPI drift guard ports as a test over the generated document |
+| `@nestjs/swagger` | `utoipa` + `utoipa-axum` | derive-based, and it reads doc comments — so it maps onto the *field docs* rather than onto the decorators, and `positions.dto.ts`'s 367 lines of restated shape have no counterpart. `utoipa-axum` registers a route with its documentation in one call, which is what the drift guard was going to have to check by hand. **`utoipa-swagger-ui` is not taken**: it embeds the whole 11 MB `swagger-ui-dist` to ship the 2 MB a page loads, and the image copies three files instead |
 | `zod` | `serde` + `garde`; `figment` for env | five files. Abort-on-invalid-config is preserved |
 | `viem` | `alloy` | `alloy-provider`, `alloy-sol-types`, `alloy-transport-http` |
 | `@clickhouse/client` | `clickhouse` crate | 19 call sites, all `JSONEachRow` today; inserts move to RowBinary and `JSONEachRow` stays only where a `body` column is genuinely JSON |
@@ -605,6 +605,24 @@ What that costs is the "any difference is a finding" property, for those two cla
 the exception list was meant to stay short, and the trade is being made deliberately rather than
 discovered.
 
+**The two OpenAPI documents cannot be diffed as text, and the reason is the spec version.** utoipa 5
+emits `3.1.0` and `@nestjs/swagger` 11 emits `3.0.0`, so a nullable string is `"type": ["string",
+"null"]` on one side and `"type": "string", "nullable": true` on the other — every one of them, which
+would bury whatever a real difference looked like. The comparison is therefore **structural**: the
+path set under the same key transform, the operation set, each schema's property names, and
+required-and-nullable as a meaning rather than as a spelling.
+
+Four differences beyond the wire rule are the comparator's to be told, and each is a decision rather
+than a gap. **`info.version` is `0.2.0` against `0.1.0`** — twenty-four keys, a query parameter and
+the timestamp format move, so the two are not one contract, and a version naming two shapes is what
+that field exists to prevent. **The probes are absent from this document**, because `ops` calls their
+paths infrastructure and `config` calls them no part of the versioned surface; publishing them would
+contradict both, so there is one path here where the TypeScript has three. **Every integer carries a
+`format` and every clock carries `date-time`**, where the TypeScript sets none anywhere — a strict
+improvement that no JSON parser can see and every schema diff can. And **`error` is required here and
+optional there**: `ApiErrorDto` declares it `@ApiPropertyOptional`, the running service emits it
+every time, and the Rust says what the service does.
+
 **Two behaviours are the predecessor's and are pinned by test rather than by comment.** An unmatched
 *method* answers `404`, not axum's default `405` with an `allow` header — Express does not
 distinguish an unmatched method from an unmatched path — and the body echoes the whole request
@@ -673,7 +691,38 @@ is the same page. And a ceiling of a day on the staleness thresholds catches the
 milliseconds and not the sync one, which the constant now says instead of claiming to be a units
 check.
 
-Left: `crates/telemetry`, and utoipa.
+Then the contract this service serves, at `/docs`, `/docs/openapi.json` and `/docs/openapi.yaml` —
+the same three addresses, and the last thing the gate's "diff the two OpenAPI documents too" was
+waiting on. Almost none of it was written: `views/item.rs` and `views/page.rs` were already 422 lines
+of field docs, and utoipa reads those as descriptions, so seven components and six documented
+parameters came out of five derives and one attribute. `utoipa-axum` composes the deployment's prefix
+into the documented path, which means the document describes what this process serves rather than
+what a literal in an attribute claims.
+
+Three things were measured. `preserve_order` is not about determinism — both of utoipa's map types
+are deterministic — but about order, and without it the envelope publishes `error` before `message`
+against a file that calls that order part of the contract. utoipa reads an `Option` as *not required*
+where serde emits every one of them as `null`, so all fourteen say otherwise explicitly, which is the
+shape `openapi.e2e-spec.ts` asserts from the other side. And a schema called `Value` is silently
+documented as `serde_json::Value` — utoipa matches type names by their last segment — which had
+removed eight fields from the contract with nothing failing, and is why the view is now `Worth`.
+
+The one thing the snapshot could not catch was found by breaking it: dropping `preserve_order` left
+every case green, because the body is parsed into a `serde_json::Value` before it is compared and
+that sorts the keys. The order is asserted on the bytes instead.
+
+**The viewer is on disk rather than in the binary**, which is the one place this diverges from the
+library mapping and the reason is a measurement. `utoipa-swagger-ui` with `vendored` builds and runs
+— the musl image was built and checked — but it took the release binary from 4.9 MB to 17.4 MB to
+ship the 2 MB a page loads, six of the remaining eleven being source maps, and it brought a build
+script and a `Zlib`-licensed unzipper that the licence policy would have had to grant. The image
+copies `swagger-ui-dist`'s three files instead, pinned by version and digest, and the page that loads
+them is fifteen lines this repository owns — the release's own `index.html` points at the Petstore.
+The binary ends up at 5.8 MB, the routes name the three files one by one so nothing else under that
+path is reachable, and a process without the directory serves the document with no viewer in front of
+it, which is what a `cargo run` outside the image gets.
+
+Left: `crates/telemetry`.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
