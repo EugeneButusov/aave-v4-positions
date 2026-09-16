@@ -15,10 +15,6 @@
 //! `time::serde::rfc3339` writes it. **Null means unknown, never zero** —
 //! §7.4's oracle reverts rather than answer one, so a zero could not be told
 //! from a real one. Field order is declaration order.
-//!
-//! **Nothing is omitted.** There is no `skip_serializing_if` here, so an
-//! `Option` is a key present and `null` — hence `#[schema(required = true)]` on
-//! every one, against utoipa's default of reading an `Option` as optional.
 
 mod item;
 mod page;
