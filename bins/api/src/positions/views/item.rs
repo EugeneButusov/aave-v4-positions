@@ -77,7 +77,7 @@ pub(crate) struct Item {
     /// `asset` is, and also when the Hub has listed the asset but not yet
     /// checkpointed its index — a zero there could not be told apart from a real
     /// zero balance.
-    value: Option<Value>,
+    value: Option<Worth>,
 }
 
 impl Item {
@@ -125,7 +125,7 @@ impl Item {
                 .value
                 .as_ref()
                 .zip(decimals)
-                .map(|(value, decimals)| Value::new(value, decimals, usd.as_ref())),
+                .map(|(value, decimals)| Worth::new(value, decimals, usd.as_ref())),
         })
     }
 }
@@ -176,8 +176,12 @@ impl Asset {
 }
 
 /// What one position is worth at `valued_at`.
+///
+/// **Not `Value`.** utoipa matches type names by their last segment, so a schema
+/// called that is documented as `serde_json::Value` — every field below vanishes
+/// from the contract and nothing fails.
 #[derive(Debug, Serialize)]
-struct Value {
+struct Worth {
     /// Underlying redeemable for the supplied shares, in whole tokens, rounded
     /// down as the Hub does.
     supplied_amount: String,
@@ -215,7 +219,7 @@ struct Value {
     total_debt_usd: Option<String>,
 }
 
-impl Value {
+impl Worth {
     fn new(value: &Valuation, decimals: u8, usd: Option<&Usd>) -> Self {
         Self {
             supplied_amount: scale::unsigned(value.supplied_amount, decimals),
