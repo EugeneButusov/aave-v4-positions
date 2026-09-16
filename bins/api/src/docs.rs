@@ -326,6 +326,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keeps_the_toolchain_out_of_what_callers_read() {
+        // A `///` on a `ToSchema` type is the published description, so a note
+        // to whoever maintains it ships to whoever calls it. That happened once
+        // already, on `Worth`.
+        let (_, body) = fetch("/docs/openapi.json").await;
+
+        for name in ["utoipa", "serde", "rustfmt", "clippy"] {
+            assert!(!body.contains(name), "`{name}` reached the contract");
+        }
+    }
+
+    #[tokio::test]
     async fn publishes_each_schema_in_the_order_the_wire_writes_it() {
         // `errors::json` and `views` both call field order contractual, and
         // utoipa's default map would publish `error` before `message`.
