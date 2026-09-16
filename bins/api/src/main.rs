@@ -4,9 +4,10 @@
 //! why the shutdown path is written out rather than left to the runtime:
 //! `bins/migrate` runs to completion and has nothing to shutdown.
 //!
-//! Boot order is config, logging, dependencies, state, listener — one parsed
+//! Boot order is config, telemetry, dependencies, state, listener — one parsed
 //! configuration flowing downward, and nothing reading the environment behind
-//! it.
+//! it. That includes the `OTEL_*` group: the SDK this ports from had to read it
+//! for itself, before the application existed, and nothing here has to.
 //!
 //! What this file does **not** do is name a route or a layer. [`app::handler`]
 //! composes them.
@@ -15,7 +16,6 @@ mod app;
 mod config;
 mod docs;
 mod errors;
-mod logging;
 mod middleware;
 mod openapi;
 mod positions;
@@ -63,7 +63,7 @@ async fn main() -> ExitCode {
 
 async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let config = Config::from_env()?;
-    logging::init(config.level, config.pretty);
+    let telemetry = telemetry::init(config.telemetry)?;
 
     // Neither of these dials. ClickHouse's client is lazy by construction and
     // the Postgres pool is lazy by choice, so a database that is briefly down
@@ -103,6 +103,11 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     // Reached only once the accept loop has stopped and the last in-flight
     // request has been answered.
     tracing::info!("shutdown complete");
+
+    // Last, and off a worker: the flush blocks on threads that post their final
+    // batch back through this runtime, so holding a worker here is how that
+    // deadlocks. The line above goes with it.
+    tokio::task::spawn_blocking(move || telemetry.shutdown()).await?;
     Ok(())
 }
 

@@ -15,6 +15,7 @@ indexing.workspace = true
 ops.workspace = true
 postgres.workspace = true
 prices.workspace = true
+telemetry.workspace = true
 token-metadata.workspace = true
 
 # `Address` and the two 256-bit integers the stores hand back. Already linked

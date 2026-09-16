@@ -13,17 +13,20 @@
 //! the `OTEL_*` group arrives with `telemetry` — and it cannot drift from what
 //! the process honours.
 //!
-//! **One variable has no default.** A cursor signing key every deployment shares
-//! is not a signature, so an unset `POSITIONS_CURSOR_SECRET` is a process that
-//! refuses to boot rather than one that serves forgeable cursors.
+//! **Two variables have no default**, and both refuse rather than fall back. A
+//! cursor signing key every deployment shares is not a signature, so an unset
+//! `POSITIONS_CURSOR_SECRET` is a process that serves forgeable cursors. And
+//! every signal is grouped by `service.name`, so an unset `OTEL_SERVICE_NAME` is
+//! telemetry that is present, plausible and impossible to attribute — noticed
+//! for the first time during an incident. `OTEL_SDK_DISABLED=true` is how a
+//! process says it wants none of it.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::time::Duration;
 
-use tracing::level_filters::LevelFilter;
-
 use env::{Env, Invalid, Source};
+use telemetry::Sampling;
 
 use crate::positions::MIN_SECRET_BYTES;
 
@@ -35,9 +38,22 @@ use crate::positions::MIN_SECRET_BYTES;
 /// and just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
+/// The six the specification spells, and no name of our own: an operator who
+/// knows OpenTelemetry should not have to learn ours.
+const SAMPLERS: [(&str, Sampling); 6] = [
+    ("always_on", Sampling::AlwaysOn),
+    ("always_off", Sampling::AlwaysOff),
+    ("traceidratio", Sampling::TraceIdRatio),
+    ("parentbased_always_on", Sampling::ParentBasedAlwaysOn),
+    ("parentbased_always_off", Sampling::ParentBasedAlwaysOff),
+    (
+        "parentbased_traceidratio",
+        Sampling::ParentBasedTraceIdRatio,
+    ),
+];
+
 pub(crate) struct Config {
-    pub(crate) level: LevelFilter,
-    pub(crate) pretty: bool,
+    pub(crate) telemetry: telemetry::Settings,
     pub(crate) host: IpAddr,
     pub(crate) port: u16,
     pub(crate) grace: Duration,
@@ -94,8 +110,7 @@ impl Config {
         let mut env = Env::new(vars);
 
         let config = Self {
-            level: env.level("LOG_LEVEL"),
-            pretty: env.flag("LOG_PRETTY", false),
+            telemetry: telemetry(&mut env),
             host: env.address("API_HOST", "0.0.0.0"),
             port: env.port("API_PORT", 3000),
             grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)),
@@ -127,11 +142,43 @@ impl Config {
     }
 }
 
+/// Everything the exporters and the formatter are set up from.
+///
+/// **The `OTEL_*` spellings are the specification's**, which is the whole reason
+/// they can be read here alongside everything else: the service this replaces
+/// had to let its SDK read them before its own configuration existed, and that
+/// exception does not survive the port.
+fn telemetry(env: &mut Env<'_>) -> telemetry::Settings {
+    let level = env.level("LOG_LEVEL");
+    let pretty = env.flag("LOG_PRETTY", false);
+    let disabled = env.flag("OTEL_SDK_DISABLED", false);
+
+    telemetry::Settings {
+        service: if disabled {
+            String::new()
+        } else {
+            env.required("OTEL_SERVICE_NAME")
+        },
+        endpoint: env.url("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
+        sampler: env.choice(
+            "OTEL_TRACES_SAMPLER",
+            &SAMPLERS,
+            Sampling::ParentBasedAlwaysOn,
+        ),
+        ratio: env.ratio("OTEL_TRACES_SAMPLER_ARG", 1.0),
+        level,
+        pretty,
+        disabled,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! The mapping, not the readers: which variable reaches which field, and
     //! what a deployment that sets none of them gets. [`env`](mod@env) proves that a
     //! port is a port.
+
+    use tracing::level_filters::LevelFilter;
 
     use super::*;
 
@@ -150,11 +197,12 @@ mod tests {
         Config::parse(&vars)
     }
 
-    /// Every case that is not about the secret still has to set it: it is the
-    /// one variable here with no default, and without it nothing else parses.
+    /// Every case that is not about them still has to set the two variables
+    /// with no default, because without either nothing else parses.
     fn configured(pairs: &[(&str, &str)]) -> Result<Config, Invalid> {
         let mut all = pairs.to_vec();
         all.push(SECRET);
+        all.push(("OTEL_SERVICE_NAME", "api-rust"));
 
         parse(&all)
     }
@@ -163,8 +211,12 @@ mod tests {
     fn an_empty_environment_is_the_local_defaults() {
         let config = configured(&[]).expect("defaults should stand alone");
 
-        assert_eq!(config.level, LevelFilter::INFO);
-        assert!(!config.pretty);
+        assert_eq!(config.telemetry.level, LevelFilter::INFO);
+        assert!(!config.telemetry.pretty);
+        assert!(!config.telemetry.disabled);
+        assert_eq!(config.telemetry.endpoint, "http://localhost:4318");
+        assert_eq!(config.telemetry.sampler, Sampling::ParentBasedAlwaysOn);
+        assert!((config.telemetry.ratio - 1.0).abs() < f64::EPSILON);
         assert_eq!(config.host, IpAddr::from([0, 0, 0, 0]));
         assert_eq!(config.port, 3000);
         assert_eq!(config.grace, Duration::from_secs(10));
@@ -229,11 +281,20 @@ mod tests {
             ("API_GLOBAL_PREFIX", "gateway"),
             ("API_SYNC_STALE_AFTER_SECONDS", "30"),
             ("API_PRICE_STALE_AFTER_SECONDS", "900"),
+            ("OTEL_SDK_DISABLED", "false"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://telemetry:4318"),
+            ("OTEL_TRACES_SAMPLER", "parentbased_traceidratio"),
+            ("OTEL_TRACES_SAMPLER_ARG", "0.25"),
         ])
         .expect("every value is valid");
 
-        assert_eq!(config.level, LevelFilter::DEBUG);
-        assert!(config.pretty);
+        assert_eq!(config.telemetry.level, LevelFilter::DEBUG);
+        assert!(config.telemetry.pretty);
+        assert_eq!(config.telemetry.service, "api-rust");
+        assert_eq!(config.telemetry.endpoint, "http://telemetry:4318");
+        assert_eq!(config.telemetry.sampler, Sampling::ParentBasedTraceIdRatio);
+        assert!((config.telemetry.ratio - 0.25).abs() < f64::EPSILON);
+        assert!(!config.telemetry.disabled);
         assert_eq!(config.host, IpAddr::from([127, 0, 0, 1]));
         assert_eq!(config.port, 8080);
         assert_eq!(config.grace, Duration::from_secs(5));
@@ -243,6 +304,54 @@ mod tests {
         assert_eq!(config.cursor_secret, SECRET.1);
         assert_eq!(config.staleness.sync, 30);
         assert_eq!(config.staleness.price, 900);
+    }
+
+    #[test]
+    fn refuses_to_boot_unnamed_while_telemetry_is_on() {
+        // Every signal is grouped by `service.name`. Defaulting it produces
+        // telemetry that is present, plausible and attributed to nothing, which
+        // is the shape that is only ever noticed during an incident.
+        let refusal = parse(&[SECRET])
+            .err()
+            .expect("expected a refusal")
+            .to_string();
+
+        assert!(
+            refusal.contains("OTEL_SERVICE_NAME: must be set"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_process_that_wants_no_telemetry_needs_no_name_for_it() {
+        // The switch a deployment already knows, rather than a name of ours.
+        let config =
+            parse(&[SECRET, ("OTEL_SDK_DISABLED", "true")]).expect("disabled is a complete answer");
+
+        assert!(config.telemetry.disabled);
+        assert_eq!(config.telemetry.service, "");
+    }
+
+    #[test]
+    fn takes_the_samplers_the_specification_spells_and_no_others() {
+        let sampler = |value| {
+            configured(&[("OTEL_TRACES_SAMPLER", value)]).map(|config| config.telemetry.sampler)
+        };
+
+        assert_eq!(sampler("always_off").expect("spelled"), Sampling::AlwaysOff);
+        assert_eq!(
+            sampler("traceidratio").expect("spelled"),
+            Sampling::TraceIdRatio
+        );
+
+        let refusal = sampler("parentbased_jaeger_remote")
+            .expect_err("expected a refusal")
+            .to_string();
+
+        assert!(
+            refusal.contains("OTEL_TRACES_SAMPLER: must be one of"),
+            "{refusal}"
+        );
     }
 
     #[test]
