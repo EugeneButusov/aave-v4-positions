@@ -6,35 +6,69 @@
 //! `from_fn_with_state` middleware it has; this one has none yet and a parameter
 //! nothing reads is `dead_code`, which the workspace denies.
 //!
-//! **No `TraceLayer` yet, and that is not a gap.** The TypeScript excludes
-//! `/health` from request logging, so a process serving only probes emits
-//! exactly what its predecessor does for the same traffic — nothing. It lands
-//! with the first route worth tracing, where the exclusion has something to
-//! exclude.
+//! **The observation layer is outermost, and that ordering is the contract.**
+//! A request id prefers the trace id over a fresh UUID, so the span has to exist
+//! before the id is minted — which is the order the service this ports from gets
+//! for free, its HTTP instrumentation having opened a server span long before
+//! `genReqId` runs.
 
 use std::any::Any;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{StatusCode, header};
+use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::request_id::{
+    MakeRequestId, MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
+
+use crate::requests::{self, Instruments};
 
 pub(crate) fn apply(router: Router) -> Router {
+    let instruments = Instruments::new();
+
     router.layer(
-        // Ordered explicitly, because it has to be: `SetRequestId` is outermost
-        // so the header exists before anything downstream reads it,
-        // `PropagateRequestId` sits inside it to copy the value onto the way
-        // out, and `CatchPanic` is innermost so the 500 it makes still travels
-        // out through both and carries the id. Reversed, every response would
-        // carry a fresh id unrelated to the one the caller sent.
+        // Ordered explicitly, because it has to be: the span is outermost so
+        // everything below it, the request id included, is made inside a
+        // request that is already being traced; `SetRequestId` next so the
+        // header exists before anything downstream reads it;
+        // `PropagateRequestId` inside it to copy the value onto the way out; and
+        // `CatchPanic` innermost so the 500 it makes still travels out through
+        // all three and carries the id. Reversed, every response would carry a
+        // fresh id unrelated to the one the caller sent.
         ServiceBuilder::new()
-            .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+            .layer(axum::middleware::from_fn(move |request, next| {
+                requests::observe(instruments.clone(), request, next)
+            }))
+            .layer(SetRequestIdLayer::x_request_id(Traced))
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(CatchPanicLayer::custom(panicked)),
     )
+}
+
+/// The trace id when there is one, a fresh UUID when there is not.
+///
+/// **They answer different questions, which is why both travel.** `x-request-id`
+/// is caller-supplied, echoed on the response and stable across a retry; a trace
+/// id is none of those. Preferring it here is only what stops a line carrying a
+/// request id and a trace id that have nothing to do with each other, and an
+/// echoed header that names neither.
+#[derive(Clone, Copy)]
+struct Traced;
+
+impl MakeRequestId for Traced {
+    fn make_request_id<B>(&mut self, request: &Request<B>) -> Option<RequestId> {
+        // Only reached when the caller sent none: `SetRequestId` keeps the one
+        // it was given, which is the ordering that matters. An id a caller can
+        // quote is theirs; everyone else gets the trace rather than a UUID
+        // unrelated to anything else on the line.
+        telemetry::trace_id(&tracing::Span::current())
+            .and_then(|id| id.parse().ok())
+            .map(RequestId::new)
+            .or_else(|| MakeRequestUuid.make_request_id(request))
+    }
 }
 
 /// A panic is a bug here, and the caller learns nothing about it.
@@ -142,6 +176,51 @@ mod tests {
         let (_, _, request_id) = get(crate::test_support::handler(postgres()), request).await;
 
         assert_eq!(request_id.as_deref(), Some("from-the-caller"));
+    }
+
+    #[test]
+    fn the_request_id_a_caller_gets_back_is_the_trace_id() {
+        // Without this a line carries a `request_id` and a `trace_id` that have
+        // nothing to do with each other, and the echoed header names neither.
+        // It is the branch the service this ports from never had a test for.
+        let request = Request::builder()
+            .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
+            .body(Body::empty())
+            .unwrap();
+
+        let observed = crate::test_support::observed(
+            crate::test_support::handler(crate::test_support::unreachable_postgres()),
+            request,
+        );
+        let trace = observed.spans[0].span_context.trace_id().to_string();
+
+        assert_eq!(observed.request_id.as_deref(), Some(trace.as_str()));
+    }
+
+    #[test]
+    fn a_caller_s_own_request_id_outranks_the_trace_id() {
+        // It is caller-supplied, echoed and stable across a retry, none of
+        // which a trace id is. Replacing it would lose the one thing that makes
+        // a client-side bug report findable.
+        let request = Request::builder()
+            .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
+            .header("x-request-id", "from-the-caller")
+            .body(Body::empty())
+            .unwrap();
+
+        let observed = crate::test_support::observed(
+            crate::test_support::handler(crate::test_support::unreachable_postgres()),
+            request,
+        );
+
+        assert_eq!(observed.request_id.as_deref(), Some("from-the-caller"));
+        assert!(
+            observed
+                .logged
+                .contains(r#""request_id":"from-the-caller""#),
+            "{}",
+            observed.logged
+        );
     }
 
     /// Collects what a subscriber was given, so a case can assert on a log line.

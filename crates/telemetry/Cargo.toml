@@ -27,6 +27,9 @@ opentelemetry-otlp = { version = "0.31.1", default-features = false, features = 
   "logs",
   "internal-logs",
 ] }
+# The header map a caller's `traceparent` arrives in. Already in the tree
+# through axum and hyper; naming it is what lets this crate spell it.
+http = "1.5.0"
 # `HttpClient`, implemented here rather than used as-is. See `provider.rs`.
 opentelemetry-http = { version = "0.31.0", features = ["hyper"] }
 # `service.name`, spelled by the specification rather than by us.

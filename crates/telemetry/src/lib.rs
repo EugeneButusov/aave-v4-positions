@@ -15,9 +15,11 @@
 //!
 //! [`env`]: https://docs.rs/env
 
+mod context;
 mod provider;
 mod settings;
 mod subscriber;
 
+pub use context::{continue_from, trace_id};
 pub use settings::{Sampling, Settings};
 pub use subscriber::{Error, SCOPE, Telemetry, init};

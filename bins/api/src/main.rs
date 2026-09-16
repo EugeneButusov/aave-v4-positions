@@ -20,6 +20,7 @@ mod middleware;
 mod openapi;
 mod positions;
 mod probes;
+mod requests;
 mod router;
 #[cfg(test)]
 mod test_support;

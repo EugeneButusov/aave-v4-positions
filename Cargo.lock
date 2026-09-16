@@ -92,6 +92,8 @@ dependencies = [
  "hmac 0.12.1",
  "indexing",
  "insta",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "ops",
  "postgres",
  "prices",
@@ -107,6 +109,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
@@ -2211,6 +2214,8 @@ dependencies = [
  "percent-encoding",
  "rand 0.9.5",
  "thiserror",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -3257,6 +3262,7 @@ name = "telemetry"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "http",
  "opentelemetry",
  "opentelemetry-appender-tracing",
  "opentelemetry-http",
