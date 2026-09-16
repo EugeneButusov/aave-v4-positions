@@ -270,6 +270,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn publishes_each_schema_in_the_order_the_wire_writes_it() {
+        // `errors::json` calls the envelope's field order part of the contract
+        // and `views` calls the page's declaration order. utoipa's default map
+        // is a `BTreeMap`, which would publish `error` before `message` and
+        // `items` before `sync`; `preserve_order` is what stops it.
+        //
+        // **Against the bytes, not a parsed value.** `serde_json::Value` sorts
+        // its keys, so the snapshot beside this one reads the same document
+        // either way and cannot see this at all.
+        let (_, body) = fetch("/docs/openapi.json").await;
+
+        assert!(
+            body.contains(r#""properties":{"message":"#),
+            "the envelope is alphabetised rather than in the order it serialises"
+        );
+        assert!(
+            body.contains(r#""properties":{"sync":"#),
+            "the page is alphabetised rather than in the order it serialises"
+        );
+    }
+
+    #[tokio::test]
     async fn types_all_three_clocks_the_same_way() {
         let document = document().await;
 
