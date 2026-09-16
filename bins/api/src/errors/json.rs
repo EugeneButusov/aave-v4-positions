@@ -19,6 +19,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Serialize, Serializer};
+use utoipa::ToSchema;
 
 use super::{AppError, BoxedAppError};
 
@@ -62,11 +63,20 @@ impl AppError for CustomApiError {
 }
 
 /// The JSON body returned for API errors.
-#[derive(Debug, Serialize)]
-struct ApiErrorResponse<'a> {
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ApiErrorResponse<'a> {
+    /// What was wrong with the request. A validation failure names every bad
+    /// parameter rather than the first, so it can be several clauses long.
     message: &'a str,
+
+    /// The status's reason phrase. Derived from `status_code` and never passed
+    /// in, so the two cannot disagree.
     error: &'static str,
+
+    /// The HTTP status, repeated in the body because a caller reading a logged
+    /// response has only the body.
     #[serde(serialize_with = "code")]
+    #[schema(value_type = u16, example = 404)]
     status_code: StatusCode,
 }
 

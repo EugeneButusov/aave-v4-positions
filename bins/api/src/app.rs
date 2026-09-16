@@ -22,10 +22,12 @@ use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
 use prices::ReservePriceStore;
 use token_metadata::TokenMetadataStore;
+use utoipa::OpenApi;
+use utoipa_axum::router::OpenApiRouter;
 
 use crate::config::Staleness;
 use crate::positions::Signer;
-use crate::{middleware, positions, probes, router};
+use crate::{docs, middleware, openapi, positions, probes, router};
 
 /// The live resources, built once at boot and read for the process's life.
 pub(crate) struct App {
@@ -51,6 +53,9 @@ pub(crate) struct App {
     /// Read once here rather than carried into every handler: it decides where
     /// the router mounts, and nothing below the router asks about it.
     pub(crate) prefix: String,
+
+    /// Where the document is published. Read once here for the same reason.
+    pub(crate) docs_path: String,
 }
 
 /// What the router carries, and what every handler extracts.
@@ -78,15 +83,27 @@ impl std::ops::Deref for AppState {
 /// one decision — what this process *is* — so they sit beside the resources
 /// above rather than in [`crate::router`], which names nothing this service does.
 pub(crate) fn handler(app: App) -> Router {
-    let mount = router::mount(&app.prefix);
+    let (mount, docs) = (router::mount(&app.prefix), router::docs(&app.docs_path));
     let state = AppState(Arc::new(app));
+
+    // **Split before the probes and the document are merged in**, so neither
+    // appears in what is published. The contract describes the versioned API:
+    // the probes by the decision `openapi` records, and the two routes that
+    // serve the document because a document describing its own address is
+    // circular — which is also why the TypeScript's path list has three entries
+    // and not five.
+    let (versioned, api) = OpenApiRouter::with_openapi(openapi::ApiDoc::openapi())
+        .nest(&mount, positions::routes().with_state(state.clone()))
+        .split_for_parts();
 
     // The probes take no prefix and no version: a readiness check is not part
     // of the API's versioned surface, and all three compose healthchecks ask
-    // for `/health/ready`.
+    // for `/health/ready`. The document takes no prefix either, and for the
+    // reason `router::docs` gives.
     let served = Router::new()
-        .merge(probes::routes(state.clone()))
-        .nest(&mount, positions::routes().with_state(state));
+        .merge(probes::routes(state))
+        .merge(versioned)
+        .merge(docs::routes(&docs, api));
 
     middleware::apply(router::refuse_unmatched(served))
 }

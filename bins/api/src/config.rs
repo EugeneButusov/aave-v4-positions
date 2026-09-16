@@ -45,6 +45,12 @@ pub(crate) struct Config {
     /// orchestrator's check is not part of the API's versioned surface, and
     /// every compose healthcheck already asks for `/health/ready`.
     pub(crate) prefix: String,
+
+    /// Where the OpenAPI document and its UI are served, outside the prefix for
+    /// the same reason. **Always served**, with no flag to turn it off: the docs
+    /// are the API's contract, and one absent from the environment people call
+    /// is not much of a contract.
+    pub(crate) docs_path: String,
     pub(crate) cursor_secret: String,
     pub(crate) staleness: Staleness,
     pub(crate) clickhouse: clickhouse_client::Config,
@@ -92,6 +98,7 @@ impl Config {
             port: env.port("API_PORT", 3000),
             grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)),
             prefix: env.text("API_GLOBAL_PREFIX", "api"),
+            docs_path: env.text("API_DOCS_PATH", "docs"),
             cursor_secret: env.secret("POSITIONS_CURSOR_SECRET", MIN_SECRET_BYTES),
             staleness: Staleness {
                 sync: env.seconds("API_SYNC_STALE_AFTER_SECONDS", 60, MAX_STALENESS_SECONDS),
@@ -167,6 +174,7 @@ mod tests {
             "postgres://postgres@localhost:5432/postgres"
         );
         assert_eq!(config.prefix, "api");
+        assert_eq!(config.docs_path, "docs");
         assert_eq!(config.staleness.sync, 60);
         assert_eq!(config.staleness.price, 300);
     }

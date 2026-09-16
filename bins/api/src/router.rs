@@ -21,6 +21,22 @@ pub(crate) fn mount(prefix: &str) -> String {
     }
 }
 
+/// Where the document hangs, given whatever a deployment wrote in
+/// `API_DOCS_PATH`. Slashes are trimmed as in [`mount`], and an empty value is
+/// one asking for no segment at all — so `/openapi.json` rather than
+/// `//openapi.json`.
+///
+/// **Outside the prefix and unversioned**, like the probes: the contract is
+/// operational surface rather than part of the API it describes, and a document
+/// whose own address moved with the API version would be the one thing a caller
+/// could not look up.
+pub(crate) fn docs(path: &str) -> String {
+    match path.trim_matches('/') {
+        "" => String::new(),
+        path => format!("/{path}"),
+    }
+}
+
 /// Both fallbacks, over a router that is already finished.
 ///
 /// **It takes the router rather than being called on one**, which makes the
@@ -58,7 +74,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
 
-    use super::mount;
+    use super::{docs, mount};
 
     use crate::test_support::{get, handler, postgres};
 
@@ -114,6 +130,13 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn mounts_the_document_wherever_api_docs_path_says() {
+        assert_eq!(docs("docs"), "/docs");
+        assert_eq!(docs("/docs/"), "/docs", "however a deployment wrote it");
+        assert_eq!(docs(""), "", "no path is not an empty segment");
     }
 
     #[test]

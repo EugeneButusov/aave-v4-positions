@@ -17,6 +17,7 @@ use prices::{ReserveKey, ReservePrice};
 use time::OffsetDateTime;
 use token_metadata::TokenLabel;
 
+use crate::positions::params::{DEFAULT_LIMIT, GENESIS, MAX_AS_OF, MAX_LIMIT};
 use crate::test_support::{Stores, VALUED_AT, get, synced};
 
 const ALICE: &str = "0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8";
@@ -440,4 +441,47 @@ async fn stamps_a_page_stale_when_the_indexer_has_stopped_advancing() {
     let (_, body) = answer(stores, "").await;
 
     assert!(body.contains(r#""age_seconds":61,"stale":true"#), "{body}");
+}
+
+#[tokio::test]
+async fn documents_the_bounds_the_parser_enforces() {
+    // The four numbers are written twice — once where `params` enforces them and
+    // once where `#[utoipa::path]` publishes them, because utoipa's attribute
+    // parser takes a literal and not a `const`. This is what keeps them equal.
+    //
+    // The default is the one bound with no key of its own: `default` is an
+    // `IntoParams` feature and the inline form has no equivalent, so it lives in
+    // the parameter's prose and is checked there.
+    let request = Request::builder()
+        .uri("/docs/openapi.json")
+        .body(Body::empty())
+        .expect("a well-formed request");
+
+    let (_, body, _) = get(Stores::default().handler(), request).await;
+    let document: serde_json::Value = serde_json::from_str(&body).expect("the document is JSON");
+
+    let parameters =
+        document["paths"]["/api/v1/chains/{chain_id}/users/{user}/positions"]["get"]["parameters"]
+            .as_array()
+            .expect("the operation's parameters")
+            .clone();
+
+    let parameter = |name: &str| {
+        parameters
+            .iter()
+            .find(|parameter| parameter["name"] == name)
+            .unwrap_or_else(|| panic!("no {name} parameter"))
+            .clone()
+    };
+
+    assert_eq!(parameter("limit")["schema"]["minimum"], 1);
+    assert_eq!(parameter("limit")["schema"]["maximum"], MAX_LIMIT);
+    assert_eq!(parameter("as_of")["schema"]["minimum"], GENESIS);
+    assert_eq!(parameter("as_of")["schema"]["maximum"], MAX_AS_OF);
+
+    let prose = parameter("limit")["description"].to_string();
+    assert!(
+        prose.contains(&DEFAULT_LIMIT.to_string()),
+        "the default went missing from the one place it is published: {prose}"
+    );
 }

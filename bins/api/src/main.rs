@@ -13,9 +13,11 @@
 
 mod app;
 mod config;
+mod docs;
 mod errors;
 mod logging;
 mod middleware;
+mod openapi;
 mod positions;
 mod probes;
 mod router;
@@ -72,6 +74,10 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
 
     let shutdown = ShutdownFlag::new();
 
+    // Worked out here as well as inside the router, because the line below is
+    // the only place anybody is told where the contract went.
+    let document = format!("{}/openapi.json", router::docs(&config.docs_path));
+
     let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
@@ -82,13 +88,14 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
         signer: Signer::new(&config.cursor_secret)?,
         staleness: config.staleness,
         prefix: config.prefix,
+        docs_path: config.docs_path,
         clickhouse,
         postgres,
     });
 
     let address = SocketAddr::new(config.host, config.port);
     let listener = tokio::net::TcpListener::bind(address).await?;
-    tracing::info!(%address, "api listening");
+    tracing::info!(%address, %document, "api listening");
 
     axum::serve(listener, handler)
         .with_graceful_shutdown(async move { shutdown.on_signal(config.grace).await })

@@ -4,12 +4,13 @@ use aave_positions::store::{Position, PositionPage};
 use indexing::SyncStatus;
 use serde::Serialize;
 use time::OffsetDateTime;
+use utoipa::ToSchema;
 
 use super::{Error, Item, Labels, Prices, price_for};
 use crate::config::Staleness;
 
 /// One wallet's positions, valued at one instant.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct Page {
     /// How current this payload is. Present on every page, because amounts are
     /// per-block quantities and a page whose sync differs from the previous one
@@ -32,6 +33,7 @@ pub(crate) struct Page {
     /// own cadence. Null when nothing here is priced, and null whenever `as_of`
     /// is set: amounts are extrapolated to that instant and prices are not, so a
     /// value mixing the two would be a number that never existed.
+    #[schema(required = true)]
     pricing: Option<Pricing>,
 
     items: Vec<Item>,
@@ -40,6 +42,7 @@ pub(crate) struct Page {
     /// page. Opaque and signed: it is only valid for the listing that issued it,
     /// so changing the wallet, chain or Spoke filter while reusing it is refused
     /// rather than silently resuming somewhere else.
+    #[schema(required = true)]
     next_cursor: Option<String>,
 }
 
@@ -76,7 +79,7 @@ impl Page {
 }
 
 /// How far the indexer has got on this chain.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct Progress {
     /// The last block the indexer processed on this chain.
     last_block: u64,
@@ -111,7 +114,7 @@ impl Progress {
 }
 
 /// How current the prices behind this page are.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 struct Pricing {
     /// When the oldest price behind any number on this page was read.
     #[serde(with = "time::serde::rfc3339")]

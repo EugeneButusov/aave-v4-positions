@@ -17,18 +17,18 @@ use alloy_primitives::Address;
 
 use crate::errors::{self, BoxedAppError};
 
-const DEFAULT_LIMIT: u32 = 50;
-const MAX_LIMIT: u32 = 200;
+pub(crate) const DEFAULT_LIMIT: u32 = 50;
+pub(crate) const MAX_LIMIT: u32 = 200;
 
 /// 2026-03-23T14:45:59Z — the Main Spoke's first log, and the earliest instant
 /// any position can be valued at.
-const GENESIS: u64 = 1_774_277_159;
+pub(crate) const GENESIS: u64 = 1_774_277_159;
 
 /// 2100-01-01: a **units check rather than a policy** on how far ahead a caller
 /// may value. `as_of` in milliseconds is past the floor above, so unbounded it
 /// would extrapolate the index tens of thousands of years and answer a page of
 /// enormous numbers with nothing to say they are wrong.
-const MAX_AS_OF: u64 = 4_102_444_800;
+pub(crate) const MAX_AS_OF: u64 = 4_102_444_800;
 
 /// The four this endpoint answers to. Anything else is a refusal rather than a
 /// value nobody reads.
