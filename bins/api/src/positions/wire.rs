@@ -22,7 +22,7 @@ use aave_positions::store::Position;
 use aave_positions::valuation;
 use prices::{ReserveKey, ReservePrice};
 
-pub(crate) use item::item;
+pub(crate) use item::Item;
 pub(crate) use page::{Page, Progress, pricing};
 
 /// A folded position this port could not render.

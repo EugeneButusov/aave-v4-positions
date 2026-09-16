@@ -4,8 +4,7 @@ use aave_positions::store::Position;
 use serde::Serialize;
 use time::OffsetDateTime;
 
-use super::item::Item;
-use super::{Prices, price_for};
+use super::{Item, Prices, price_for};
 
 /// One wallet's positions, valued at one instant.
 #[derive(Debug, Serialize)]

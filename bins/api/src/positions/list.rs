@@ -96,7 +96,7 @@ async fn list(
     let items = page
         .items
         .iter()
-        .map(|position| wire::item(position, &labels, &prices))
+        .map(|position| wire::Item::new(position, &labels, &prices))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(Json(wire::Page {

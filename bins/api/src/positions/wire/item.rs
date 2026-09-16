@@ -14,13 +14,6 @@ use super::{Error, Prices, price_for};
 
 type Labels = HashMap<Address, TokenLabel>;
 
-/// The USD half of a position, or nothing when there is no price behind it.
-struct Usd {
-    price: String,
-    supplied_amount: String,
-    total_debt: String,
-}
-
 /// One user's stake in one reserve on one Spoke.
 #[derive(Debug, Serialize)]
 pub(crate) struct Item {
@@ -92,6 +85,56 @@ pub(crate) struct Item {
     value: Option<Value>,
 }
 
+impl Item {
+    /// # Errors
+    ///
+    /// [`Error`], when this position's dollar value cannot be computed.
+    pub(crate) fn new(
+        position: &Position,
+        labels: &Labels,
+        prices: &Prices,
+    ) -> Result<Self, Error> {
+        // **The asset carries the scale.** An unscaled integer in a field the
+        // contract calls decimal is wrong by up to eighteen orders of magnitude.
+        let decimals = position.asset.as_ref().map(|asset| asset.decimals);
+        let scaled = |amount: I256| decimals.map(|decimals| scale::signed(amount, decimals));
+
+        let usd = position
+            .asset
+            .as_ref()
+            .zip(position.value.as_ref())
+            .zip(price_for(position, prices))
+            .map(|((asset, value), price)| Usd::new(asset, value, price))
+            .transpose()?;
+
+        Ok(Self {
+            chain_id: position.chain_id,
+            user: format!("{:#x}", position.user),
+            spoke: format!("{:#x}", position.spoke),
+            reserve_id: position.reserve_id.to_string(),
+            supplied_shares: scaled(position.supplied_shares),
+            drawn_shares: scaled(position.drawn_shares),
+            premium_shares: scaled(position.premium_shares),
+            // A ray is a ratio, so its scale is the protocol's fixed 27 and not
+            // the asset's — which is why this one survives an unresolved reserve.
+            premium_offset_ray: scale::signed(position.premium_offset_ray, RAY_DECIMALS),
+            net_supplied_amount: scaled(position.net_supplied_amount),
+            net_borrowed_amount: scaled(position.net_borrowed_amount),
+            using_as_collateral: position.using_as_collateral,
+            events: position.events,
+            asset: position
+                .asset
+                .as_ref()
+                .map(|asset| Asset::new(asset, labels)),
+            value: position
+                .value
+                .as_ref()
+                .zip(decimals)
+                .map(|(value, decimals)| Value::new(value, decimals, usd.as_ref())),
+        })
+    }
+}
+
 /// What a reserve refers to, once the registry and the Hub have both been read.
 #[derive(Debug, Serialize)]
 struct Asset {
@@ -117,6 +160,24 @@ struct Asset {
 
     /// The token's own `name()`. Null on the same terms as `symbol`.
     name: Option<String>,
+}
+
+impl Asset {
+    fn new(asset: &PositionAsset, labels: &Labels) -> Self {
+        // Absent means enrichment has not reached the token; present with a
+        // null symbol means it was asked and has none. Both serve null — the
+        // store keeps them apart so the sweep knows what to do.
+        let label = labels.get(&asset.underlying);
+
+        Self {
+            asset_id: asset.asset_id.to_string(),
+            hub: format!("{:#x}", asset.hub),
+            underlying: format!("{:#x}", asset.underlying),
+            decimals: asset.decimals,
+            symbol: label.and_then(|label| label.symbol.clone()),
+            name: label.and_then(|label| label.name.clone()),
+        }
+    }
 }
 
 /// What one position is worth at `valued_at`.
@@ -159,87 +220,50 @@ struct Value {
     total_debt_usd: Option<String>,
 }
 
-pub(crate) fn item(position: &Position, labels: &Labels, prices: &Prices) -> Result<Item, Error> {
-    // **The asset carries the scale.** An unscaled integer in a field the
-    // contract calls decimal is wrong by up to eighteen orders of magnitude.
-    let decimals = position.asset.as_ref().map(|asset| asset.decimals);
-    let scaled = |amount: I256| decimals.map(|decimals| scale::signed(amount, decimals));
-
-    let usd = position
-        .asset
-        .as_ref()
-        .zip(position.value.as_ref())
-        .zip(price_for(position, prices))
-        .map(|((asset, value), price)| usd(asset, value, price))
-        .transpose()?;
-
-    Ok(Item {
-        chain_id: position.chain_id,
-        user: format!("{:#x}", position.user),
-        spoke: format!("{:#x}", position.spoke),
-        reserve_id: position.reserve_id.to_string(),
-        supplied_shares: scaled(position.supplied_shares),
-        drawn_shares: scaled(position.drawn_shares),
-        premium_shares: scaled(position.premium_shares),
-        // A ray is a ratio, so its scale is the protocol's fixed 27 and not the
-        // asset's — which is why this one survives an unresolved reserve.
-        premium_offset_ray: scale::signed(position.premium_offset_ray, RAY_DECIMALS),
-        net_supplied_amount: scaled(position.net_supplied_amount),
-        net_borrowed_amount: scaled(position.net_borrowed_amount),
-        using_as_collateral: position.using_as_collateral,
-        events: position.events,
-        asset: position.asset.as_ref().map(|asset| {
-            // Absent means enrichment has not reached the token; present with
-            // a null symbol means it was asked and has none. Both serve null —
-            // the store keeps them apart so the sweep knows what to do.
-            let label = labels.get(&asset.underlying);
-
-            Asset {
-                asset_id: asset.asset_id.to_string(),
-                hub: format!("{:#x}", asset.hub),
-                underlying: format!("{:#x}", asset.underlying),
-                decimals: asset.decimals,
-                symbol: label.and_then(|label| label.symbol.clone()),
-                name: label.and_then(|label| label.name.clone()),
-            }
-        }),
-        value: position
-            .value
-            .as_ref()
-            .zip(decimals)
-            .map(|(value, decimals)| Value {
-                supplied_amount: scale::unsigned(value.supplied_amount, decimals),
-                drawn_debt: scale::unsigned(value.drawn_debt, decimals),
-                premium_debt: scale::unsigned(value.premium_debt, decimals),
-                total_debt: scale::unsigned(value.total_debt, decimals),
-                drawn_index: scale::unsigned(value.drawn_index, RAY_DECIMALS),
-                price_usd: usd.as_ref().map(|usd| usd.price.clone()),
-                supplied_amount_usd: usd.as_ref().map(|usd| usd.supplied_amount.clone()),
-                total_debt_usd: usd.as_ref().map(|usd| usd.total_debt.clone()),
-            }),
-    })
+impl Value {
+    fn new(value: &Valuation, decimals: u8, usd: Option<&Usd>) -> Self {
+        Self {
+            supplied_amount: scale::unsigned(value.supplied_amount, decimals),
+            drawn_debt: scale::unsigned(value.drawn_debt, decimals),
+            premium_debt: scale::unsigned(value.premium_debt, decimals),
+            total_debt: scale::unsigned(value.total_debt, decimals),
+            drawn_index: scale::unsigned(value.drawn_index, RAY_DECIMALS),
+            price_usd: usd.map(|usd| usd.price.clone()),
+            supplied_amount_usd: usd.map(|usd| usd.supplied_amount.clone()),
+            total_debt_usd: usd.map(|usd| usd.total_debt.clone()),
+        }
+    }
 }
 
-/// One position's USD half.
-///
-/// Computed in the protocol's unit and divided only on the way out: scaling the
-/// inputs first rounds twice, and §7.1's reconciliation is exact or nothing.
-///
-/// `decimals` is the **Hub's**, from `AddAsset`, never the token's own. Where
-/// they disagree, the Hub's is what the position is worth to Aave.
-fn usd(asset: &PositionAsset, value: &Valuation, price: &ReservePrice) -> Result<Usd, Error> {
-    Ok(Usd {
-        price: scale::unsigned(price.price, ORACLE_DECIMALS),
-        supplied_amount: scale::unsigned(
-            to_value(value.supplied_amount, asset.decimals, price.price)?,
-            VALUE_DECIMALS,
-        ),
-        // Rounded up into token units, as the Spoke rounds a repayment: right
-        // to display, wrong for a health factor, which divides an unrounded
-        // ray-scaled debt. The two are meant to differ in the last digits.
-        total_debt: scale::unsigned(
-            to_value(value.total_debt, asset.decimals, price.price)?,
-            VALUE_DECIMALS,
-        ),
-    })
+/// The USD half of a position, or nothing when there is no price behind it.
+struct Usd {
+    price: String,
+    supplied_amount: String,
+    total_debt: String,
+}
+
+impl Usd {
+    /// Computed in the protocol's unit and divided only on the way out: scaling
+    /// the inputs first rounds twice, and §7.1's reconciliation is exact or
+    /// nothing.
+    ///
+    /// `decimals` is the **Hub's**, from `AddAsset`, never the token's own.
+    /// Where they disagree, the Hub's is what the position is worth to Aave.
+    fn new(asset: &PositionAsset, value: &Valuation, price: &ReservePrice) -> Result<Self, Error> {
+        Ok(Self {
+            price: scale::unsigned(price.price, ORACLE_DECIMALS),
+            supplied_amount: scale::unsigned(
+                to_value(value.supplied_amount, asset.decimals, price.price)?,
+                VALUE_DECIMALS,
+            ),
+            // Rounded up into token units, as the Spoke rounds a repayment:
+            // right to display, wrong for a health factor, which divides an
+            // unrounded ray-scaled debt. The two are meant to differ in the
+            // last digits.
+            total_debt: scale::unsigned(
+                to_value(value.total_debt, asset.decimals, price.price)?,
+                VALUE_DECIMALS,
+            ),
+        })
+    }
 }
