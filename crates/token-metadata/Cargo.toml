@@ -19,7 +19,14 @@ postgres.workspace = true
 tokio-postgres = "0.7.18"
 thiserror = "2.0.19"
 
+# The span its one read is seen as. `postgres` names the shape; this only asks
+# for the trait that hangs a future on it.
+tracing = "0.1.44"
+
 [dev-dependencies]
+# Reading the span the read opens back out of a subscriber, which is the only
+# way to tell a missing `instrument` from a present one.
+tracing-subscriber = "0.3.23"
 # The schema `bins/migrate` applies, so a spec's database is the deployment's.
 migrations.workspace = true
 # Applies that corpus to a scratch schema. The migrator's own dependency, used

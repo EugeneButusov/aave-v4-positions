@@ -13,6 +13,9 @@ thiserror = "2.0.19"
 
 # Only this crate builds against the driver; everyone else goes through it.
 tokio-postgres = "0.7.18"
+# The span a read is seen as. The driver opens none — it speaks `log` — so
+# without this a trace stops at the edge of every Postgres call.
+tracing = "0.1.44"
 
 [dev-dependencies]
 # Only the cases need a runtime; the crate itself starts none.

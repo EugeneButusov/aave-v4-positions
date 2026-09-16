@@ -680,6 +680,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "lz4_flex",
+ "opentelemetry",
+ "opentelemetry-http",
  "polonius-the-crab",
  "serde",
  "serde_json",
@@ -695,6 +697,8 @@ version = "0.0.0"
 dependencies = [
  "clickhouse",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1720,6 +1724,8 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2398,6 +2404,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-postgres",
+ "tracing",
 ]
 
 [[package]]
@@ -2467,6 +2474,8 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -3385,6 +3394,8 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-postgres",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

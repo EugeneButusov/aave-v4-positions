@@ -7,6 +7,7 @@
 mod error;
 mod health;
 mod pool;
+mod span;
 
 /// The driver's client, which a [`Connection`] derefs to.
 ///
@@ -17,3 +18,4 @@ pub type Client = tokio_postgres::Client;
 pub use error::Error;
 pub use health::ping;
 pub use pool::{Connection, Pool, build_pool, connection};
+pub use span::query_span;

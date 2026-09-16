@@ -7,6 +7,7 @@
 use postgres::{Pool, connection};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
+use tracing::Instrument as _;
 
 use crate::cursor::{Error, SyncStatus, SyncStatusStore};
 
@@ -41,7 +42,10 @@ impl PostgresSyncStatusStore {
 impl SyncStatusStore for PostgresSyncStatusStore {
     async fn get(&self, chain_id: u32) -> Result<Option<SyncStatus>, Error> {
         let client = connection(&self.pool).await?;
-        let row = client.query_opt(STATUS, &[&i64::from(chain_id)]).await?;
+        let row = client
+            .query_opt(STATUS, &[&i64::from(chain_id)])
+            .instrument(postgres::query_span("SELECT", "indexer_cursor", STATUS))
+            .await?;
 
         row.as_ref().map(|row| status(chain_id, row)).transpose()
     }
@@ -83,7 +87,13 @@ fn status(chain_id: u32, row: &Row) -> Result<SyncStatus, Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use crate::cursor::conformance;
+    use std::sync::{Arc, Mutex};
+
+    use tracing::instrument::WithSubscriber as _;
+    use tracing_subscriber::fmt::format::FmtSpan;
+
+    use crate::SyncStatusStore;
+    use crate::cursor::conformance::{self, Harness};
     use crate::cursor::postgres::harness::PostgresHarness;
 
     macro_rules! conformance {
@@ -103,5 +113,59 @@ mod tests {
         reads_only_the_chain_it_was_asked_about,
         ages_the_row_by_the_database_clock,
         reads_a_block_height_past_what_a_double_can_hold,
+    }
+
+    /// Somewhere a case can read a span back from. Ten lines because
+    /// `MakeWriter` is implemented for any `Fn() -> impl Write`, so this needs
+    /// no impl of its own.
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The store's own read, seen as a trace sees it.
+    ///
+    /// **`tokio-postgres` opens no span** — it speaks `log`, not `tracing` — so
+    /// without the `instrument` on the read above, a trace through this store is
+    /// a gap between the request and the answer.
+    #[tokio::test]
+    async fn the_read_is_one_span_a_trace_can_see() {
+        let harness = PostgresHarness::fresh("traces_its_read").await;
+        let sink = Sink::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let sink = sink.clone();
+                move || sink.clone()
+            })
+            .with_ansi(false)
+            .with_span_events(FmtSpan::CLOSE)
+            .finish();
+
+        harness
+            .store()
+            .get(1)
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
+
+        let written = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+
+        assert!(
+            written.contains(r#"otel.name="SELECT indexer_cursor""#),
+            "{written}"
+        );
+        assert!(
+            written.contains(r#"db.system.name="postgresql""#),
+            "{written}"
+        );
     }
 }
