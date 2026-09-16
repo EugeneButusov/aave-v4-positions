@@ -54,7 +54,6 @@ pub(crate) struct App {
     /// the router mounts, and nothing below the router asks about it.
     pub(crate) prefix: String,
 
-    /// Where the document is published, and where the viewer's files are.
     pub(crate) docs_path: String,
     pub(crate) docs_assets: String,
 }

@@ -9,15 +9,12 @@ expression: document().await
         "description": "The JSON body returned for API errors.",
         "properties": {
           "error": {
-            "description": "The status's reason phrase. Derived from `status_code` and never passed\nin, so the two cannot disagree.",
             "type": "string"
           },
           "message": {
-            "description": "What was wrong with the request. A validation failure names every bad\nparameter rather than the first, so it can be several clauses long.",
             "type": "string"
           },
           "status_code": {
-            "description": "The HTTP status, repeated in the body because a caller reading a logged\nresponse has only the body.",
             "example": 404,
             "format": "int32",
             "minimum": 0,
