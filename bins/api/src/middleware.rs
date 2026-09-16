@@ -230,6 +230,7 @@ mod tests {
     /// [`said`] alone leaves that call site uncovered — which is exactly how the
     /// bug this catches got as far as a running process.
     fn logged_by(panic: Box<dyn Any + Send>) -> String {
+        crate::test_support::interesting();
         let written = crate::test_support::Written::default();
         let subscriber = tracing_subscriber::fmt()
             .json()

@@ -245,7 +245,28 @@ pub(crate) struct Observed {
     pub(crate) logged: String,
 }
 
+/// Makes every callsite in this binary interesting, once.
+///
+/// **`tracing` caches callsite interest globally**, and computes it from the
+/// *global* subscriber — which is `NoSubscriber` here, answering "never" for
+/// every callsite. A `with_default` on one thread rebuilds that cache, and a
+/// second test rebuilding it while the first is between its span and its event
+/// leaves the event disabled: the case sees an empty log and a correct response,
+/// which is exactly the shape that makes it look like a bug in the code under
+/// test. A permissive global keeps the answer "yes" whoever is asking.
+pub(crate) fn interesting() {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+    ONCE.get_or_init(|| {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(tracing::level_filters::LevelFilter::TRACE),
+        );
+    });
+}
+
 pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
+    interesting();
+
     // The propagator is a global by design: it is what the ClickHouse driver
     // reads to put `traceparent` on its own request. Every case setting the same
     // one is not a case setting a different one.
