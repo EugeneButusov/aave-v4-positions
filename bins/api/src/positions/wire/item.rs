@@ -1,18 +1,13 @@
 //! One position on the wire, and what a folded one becomes.
 
-use std::collections::HashMap;
-
 use aave_positions::scale::{self, ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
 use aave_positions::store::{Position, PositionAsset};
 use aave_positions::valuation::{Valuation, to_value};
-use alloy_primitives::{Address, I256};
+use alloy_primitives::I256;
 use prices::ReservePrice;
 use serde::Serialize;
-use token_metadata::TokenLabel;
 
-use super::{Error, Prices, price_for};
-
-type Labels = HashMap<Address, TokenLabel>;
+use super::{Error, Labels, Prices, price_for};
 
 /// One user's stake in one reserve on one Spoke.
 #[derive(Debug, Serialize)]

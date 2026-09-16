@@ -1,8 +1,8 @@
 //! What a page looks like on the wire, and how a folded position becomes one.
 //!
 //! [`page`] is what wraps the positions and the two clocks beside them, and
-//! [`item`](mod@item) is one position. Each holds the shapes it owns and the
-//! conversion that builds them.
+//! [`item`](mod@item) is one position. Every type declares its own `new`, so a
+//! shape and its construction are never a file apart.
 //!
 //! Four rules govern all six types. **No `rename_all` anywhere** — every
 //! multi-word key is snake_case. **They mirror the domain rather than reuse
@@ -20,18 +20,28 @@ use std::collections::HashMap;
 
 use aave_positions::store::Position;
 use aave_positions::valuation;
+use alloy_primitives::Address;
 use prices::{ReserveKey, ReservePrice};
+use token_metadata::TokenLabel;
 
 pub(crate) use item::Item;
-pub(crate) use page::{Page, Progress, pricing};
+pub(crate) use page::Page;
 
-/// A folded position this port could not render.
+/// A page this port could not render.
 #[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub(crate) struct Error(#[from] valuation::Error);
+pub(crate) enum Error {
+    #[error(transparent)]
+    Value(#[from] valuation::Error),
+
+    #[error("{0} is not an instant a date can hold")]
+    ValuedAt(u64),
+}
 
 /// Prices, keyed as the store hands them back.
 pub(crate) type Prices = HashMap<ReserveKey, ReservePrice>;
+
+/// Token labels, keyed as the enrichment hands them back.
+pub(crate) type Labels = HashMap<Address, TokenLabel>;
 
 /// The price this position would be valued with, if there is one.
 ///

@@ -7,13 +7,11 @@
 //! **It is where the two enrichments are merged in**, keyed by chain rather than
 //! by page and joined here rather than in SQL, which is what keeps the ClickHouse
 //! adapter unaware either exists. What a position then looks like is [`super::wire`]'s.
-//!
 
 use aave_positions::store::PositionQuery;
 use axum::extract::{Path, RawQuery, State};
 use axum::routing::get;
 use axum::{Json, Router};
-use time::OffsetDateTime;
 
 use super::cursor::Scope;
 use super::params::Listing;
@@ -27,6 +25,7 @@ pub(crate) fn routes() -> Router<AppState> {
 
 /// **The query arrives raw rather than deserialized**: neither an unrecognised
 /// key nor every fault at once survives a `Deserialize`.
+///
 /// # Errors
 ///
 /// A 404 when this deployment has never indexed the chain, a 400 for a cursor
@@ -93,25 +92,16 @@ async fn list(
     );
     let (page, labels, prices) = (page?, labels?, prices?);
 
-    let items = page
-        .items
-        .iter()
-        .map(|position| wire::Item::new(position, &labels, &prices))
-        .collect::<Result<Vec<_>, _>>()?;
+    let next_cursor = page.next.as_ref().map(|key| app.signer.encode(&scope, key));
 
-    Ok(Json(wire::Page {
-        sync: wire::Progress {
-            last_block: sync.last_block,
-            last_block_hash: sync.last_hash.to_string(),
-            updated_at: sync.updated_at,
-            age_seconds: sync.age_seconds,
-            stale: sync.age_seconds > app.staleness.sync,
-        },
-        valued_at: OffsetDateTime::from_unix_timestamp(i64::try_from(page.valued_at)?)?,
-        pricing: wire::pricing(&page.items, &prices, app.staleness.price),
-        items,
-        next_cursor: page.next.map(|key| app.signer.encode(&scope, &key)),
-    }))
+    Ok(Json(wire::Page::new(
+        &sync,
+        &page,
+        &labels,
+        &prices,
+        app.staleness,
+        next_cursor,
+    )?))
 }
 
 #[cfg(test)]
