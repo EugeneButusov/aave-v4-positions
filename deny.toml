@@ -63,20 +63,6 @@ allow = [
   "Unicode-3.0",
 ]
 
-# **One crate, not one licence.** `zlib-rs` is `Zlib`, and it arrives as a *build*
-# dependency: `utoipa-swagger-ui` unzips a vendored Swagger UI with `zip`, whose
-# `deflate` feature is spelled `["deflate-zopfli", "deflate-flate2-zlib-rs"]` and
-# so pins flate2's zlib-rs backend rather than its default `miniz_oxide`, which
-# offers `Apache-2.0` and would have passed. Measured: `cargo tree --edges normal`
-# reaches `utoipa-swagger-ui`, `rust-embed` and `mime_guess` and stops — none of
-# `zip`, `flate2`, `zopfli` or `zlib-rs` is linked into either binary.
-#
-# Scoped to the crate rather than added to `allow` above. A fifth entry there
-# would grant `Zlib` to the whole graph for good and make the next crate carrying
-# it invisible — which is the failure that section's own comment describes. This
-# names one crate, so a second one still fails.
-exceptions = [{ name = "zlib-rs", allow = ["Zlib"] }]
-
 # The eleven workspace members, which carry no `license` field. They are
 # `publish = false`, and the notes give the reason for the neighbouring absence:
 # a field nobody publishes is a field nobody maintains.

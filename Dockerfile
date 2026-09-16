@@ -59,12 +59,39 @@ USER nobody
 # process. There is nothing to drain — a failed run leaves the ledger accurate.
 ENTRYPOINT ["/usr/local/bin/migrate"]
 
+# -------------------------------------------------------------- docs-assets --
+# The Swagger UI, taken from its own release rather than compiled into the
+# binary. `utoipa-swagger-ui` embeds the whole `swagger-ui-dist` — 11 MB, to ship
+# the 2 MB a page actually loads, the rest being source maps and bundles nobody
+# fetches — and carries a build script and a `Zlib`-licensed unzipper to do it.
+# Measured: embedding took the release binary from 4.9 MB to 17.4 MB.
+#
+# Pinned by version *and* by digest. Three files plus the licence, which is the
+# whole of what the page in `bins/api/src/docs.rs` references; nothing else in
+# the release is copied and nothing else is reachable, because the routes name
+# the files one by one rather than serving a directory.
+FROM alpine:${ALPINE_VERSION} AS docs-assets
+ARG SWAGGER_UI_VERSION=5.33.0
+ARG SWAGGER_UI_SHA256=434c69385aa02154348e6dcce0076df3a25ed88f673ac16cf4fed3fcf62c3b1b
+RUN apk add --no-cache curl
+RUN curl -fsSL "https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-${SWAGGER_UI_VERSION}.tgz" -o /tmp/ui.tgz \
+  && echo "${SWAGGER_UI_SHA256}  /tmp/ui.tgz" | sha256sum -c - \
+  && tar -xzf /tmp/ui.tgz -C /tmp \
+  && mkdir -p /out \
+  && cp /tmp/package/swagger-ui.css \
+        /tmp/package/swagger-ui-bundle.js \
+        /tmp/package/swagger-ui-standalone-preset.js \
+        /tmp/package/LICENSE \
+        /out/
+
 # -------------------------------------------------------------------- api ----
 FROM alpine:${ALPINE_VERSION} AS api
-# The image is the binary, as `migrate`'s is. It reads no file at runtime and
-# the whole configuration is environment variables, so there is nothing to copy
-# beside it and nothing to mount.
+# The binary and the three files the API documentation's viewer loads. Those are
+# the only things read from disk at runtime — the whole configuration is
+# environment variables, and the OpenAPI document itself is generated in process.
+# `API_DOCS_ASSETS` defaults to the path below, so nothing has to be set for it.
 COPY --from=rust-build /src/target/release/api /usr/local/bin/api
+COPY --from=docs-assets /out /usr/share/api/docs
 USER nobody
 
 # Exec form and no shell, so SIGTERM reaches the process directly — a shell

@@ -51,6 +51,12 @@ pub(crate) struct Config {
     /// are the API's contract, and one absent from the environment people call
     /// is not much of a contract.
     pub(crate) docs_path: String,
+
+    /// Where the Swagger UI's three files are on disk. **Not in the binary**:
+    /// embedding them costs 11 MB to ship the 2 MB a page loads, and the rest is
+    /// source maps. Absent is a working document with no viewer in front of it,
+    /// which is what a `cargo run` outside the image gets.
+    pub(crate) docs_assets: String,
     pub(crate) cursor_secret: String,
     pub(crate) staleness: Staleness,
     pub(crate) clickhouse: clickhouse_client::Config,
@@ -99,6 +105,7 @@ impl Config {
             grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)),
             prefix: env.text("API_GLOBAL_PREFIX", "api"),
             docs_path: env.text("API_DOCS_PATH", "docs"),
+            docs_assets: env.text("API_DOCS_ASSETS", "/usr/share/api/docs"),
             cursor_secret: env.secret("POSITIONS_CURSOR_SECRET", MIN_SECRET_BYTES),
             staleness: Staleness {
                 sync: env.seconds("API_SYNC_STALE_AFTER_SECONDS", 60, MAX_STALENESS_SECONDS),
@@ -175,6 +182,7 @@ mod tests {
         );
         assert_eq!(config.prefix, "api");
         assert_eq!(config.docs_path, "docs");
+        assert_eq!(config.docs_assets, "/usr/share/api/docs");
         assert_eq!(config.staleness.sync, 60);
         assert_eq!(config.staleness.price, 300);
     }

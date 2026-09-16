@@ -89,6 +89,7 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
         staleness: config.staleness,
         prefix: config.prefix,
         docs_path: config.docs_path,
+        docs_assets: config.docs_assets,
         clickhouse,
         postgres,
     });

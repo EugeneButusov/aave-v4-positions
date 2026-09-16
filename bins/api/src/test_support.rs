@@ -143,6 +143,7 @@ impl Stores {
             staleness: self.staleness,
             prefix: "api".to_owned(),
             docs_path: "docs".to_owned(),
+            docs_assets: "/usr/share/api/docs".to_owned(),
         }
     }
 

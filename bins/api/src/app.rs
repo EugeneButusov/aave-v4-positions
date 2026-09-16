@@ -54,8 +54,10 @@ pub(crate) struct App {
     /// the router mounts, and nothing below the router asks about it.
     pub(crate) prefix: String,
 
-    /// Where the document is published. Read once here for the same reason.
+    /// Where the document is published, and where the viewer's files are.
+    /// Read once here for the same reason.
     pub(crate) docs_path: String,
+    pub(crate) docs_assets: String,
 }
 
 /// What the router carries, and what every handler extracts.
@@ -84,6 +86,7 @@ impl std::ops::Deref for AppState {
 /// above rather than in [`crate::router`], which names nothing this service does.
 pub(crate) fn handler(app: App) -> Router {
     let (mount, docs) = (router::mount(&app.prefix), router::docs(&app.docs_path));
+    let assets = app.docs_assets.clone();
     let state = AppState(Arc::new(app));
 
     // **Split before the probes and the document are merged in**, so neither
@@ -103,7 +106,7 @@ pub(crate) fn handler(app: App) -> Router {
     let served = Router::new()
         .merge(probes::routes(state))
         .merge(versioned)
-        .merge(docs::routes(&docs, api));
+        .merge(docs::routes(&docs, &assets, api));
 
     middleware::apply(router::refuse_unmatched(served))
 }

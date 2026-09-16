@@ -55,7 +55,10 @@ time = { version = "0.3.55", features = ["formatting", "serde"] }
 # `ServiceBuilder`, so the two request-id layers are ordered where a reader can
 # see it rather than by the direction `Router::layer` happens to compose.
 tower = { version = "0.5.3", features = ["util"] }
-tower-http = { version = "0.7.0", features = ["catch-panic", "request-id"] }
+# `fs` for the three Swagger UI files, which are served off disk rather than
+# embedded: `utoipa-swagger-ui` bakes 11 MB into the binary to ship the 2 MB a
+# page actually loads, and most of the rest is source maps.
+tower-http = { version = "0.7.0", features = ["catch-panic", "fs", "request-id"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json"] }
 # The document is generated from the handler and the view types rather than
@@ -70,9 +73,6 @@ utoipa = { version = "5.5.0", features = ["preserve_order", "time", "yaml"] }
 # and rewrites the documented path when the router is nested, so the document
 # describes what this deployment serves rather than what a literal claims.
 utoipa-axum = "0.2.0"
-# `vendored` is the point: without it the build script fetches the UI over the
-# network at compile time, which is not a thing the release image can do.
-utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["axum", "vendored"] }
 
 [dev-dependencies]
 # The document is too large to assert as a literal and too small to describe:

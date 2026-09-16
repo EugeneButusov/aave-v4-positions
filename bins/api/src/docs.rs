@@ -1,46 +1,118 @@
 //! Where the contract is published, and in what.
 //!
-//! Three addresses, the same three the service this replaces serves: the UI at
-//! `API_DOCS_PATH`, and the document itself as JSON and as YAML beneath it.
+//! Three addresses, the same three the service this replaces serves: the viewer
+//! at `API_DOCS_PATH`, and the document itself as JSON and as YAML beneath it.
 //! **Always served**, with no flag to turn it off — a contract absent from the
 //! environment people actually call is not much of a contract.
 //!
-//! The UI's assets are vendored into the binary rather than fetched. Without
-//! that, `utoipa-swagger-ui`'s build script downloads them at compile time,
-//! which is not something the release image can do.
+//! **The viewer's files are on disk, not in the binary.** `utoipa-swagger-ui`
+//! embeds the whole `swagger-ui-dist` release, which is 11 MB to ship the 2 MB a
+//! page loads — the rest is source maps and bundles nobody fetches — and it
+//! carries a build script and a `Zlib`-licensed unzipper to do it. The three
+//! files below are copied into the image instead, and named one by one rather
+//! than served from a directory: nothing else under that path is reachable.
+//!
+//! The page itself is written here rather than taken from the release, whose
+//! `index.html` points at the Petstore. It is the only part of the viewer this
+//! repository owns, and the only part that knows where the document is.
 
-use std::sync::Arc;
+use std::path::Path;
 
-use axum::Router;
 use axum::http::header;
+use axum::response::Html;
 use axum::routing::get;
+use axum::{Json, Router};
+use tower_http::services::ServeFile;
 use utoipa::openapi::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 use crate::errors::BoxedAppError;
 
-/// The UI, the JSON and the YAML, under whatever `mount` [`crate::router::docs`]
-/// worked out. An empty `mount` puts the UI at the root.
-pub(crate) fn routes(mount: &str, api: OpenApi) -> Router {
-    let ui = if mount.is_empty() { "/" } else { mount };
-    let json = format!("{mount}/openapi.json");
-    let yaml = format!("{mount}/openapi.yaml");
+/// What the page loads, and the whole of what is served off disk.
+const ASSETS: [&str; 3] = [
+    "swagger-ui.css",
+    "swagger-ui-bundle.js",
+    "swagger-ui-standalone-preset.js",
+];
 
-    // The UI serves the JSON itself, from the same value, so the page and the
-    // document it renders cannot be two documents.
-    let swagger = SwaggerUi::new(ui.to_owned()).url(json, api.clone());
+/// The viewer, the JSON and the YAML, under whatever `mount`
+/// [`crate::router::docs`] worked out. An empty `mount` puts the viewer at the
+/// root.
+pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
+    let page = page(mount);
 
-    let api = Arc::new(api);
-    Router::new().merge(swagger).route(
-        &yaml,
-        get(move || {
-            let api = Arc::clone(&api);
-            async move {
-                api.to_yaml()
-                    .map(|yaml| ([(header::CONTENT_TYPE, "application/yaml")], yaml))
-                    .map_err(BoxedAppError::from)
-            }
-        }),
+    // Rendered per request from a clone rather than once into bytes. `Arc` is
+    // not an option — `Serialize` for it is behind serde's `rc` feature — and
+    // rendering once would have to answer for a failure with no request in front
+    // of it. The document is sixteen kilobytes and this route is cold.
+    let rendered = api.clone();
+    let document = get(move || {
+        let api = rendered.clone();
+        async move { Json(api) }
+    });
+
+    let yaml = get(move || {
+        let api = api.clone();
+        async move {
+            api.to_yaml()
+                .map(|yaml| ([(header::CONTENT_TYPE, "application/yaml")], yaml))
+                .map_err(BoxedAppError::from)
+        }
+    });
+
+    let mut router = Router::new()
+        .route(&format!("{mount}/openapi.json"), document)
+        .route(&format!("{mount}/openapi.yaml"), yaml);
+
+    // Both spellings, because a viewer reached without the trailing slash would
+    // otherwise resolve its own relative assets one segment too high. An empty
+    // mount is already `/` and cannot be registered twice.
+    for at in if mount.is_empty() {
+        vec!["/".to_owned()]
+    } else {
+        vec![mount.to_owned(), format!("{mount}/")]
+    } {
+        let page = page.clone();
+        router = router.route(&at, get(move || std::future::ready(Html(page.clone()))));
+    }
+
+    for file in ASSETS {
+        router = router.route_service(
+            &format!("{mount}/{file}"),
+            ServeFile::new(Path::new(assets).join(file)),
+        );
+    }
+
+    router
+}
+
+/// The page, pointing at this deployment's own document rather than at the
+/// Petstore the release ships.
+fn page(mount: &str) -> String {
+    format!(
+        r##"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aave v4 Positions API</title>
+    <link rel="stylesheet" href="{mount}/swagger-ui.css" />
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="{mount}/swagger-ui-bundle.js"></script>
+    <script src="{mount}/swagger-ui-standalone-preset.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({{
+        url: "{mount}/openapi.json",
+        dom_id: "#swagger-ui",
+        presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+        layout: "StandaloneLayout",
+        deepLinking: true,
+      }});
+    </script>
+  </body>
+</html>
+"##
     )
 }
 
@@ -336,7 +408,10 @@ mod tests {
     async fn serves_the_ui_and_both_spellings_of_the_document() {
         let (status, body) = fetch("/docs/").await;
         assert_eq!(status, StatusCode::OK);
-        assert!(body.contains("swagger"), "the UI is not html: {body:.120}");
+        assert!(
+            body.contains(r#"url: "/docs/openapi.json""#),
+            "the page does not point at this deployment's document: {body:.200}"
+        );
 
         let (status, body) = fetch("/docs/openapi.yaml").await;
         assert_eq!(status, StatusCode::OK);
