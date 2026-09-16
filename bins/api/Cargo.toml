@@ -6,26 +6,62 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+aave-positions.workspace = true
 clickhouse-client.workspace = true
 env.workspace = true
+# The read-only view of the cursor row, and nothing else from that crate. The
+# boundary rule is no chain and no socket, which its own doc argues this side of.
+indexing.workspace = true
 ops.workspace = true
 postgres.workspace = true
+prices.workspace = true
+token-metadata.workspace = true
 
+# `Address` and the two 256-bit integers the stores hand back. Already linked
+# through `aave-positions`; naming it here is what lets this crate spell the
+# types in its own signatures.
+alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
+# The four ports are held as `Box<dyn _>`, which `async fn` in a trait still
+# cannot be. Also what the test doubles in here implement.
+async-trait = "0.1.92"
 axum = "0.8.9"
-# The error envelope on the wire. `axum::Json` serialises it; this names the
-# derive.
+# A cursor's payload and its tag, both unpadded URL-safe. Already in the tree
+# through the drivers, so naming it costs no compilation.
+base64 = "0.22.1"
+# The query string as the pairs it is. Named rather than reached through
+# `axum::extract::Query`, whose rejection is a shape of its own: this endpoint
+# reports every bad parameter at once and has to see the unrecognised ones,
+# neither of which survives a deserialize into a struct.
+form_urlencoded = "1.2.2"
+# The cursor's signature. `sha2` is the digest behind it and `subtle` is the
+# comparison — a tag checked with `==` leaks its prefix through timing.
+hmac = "0.12.1"
+sha2 = "0.10.9"
+subtle = "2.6.1"
+# Everything this service puts on the wire — the error envelope and the page.
+# `axum::Json` serialises them; this names the derive.
 serde = { version = "1.0.229", features = ["derive"] }
 # `macros` for `#[tokio::main]` and the `join!` the readiness probe uses, `net`
 # for the listener, `rt-multi-thread` because this one serves concurrently
 # where `migrate` walks a list, and `sync` for the test that stands in for a
 # signal.
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "sync"] }
+# The `timestamptz` the two Postgres reads hand over, and the three wire clocks
+# it becomes. Neither feature is a default and both are why this is declared here
+# rather than inherited: `formatting` carries `format`, and `macros` the four
+# const format descriptions `dto` picks between.
+thiserror = "2.0.19"
+time = { version = "0.3.55", features = ["formatting", "serde"] }
 # `ServiceBuilder`, so the two request-id layers are ordered where a reader can
 # see it rather than by the direction `Router::layer` happens to compose.
 tower = { version = "0.5.3", features = ["util"] }
 tower-http = { version = "0.7.0", features = ["catch-panic", "request-id"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["json"] }
+
+[dev-dependencies]
+# Reading one field back out of a body a case has already asserted whole.
+serde_json = "1.0.151"
 
 [lints]
 workspace = true

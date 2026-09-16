@@ -1,25 +1,18 @@
 //! How this service represents a failure, and what a caller learns from one.
 //!
-//! A trait object rather than a type, which is
-//! [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs)
-//! shape: one blanket impl turns any `std` error into a logged 500, so a
-//! handler can `?` a store read without writing a conversion, and the
-//! constructors beside it demote the failures a caller caused. Two jobs in that
-//! order, which is what Nest's exception filter does and what replaces it.
+//! A trait object rather than a type: one blanket impl turns any `std` error
+//! into a logged 500, so a handler can `?` a store read without writing a
+//! conversion, and the constructors beside it demote the failures a caller
+//! caused.
 //!
-//! **The envelope lives in [`json`], not here**, and that boundary is
-//! crates.io's too. This module is the vocabulary of failures — what can go
-//! wrong and what status it deserves. That one is the wire contract, which is
-//! measured against the TypeScript and changes on a different schedule.
+//! **The envelope lives in [`json`], not here.** This module is the vocabulary
+//! of failures — what can go wrong and what status it deserves. That one is the
+//! wire contract, and the two move on different schedules.
 //!
-//! **The 500 is fixed text, not the envelope**, which is crates.io's choice here
-//! and also the one already made beside it: `CatchPanicLayer` answers a panic
-//! the same way. The reason is that the TypeScript's 500 body is *unmeasured* —
-//! Nest's default filter emits a different shape for an unhandled throw than for
-//! an `HttpException`, with no `error` key and the remaining two the other way
-//! round, and nothing in this tree records which. Writing it from memory of
-//! Nest's source is the mistake [`json`]'s measured note exists to prevent, so
-//! the shape lands with the first route that can fail, measured then.
+//! **A 5xx answers fixed text rather than the envelope**, which is what
+//! `CatchPanicLayer` beside it already does. Publishing a second error shape is
+//! what [`json`]'s doc argues against; `docs/rust-migration.md` records what a
+//! comparator should do with the difference.
 
 mod json;
 
@@ -31,9 +24,9 @@ use axum::response::{IntoResponse, Response};
 
 /// Anything that knows what it looks like to a caller.
 ///
-/// `response` takes `&self` rather than consuming, as crates.io's does: it is
-/// what lets the error be logged and answered from the same value, and it is
-/// the difference between this and a plain `IntoResponse` impl.
+/// `response` takes `&self` rather than consuming, which is what lets an error
+/// be logged and answered from the same value — the difference between this and
+/// a plain `IntoResponse` impl.
 pub(crate) trait AppError: Send + fmt::Display + fmt::Debug + 'static {
     fn response(&self) -> Response;
 }
@@ -73,6 +66,15 @@ impl<E: Error + Send + 'static> AppError for E {
     }
 }
 
+/// Every `std` error becomes one, so a handler can `?` a store read. No overlap
+/// with the impl above: `dyn AppError` is not a `std::error::Error`, so
+/// `From<T> for T` still applies to `BoxedAppError`.
+impl<E: Error + Send + 'static> From<E> for BoxedAppError {
+    fn from(error: E) -> Self {
+        Box::new(error)
+    }
+}
+
 /// What this deployment has never heard of.
 ///
 /// The message is the caller's, which is what makes it useful and what makes it
@@ -80,6 +82,16 @@ impl<E: Error + Send + 'static> AppError for E {
 /// a log and a browser. Nothing else of ours goes into it.
 pub(crate) fn not_found(message: String) -> BoxedAppError {
     json::custom(StatusCode::NOT_FOUND, message)
+}
+
+/// What the caller got wrong, said back to them.
+///
+/// Without it a malformed address reaches the blanket impl above and answers a
+/// 500, telling a caller their own mistake is the server's fault. The message
+/// names the parameter and quotes what was sent, which is safe to echo for the
+/// reason [`not_found`]'s is: it came from the request line.
+pub(crate) fn bad_request(message: String) -> BoxedAppError {
+    json::custom(StatusCode::BAD_REQUEST, message)
 }
 
 #[cfg(test)]

@@ -197,10 +197,13 @@ time:
 | `api`     | `axum`, the read stores, `aave-positions` valuation                  | `alloy-provider`, `alloy-transport-http`, the write paths |
 | `indexer` | `alloy`, `indexing`, the event and position writers                  | `axum` beyond the probe router        |
 
-The third column will be asserted in CI with `cargo tree -i`, so reaching across fails the build
-rather than passing review — from Phase 2, when `bins/api` gives it something to check. Today
-neither `axum` nor any of alloy's chain-facing crates is in the workspace and the assertion would
-pass without proving anything. `api`'s row names those crates rather than `alloy` because
+The third column is asserted in CI by `scripts/binary-boundaries.sh`, so reaching across fails the
+build rather than passing review. It landed with the route in Phase 2, which is when `bins/api`
+finally linked something worth checking — before that neither `axum` nor any of alloy's chain-facing
+crates was in the workspace, and the assertion would have passed without proving anything. It reads
+`cargo tree --edges normal` per binary rather than `cargo tree -i` per crate: the inverted form
+errors on a crate absent from the graph, which is the *passing* case, so the shape that fails cleanly
+is the one that lists what a binary links and looks for the names it may not. `api`'s row names those crates rather than `alloy` because
 `crates/aave-positions` links `alloy-primitives` for `U256` and `I256`: the prohibition is no chain
 and no socket, and integer types are neither — they are also what the Phase 3 decoders will hand
 over, so sharing them is what keeps a conversion out of the boundary.
@@ -212,7 +215,7 @@ port from `CursorStore` precisely because one process writes that row and anothe
 whole dependency surface is a `B256` and Postgres. So the prohibition stays what it always was, no
 chain and no socket, and what follows from it is that the alloy adapters land *outside*
 `crates/indexing` when Phase 3 brings them — otherwise the read API grows an HTTP client it never
-calls and `cargo tree -i alloy-provider` says so.
+calls and `scripts/binary-boundaries.sh` says so.
 
 `migrate` is its own crate because its lifecycle differs — it runs before the
 service exists, issues the only DDL in the system, and something has to block on it, which is already
@@ -225,7 +228,7 @@ graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 
 | today | Rust | note |
 | --- | --- | --- |
-| NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become `Arc<dyn Trait + Send + Sync>` — trait objects rather than generics, so the composition root reads like the module graph it replaces. An async port therefore carries `#[async_trait]`: `async fn` in a trait is stable and still not dyn compatible, measured on 1.96, and a boxed future per call is the price of the seam |
+| NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become trait objects rather than generics, so the composition root reads like the module graph it replaces — `Box<dyn Trait>` where one owner holds one, which is what `bins/api` does with its four, and `Arc` only where something genuinely shares one. An async port therefore carries `#[async_trait]`: `async fn` in a trait is stable and still not dyn compatible, measured on 1.96, and a boxed future per call is the price of the seam |
 | `@nestjs/platform-express` | `axum` + `tower-http` | |
 | `@nestjs/swagger` | `utoipa` + `utoipa-swagger-ui` | derive-based, so it maps onto the hand-decorated DTOs directly; the OpenAPI drift guard ports as a test over the generated document |
 | `zod` | `serde` + `garde`; `figment` for env | five files. Abort-on-invalid-config is preserved |
@@ -547,31 +550,88 @@ sum of `Int256` deltas and a negative one is drift that §9 catches by seeing it
 
 **Gate, and it has to happen before anything is deleted:** both APIs pointed at the same ClickHouse
 and Postgres, and a replay harness issuing several hundred requests — every wallet in the fold, every
-page size, cursors walked to exhaustion, `asOf` pinned at fixed instants — **byte-comparing the
-JSON**. Diff the two OpenAPI documents too.
+page size, cursors walked to exhaustion, the valuation instant pinned at fixed values (`asOf` to one
+service, `as_of` to the other) — comparing the JSON under the one transform named below. Diff the two
+OpenAPI documents too.
 
-**Two keys are expected to differ, and the comparator has to be told rather than left to find them.**
-This port reads as Rust rather than as a transliteration, so the two multi-word keys it owns are
-snake_case:
+**One rule is expected to differ, and the comparator has to be told rather than left to find it.**
+This entry used to name two keys — `uptimeSeconds` and `statusCode` — and argue each was worth
+renaming because it read as Rust rather than as a transliteration. That reasoning does not stop at
+keys with no consumers, so it now covers the payload and the exception list collapses into one rule:
 
-| endpoint | TypeScript | here |
+> **Where the shape is this service's own, it is written the Rust way and the difference is recorded.
+> Where it is a number, a quantity or an identity, it is identical.**
+
+Four classes fall under it, and nothing else does.
+
+| class | TypeScript | here |
 | --- | --- | --- |
-| `GET /health/live` | `uptimeSeconds` | `uptime_seconds` |
-| any error body | `statusCode` | `status_code` |
+| every multi-word key | `suppliedShares`, `valuedAt`, `nextCursor`, `statusCode`, `uptimeSeconds` | `supplied_shares`, `valued_at`, `next_cursor`, `status_code`, `uptime_seconds` |
+| the one multi-word query parameter | `?asOf=` | `?as_of=` |
+| the three wire clocks | `2026-07-25T17:20:00.000Z` — three decimal places always, microseconds truncated | `2026-07-25T17:20:00Z`, `…00.5Z`, `…00.221456Z` — RFC 3339 as `time` writes it, keeping the microseconds Postgres stored |
+| a validation failure's `message` | Zod's `prettifyError` — `✖ …\n  → at user` | this service's own text, in the same envelope, naming every bad parameter rather than the first |
 
-The first is free: it is the only multi-word key on the probe surface, so matching it meant a
-`serde(rename_all)` governing exactly one field, and it has no consumer — all three compose
-healthchecks and a Kubernetes probe request `/health/ready` and read only the status code, and
-nothing requests `/health/live` at all.
+Twenty-four payload keys change, and **this is a breaking change with a release note**, on the terms
+this entry already set for `statusCode` alone. `as_of` is the sharpest edge of it: a URL that works
+against the Node service is a `400` here rather than a field quietly renamed, because unrecognised
+query parameters are refused.
 
-The second is not free, and should be treated as a breaking change with a release note: error bodies
-are parsed by callers, and anything switching on `statusCode` stops seeing it. The status line still
-carries the code, which is what most clients actually read.
+**The format is the library's.** `#[serde(with = "time::serde::rfc3339")]` on an `OffsetDateTime`
+field, and no format description anywhere. It trims *every* trailing zero, so a `timestamptz` of
+`…00.5+00` goes out as `…00.5Z` — one digit, which is valid RFC 3339 (`time-secfrac = "." 1*DIGIT`)
+and which `new Date()` reads back as `.500Z`.
 
-Everything else is matched exactly, field order included — the error envelope still emits `message`,
-then `error`, then the status, which is the order the running service uses and not the order its own
-DTO class declares. A gate that reports either of these two as drift is a gate that has not been told
-the truth; a gate that reports anything else has found something.
+This replaced four hand-written width buckets, picked to match `chrono`'s `SecondsFormat::AutoSi` and
+the ecosystem crates.io publishes — measured, over 6,126 timestamps from its public API: 2,182 carry
+no fraction, one carries three digits, 3,943 carry six, none any other width. What retired them is
+that the argument for them did not survive being measured. It was that `…00.5Z` is a width strict
+parsers refuse, naming `datetime.fromisoformat` before Python 3.11 — but that parser refuses `Z`
+outright, so it rejects `…00Z` and `…00.221456Z` too. The buckets bought nothing from the one
+consumer they were chosen for.
+
+The offset is UTC by construction rather than by conversion: `postgres-types` reads a `timestamptz`
+from the binary format, which carries no zone, and attaches UTC — measured, under a session
+`TIME ZONE 'Europe/Berlin'` and a `+02` literal, the driver still hands back `+00:00`.
+
+**What the gate does about it.** It can no longer byte-compare a positions body, so it compares
+through **one total key transform** — camelCase to snake_case, applied to the TypeScript side, with
+no per-key exceptions. That the transform is total is itself the assertion: the two key sets must
+agree exactly under it, so a field that is missing, extra or misspelled still fails. Values and key
+*order* are compared exactly — the error envelope still emits `message`, then `error`, then the
+status, which is the order the running service uses and not the order its own DTO class declares.
+Timestamps are compared as instants; validation bodies on status and on which parameters they name.
+
+What that costs is the "any difference is a finding" property, for those two classes only. It is why
+the exception list was meant to stay short, and the trade is being made deliberately rather than
+discovered.
+
+**Two behaviours are the predecessor's and are pinned by test rather than by comment.** An unmatched
+*method* answers `404`, not axum's default `405` with an `allow` header — Express does not
+distinguish an unmatched method from an unmatched path — and the body echoes the whole request
+target, query string included, because Express builds it from `req.originalUrl`. `uri.path()` would
+have been the obvious reach and would have dropped the query. Both were measured against the running
+service and both are asserted in `bins/api/src/router.rs`; neither is explained there, because the
+port does not name what it replaces.
+
+**The page cursor is byte-identical across the two services** while both run, because the HMAC
+construction is the same: same key from `POSITIONS_CURSOR_SECRET`, same `chain_id|user|spoke|payload`
+over `|`, same 128-bit truncation, same unpadded base64url. Either service accepts a cursor the other
+issued — verified on one pair of databases — which is the sharpest single check the replay harness
+inherits, and the reason the construction must not change while both are deployed.
+
+**The 500 body stays fixed text and is not the envelope**, which the plan for that PR had intended to
+change. It was finally measured — a `RENAME TABLE` under the running service, so the store threw
+rather than refused — and Nest answers `{"statusCode":500,"message":"Internal server error"}`: two
+keys, no `error`, the status first, and lower-case where the reason phrase is not. That is a *second*
+envelope, and `errors/json.rs` already argues against publishing two error shapes. So this one
+answers `Internal Server Error` as `text/plain`, which is crates.io's choice here and what
+`CatchPanicLayer` beside it was already doing. A comparator is told: any 5xx, compare the status and
+nothing else.
+
+**One difference is not on this list**, and it is worth saying so: addresses still go out lower-cased,
+where `Address`'s own `Display` is EIP-55 checksummed. The fold stores one spelling, the cursor
+payload signs it, and a consumer comparing `user` against a stored string is the common case — so
+this is the one place the type's idiom loses to the wire's.
 
 **Then capture that corpus as golden files and commit it.** Once `apps/api` is gone the oracle is
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the
@@ -596,8 +656,24 @@ types: a price is keyed by a `ReserveKey { spoke, reserve_id }` rather than by a
 `${spoke}:${id}` string, and labels are keyed by `Address` — so the lower-casing rule whose omission
 its store doc warns "every price silently stops joining" over has nothing left to omit.
 
-Left: `crates/telemetry`; and the route itself — DTOs, decimal scaling, cursor signing, validation,
-utoipa.
+Then the route. `GET /{prefix}/v1/chains/{chain_id}/users/{user}/positions`, which is what the four
+ports existed for and what nothing had called: `bins/api` linked none of them, and `aave-positions`
+was not even in `[workspace.dependencies]`. Six modules under `bins/api/src/positions` — what a
+caller may ask for, the HMAC over a resume point, base units to a decimal string, the wire shape, and
+the join that puts four reads and three clocks behind one response. `AppState` took the `Arc` its own
+doc had been promising since #47, `config` grew the four variables it had been predicting, and CI
+finally has a boundary worth asserting — `scripts/binary-boundaries.sh`, runnable on its own.
+
+Three things were measured rather than assumed, and two of them were wrong first. `U256::from_str`
+answers `Ok(0)` for the empty string, so a signed cursor whose reserve id went missing would have
+resumed from the start of the listing rather than refusing — the digits check that stops it was added
+because the case failed without it. `Address::from_str` strips an optional `0x`, so twenty bytes of
+bare hex resolve where the anchored regex refused them; pinned rather than guarded, since the answer
+is the same page. And a ceiling of a day on the staleness thresholds catches the price default in
+milliseconds and not the sync one, which the constant now says instead of claiming to be a units
+check.
+
+Left: `crates/telemetry`, and utoipa.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
