@@ -2,11 +2,10 @@
 
 use aave_positions::store::Position;
 use serde::Serialize;
+use time::OffsetDateTime;
 
-use super::instant::instant;
 use super::item::Item;
 use super::{Prices, price_for};
-use crate::errors::BoxedAppError;
 
 /// One wallet's positions, valued at one instant.
 #[derive(Debug, Serialize)]
@@ -22,10 +21,10 @@ pub(crate) struct Page {
     /// `sync.last_block`: the shares are as far as the indexer has folded, the
     /// amounts are those shares valued at this instant.
     ///
-    /// RFC 3339, matching `sync.updated_at` and `pricing.updated_at`. The
-    /// `as_of` **query parameter** that sets it is Unix seconds, so
+    /// The `as_of` **query parameter** that sets it is Unix seconds, so
     /// round-tripping this value means converting it.
-    pub(crate) valued_at: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) valued_at: OffsetDateTime,
 
     /// How current the prices behind this page are — **a third clock**, beside
     /// `sync` and `valued_at`, because prices have their own source and their
@@ -53,7 +52,8 @@ pub(crate) struct Progress {
     pub(crate) last_block_hash: String,
 
     /// When the indexer last advanced, by the database clock that recorded it.
-    pub(crate) updated_at: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub(crate) updated_at: OffsetDateTime,
 
     /// Seconds since the indexer last advanced. Measured on the server that
     /// wrote the timestamp, so it is not affected by clock skew between hosts.
@@ -69,7 +69,8 @@ pub(crate) struct Progress {
 #[derive(Debug, Serialize)]
 pub(crate) struct Pricing {
     /// When the oldest price behind any number on this page was read.
-    updated_at: String,
+    #[serde(with = "time::serde::rfc3339")]
+    updated_at: OffsetDateTime,
 
     /// Seconds since then, measured by the database clock rather than this
     /// process's, so clock skew between the two cannot be reported as staleness.
@@ -95,7 +96,7 @@ pub(crate) fn pricing(
     positions: &[Position],
     prices: &Prices,
     stale_after: u64,
-) -> Result<Option<Pricing>, BoxedAppError> {
+) -> Option<Pricing> {
     let oldest = positions
         .iter()
         .filter_map(|position| price_for(position, prices))
@@ -107,13 +108,9 @@ pub(crate) fn pricing(
             }
         });
 
-    oldest
-        .map(|price| {
-            Ok(Pricing {
-                updated_at: instant(price.priced_at)?,
-                age_seconds: price.age_seconds,
-                stale: price.age_seconds > stale_after,
-            })
-        })
-        .transpose()
+    oldest.map(|price| Pricing {
+        updated_at: price.priced_at,
+        age_seconds: price.age_seconds,
+        stale: price.age_seconds > stale_after,
+    })
 }

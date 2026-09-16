@@ -13,6 +13,7 @@ use aave_positions::store::PositionQuery;
 use axum::extract::{Path, RawQuery, State};
 use axum::routing::get;
 use axum::{Json, Router};
+use time::OffsetDateTime;
 
 use super::cursor::Scope;
 use super::params::Listing;
@@ -102,12 +103,12 @@ async fn list(
         sync: wire::Progress {
             last_block: sync.last_block,
             last_block_hash: sync.last_hash.to_string(),
-            updated_at: wire::instant(sync.updated_at)?,
+            updated_at: sync.updated_at,
             age_seconds: sync.age_seconds,
             stale: sync.age_seconds > app.staleness.sync,
         },
-        valued_at: wire::instant_at(page.valued_at)?,
-        pricing: wire::pricing(&page.items, &prices, app.staleness.price)?,
+        valued_at: OffsetDateTime::from_unix_timestamp(i64::try_from(page.valued_at)?)?,
+        pricing: wire::pricing(&page.items, &prices, app.staleness.price),
         items,
         next_cursor: page.next.map(|key| app.signer.encode(&scope, &key)),
     }))

@@ -225,6 +225,32 @@ async fn the_page_clock_is_the_oldest_price_behind_it_not_the_newest() {
 }
 
 #[tokio::test]
+async fn writes_a_subsecond_at_whatever_width_it_takes_to_say_it() {
+    // Postgres holds microseconds, and the wire publishes them rather than a
+    // fixed three digits. A half second is one digit and stays one.
+    let (key, mut price) = priced(SPOKE, 41);
+    price.priced_at += time::Duration::milliseconds(500);
+
+    let stores = Stores {
+        page: PositionPage {
+            items: vec![held()],
+            valued_at: VALUED_AT,
+            next: None,
+        },
+        labels: labelled(),
+        prices: HashMap::from([(key, price)]),
+        ..Stores::default()
+    };
+
+    let (_, body) = answer(stores, "").await;
+
+    assert!(
+        body.contains(r#""updated_at":"2026-07-25T17:19:19.5Z""#),
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn an_unresolved_reserve_nulls_the_asset_the_value_and_the_shares_together() {
     // The scale lives on the asset: an unscaled integer in a field the
     // contract calls decimal is wrong by up to eighteen orders of magnitude.
