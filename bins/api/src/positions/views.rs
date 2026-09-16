@@ -1,4 +1,7 @@
-//! What a page looks like on the wire, and how a folded position becomes one.
+//! What a page looks like on the wire: the API's own view of a folded position.
+//!
+//! **A view, not the domain.** `aave_positions::store` holds what a position
+//! *is*; these are what a caller is shown.
 //!
 //! [`page`] is what wraps the positions and the two clocks beside them, and
 //! [`item`](mod@item) is one position. Every type declares its own `new`, so a
@@ -6,7 +9,7 @@
 //!
 //! Four rules govern all six types. **No `rename_all` anywhere** — every
 //! multi-word key is snake_case. **They mirror the domain rather than reuse
-//! it**, which is why the wire item is `Item` and not `Position`: the domain may
+//! it**, which is why the view is `Item` and not `Position`: the domain may
 //! gain a field, the contract may not. **Every number is a decimal string**,
 //! scaled by `aave_positions::scale`. **Every instant is RFC 3339 in UTC**, as
 //! `time::serde::rfc3339` writes it. **Null means unknown, never zero** —

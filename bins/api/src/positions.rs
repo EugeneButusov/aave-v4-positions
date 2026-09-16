@@ -5,10 +5,10 @@
 //! paged by keyset.
 //!
 //! [`list`] is the endpoint. [`params`] is what a caller may ask for, [`cursor`]
-//! how a resume point is published and taken back, and [`wire`] the shape that
-//! goes out — every number in it scaled by `aave_positions::scale`. A module declares its endpoints and
-//! holds only what they share; the endpoint holds its own handler, its own types
-//! and its own assembly.
+//! how a resume point is published and taken back, and [`views`] the shape that
+//! goes out — every number in it scaled by `aave_positions::scale`. A module
+//! declares its endpoints and holds only what they share; the endpoint holds its
+//! own handler, its own types and its own assembly.
 //!
 //! **Positions from different Spokes may be listed together but never summed.**
 //! Each Spoke is an isolated margin account with its own collateral factors,
@@ -19,7 +19,7 @@
 mod cursor;
 mod list;
 mod params;
-mod wire;
+mod views;
 
 pub(crate) use cursor::{MIN_SECRET_BYTES, Signer};
 pub(crate) use list::routes;

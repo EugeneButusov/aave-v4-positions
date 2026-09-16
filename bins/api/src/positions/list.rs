@@ -6,7 +6,7 @@
 //!
 //! **It is where the two enrichments are merged in**, keyed by chain rather than
 //! by page and joined here rather than in SQL, which is what keeps the ClickHouse
-//! adapter unaware either exists. What a position then looks like is [`super::wire`]'s.
+//! adapter unaware either exists. What a position then looks like is [`super::views`]'s.
 
 use aave_positions::store::PositionQuery;
 use axum::extract::{Path, RawQuery, State};
@@ -15,7 +15,7 @@ use axum::{Json, Router};
 
 use super::cursor::Scope;
 use super::params::Listing;
-use super::wire::{self, Prices};
+use super::views::{self, Prices};
 use crate::app::AppState;
 use crate::errors::{self, BoxedAppError};
 
@@ -35,7 +35,7 @@ async fn list(
     State(app): State<AppState>,
     Path((chain_id, user)): Path<(String, String)>,
     RawQuery(query): RawQuery,
-) -> Result<Json<wire::Page>, BoxedAppError> {
+) -> Result<Json<views::Page>, BoxedAppError> {
     let listing = Listing::parse(&chain_id, &user, query.as_deref().unwrap_or_default())?;
 
     // Read first, and fail here rather than after a query that would answer "no
@@ -94,7 +94,7 @@ async fn list(
 
     let next_cursor = page.next.as_ref().map(|key| app.signer.encode(&scope, key));
 
-    Ok(Json(wire::Page::new(
+    Ok(Json(views::Page::new(
         &sync,
         &page,
         &labels,
