@@ -109,6 +109,19 @@ impl<'a> Env<'a> {
         value
     }
 
+    /// No default, and no fallback worth having: the value names something
+    /// outside this process, so guessing it produces a plausible answer to the
+    /// wrong question. The empty string handed back only lets the remaining
+    /// variables still be read.
+    pub fn required(&mut self, key: &str) -> String {
+        let value = self.raw(key).unwrap_or_default().to_owned();
+
+        if value.is_empty() {
+            self.reject(key, "must be set");
+        }
+        value
+    }
+
     /// As lenient as the WHATWG standard `url` implements, deliberately.
     ///
     /// `clickhouse:8123` is a valid URL — a scheme and a path — and is accepted.
@@ -164,6 +177,20 @@ impl<'a> Env<'a> {
         }
     }
 
+    pub fn ratio(&mut self, key: &str, default: f64) -> f64 {
+        let Some(value) = self.raw(key) else {
+            return default;
+        };
+
+        match value.parse::<f64>() {
+            Ok(ratio) if (0.0..=1.0).contains(&ratio) => ratio,
+            _ => {
+                self.reject(key, &format!("must be 0.0..=1.0, got {value:?}"));
+                default
+            }
+        }
+    }
+
     pub fn flag(&mut self, key: &str, default: bool) -> bool {
         let Some(value) = self.raw(key) else {
             return default;
@@ -179,6 +206,18 @@ impl<'a> Env<'a> {
 
         self.one_of(key, value, &LEVELS)
             .unwrap_or(LevelFilter::INFO)
+    }
+
+    /// The spellings a caller accepts, and what each one means to it. `flag` and
+    /// `level` are this with the table built in; a table nothing else shares
+    /// stays with the code that gives it meaning, so this crate keeps knowing
+    /// nothing about what a service is.
+    pub fn choice<T: Copy>(&mut self, key: &str, table: &[(&str, T)], default: T) -> T {
+        let Some(value) = self.raw(key) else {
+            return default;
+        };
+
+        self.one_of(key, value, table).unwrap_or(default)
     }
 
     /// Borrowed from the map rather than from `self`, so a value can be read
@@ -366,6 +405,67 @@ mod tests {
 
         assert_eq!(secret, key);
         assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    #[test]
+    fn a_required_variable_is_refused_when_absent_and_when_empty() {
+        // The empty case is the one worth a test: every other reader here
+        // treats an empty value as a value, and this is the reader where that
+        // rule would hand back a name nothing can be grouped by.
+        assert_eq!(
+            problems(&[], |env| env.required("NAME")),
+            ["NAME: must be set"]
+        );
+        assert_eq!(
+            problems(&[("NAME", "")], |env| env.required("NAME")),
+            ["NAME: must be set"]
+        );
+    }
+
+    #[test]
+    fn a_required_variable_that_is_set_is_read_as_it_stands() {
+        let (name, problems) = read(&[("NAME", "api-rust")], |env| env.required("NAME"));
+
+        assert_eq!(name, "api-rust");
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    #[test]
+    fn a_choice_maps_the_spellings_its_caller_offered() {
+        const SIDES: [(&str, u8); 2] = [("heads", 0), ("tails", 1)];
+
+        let (side, problems) = read(&[("SIDE", "tails")], |env| env.choice("SIDE", &SIDES, 0));
+
+        assert_eq!(side, 1);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+
+    #[test]
+    fn a_choice_names_the_spellings_it_would_have_taken() {
+        const SIDES: [(&str, u8); 2] = [("heads", 0), ("tails", 1)];
+
+        assert_eq!(
+            problems(&[("SIDE", "edge")], |env| env.choice("SIDE", &SIDES, 0)),
+            [r#"SIDE: must be one of heads, tails, got "edge""#]
+        );
+    }
+
+    #[test]
+    fn a_ratio_holds_to_its_ends_and_refuses_what_is_past_them() {
+        let (zero, bad) = read(&[("SHARE", "0")], |env| env.ratio("SHARE", 1.0));
+        assert!(zero.abs() < f64::EPSILON, "{zero}");
+        assert!(bad.is_empty(), "{bad:?}");
+
+        let (one, bad) = read(&[("SHARE", "1.0")], |env| env.ratio("SHARE", 0.0));
+        assert!((one - 1.0).abs() < f64::EPSILON, "{one}");
+        assert!(bad.is_empty(), "{bad:?}");
+
+        for past in ["-0.1", "1.1", "half"] {
+            assert_eq!(
+                problems(&[("SHARE", past)], |env| env.ratio("SHARE", 1.0)),
+                [format!(r#"SHARE: must be 0.0..=1.0, got "{past}""#)]
+            );
+        }
     }
 
     #[test]
