@@ -292,6 +292,35 @@ async fn an_unresolved_reserve_nulls_the_asset_the_value_and_the_shares_together
 }
 
 #[tokio::test]
+async fn a_hub_that_listed_the_asset_without_checkpointing_it_keeps_the_shares() {
+    // The other half of the rule above: `value` nulls without `asset` doing
+    // so, because a zero there could not be told from a real zero balance.
+    // The page's clock does not age for it either — a position with nothing
+    // to value takes no price.
+    let mut unvalued = held();
+    unvalued.value = None;
+
+    let stores = Stores {
+        page: PositionPage {
+            items: vec![unvalued],
+            valued_at: VALUED_AT,
+            next: None,
+        },
+        labels: labelled(),
+        prices: HashMap::from([priced(SPOKE, 41)]),
+        ..Stores::default()
+    };
+
+    let (status, body) = answer(stores, "").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(r#""supplied_shares":"500.5""#), "{body}");
+    assert!(body.contains(r#""symbol":"USDC""#), "{body}");
+    assert!(body.contains(r#""value":null"#), "{body}");
+    assert!(body.contains(r#""pricing":null"#), "{body}");
+}
+
+#[tokio::test]
 async fn a_reserve_nobody_has_priced_nulls_the_dollars_and_keeps_the_tokens() {
     let stores = Stores {
         page: PositionPage {
