@@ -273,8 +273,8 @@ paragraph's first guess in both directions:
   layers. That histogram is the one the dashboard's three API panels are written against, and the
   service this replaces publishes it without writing a line.
 - **Postgres is hand-written too**, which the line below this section got wrong: `tokio-postgres`
-  depends on `log`, not `tracing`, and opens no span at all. `postgres::query_span` names the shape
-  once for the three crates that read.
+  depends on `log`, not `tracing`, and opens no span at all. `postgres::query` and `query_opt` carry
+  it, so there is no `instrument` for a store to leave off.
 - **ClickHouse is not hand-written after all.** The `clickhouse` crate already opens
   `clickhouse.query`; its `opentelemetry` feature makes it a client span and puts `traceparent` on
   the request, so the server records the same trace — checked against
@@ -408,10 +408,11 @@ Parameters stay bound (`$1`, `$2`), so the parameterisation property the catalog
 holds, and the only unbound string remains the DDL in the migration runner, which is a repo file.
 [`traced-sql.ts`](../packages/postgres/src/traced-sql.ts) — the `Proxy` over `Sql` with the shadowed
 `then` — is **deleted rather than ported**, but not for the reason first written here: the driver
-emits nothing, because `tokio-postgres` speaks `log` rather than `tracing`. What goes instead is one
-`instrument` per read against `postgres::query_span`, which is four lines rather than a hundred and
-publishes `db.query.text` safely — every statement is a `const` and every value a bind parameter,
-where the TypeScript needed `strings.raw` to keep interpolated values off a span.
+emits nothing, because `tokio-postgres` speaks `log` rather than `tracing`. What goes instead is
+`postgres::query` and `query_opt`, which is a dozen lines rather than a hundred and publishes
+`db.query.text` safely — a `Statement` holds `&'static str`, so a `format!` cannot be passed and
+every value travels as a bind parameter, where the TypeScript needed `strings.raw` to keep
+interpolated values off a span.
 
 ### Config ordering
 

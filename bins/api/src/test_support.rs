@@ -288,12 +288,17 @@ pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     }
 }
 
-/// What the formatter wrote, held where a case can read it.
+/// What a subscriber wrote, held where a case can read it back.
+///
+/// **One of these, for both suites here.** `MakeWriter` is what
+/// `with_writer` takes, and nothing in `std` or `tracing-subscriber` gives a
+/// shared byte buffer that satisfies it — `MakeWriter for Arc<W>` wants
+/// `&W: Write`, which `&Mutex<Vec<u8>>` is not.
 #[derive(Clone, Default)]
 pub(crate) struct Written(Arc<std::sync::Mutex<Vec<u8>>>);
 
 impl Written {
-    fn read(&self) -> String {
+    pub(crate) fn read(&self) -> String {
         String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
     }
 }

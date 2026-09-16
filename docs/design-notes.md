@@ -2005,10 +2005,12 @@ The database seam comes out **asymmetric again, and the other way round**. The `
 opens `clickhouse.query` itself, and its `opentelemetry` feature makes that a client span and puts
 `traceparent` on the request — so ClickHouse records the same trace in
 `system.opentelemetry_span_log`, which the TypeScript never asked it to. Postgres is the opposite:
-`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::query_span` names the
-shape once for the three crates that read. There `db.query.text` is safe by construction rather than
-by care — every statement is a `const` and every value a bind parameter, where `traced-sql.ts` needed
-`strings.raw` and a join to keep an interpolated value off a span.
+`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::query` and
+`query_opt` carry the span themselves — functions rather than a span to hang beside a read, because a
+span a call site can leave off is a gap nothing fails over. There `db.query.text` is safe by the type rather than
+by care — a `Statement` holds `&'static str`, so a `format!` cannot be passed and every value travels
+as a bind parameter, where `traced-sql.ts` needed `strings.raw` and a join to keep an interpolated
+value off a span.
 
 **Plaintext OTLP only.** The exporter posts over hyper, which the process already links, rather than
 the crate's default `reqwest-blocking-client`; every TLS backend available would bring `ring` or

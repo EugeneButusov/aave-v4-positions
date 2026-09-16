@@ -1724,8 +1724,6 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2405,6 +2403,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2474,8 +2473,6 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -3394,8 +3391,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-postgres",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

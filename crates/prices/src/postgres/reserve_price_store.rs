@@ -3,10 +3,9 @@
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use postgres::{Pool, connection};
+use postgres::{Pool, Statement, connection};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
-use tracing::Instrument as _;
 
 use crate::{Error, ReserveKey, ReservePrice, ReservePriceStore};
 
@@ -24,7 +23,10 @@ use crate::{Error, ReserveKey, ReservePrice, ReservePriceStore};
 /// `f64` has already rounded the tail off, and the driver has no lossless
 /// integer of that width — the same reason the ClickHouse store keeps its
 /// `toString(...)` casts (§7.5).
-const LATEST: &str = "\
+const LATEST: Statement = Statement {
+    operation: "SELECT",
+    table: "reserve_prices",
+    sql: "\
     SELECT \
         spoke, \
         reserve_id::text AS reserve_id, \
@@ -32,7 +34,8 @@ const LATEST: &str = "\
         priced_at, \
         floor(EXTRACT(EPOCH FROM (now() - priced_at)))::bigint AS age_seconds \
     FROM reserve_prices \
-    WHERE chain_id = $1";
+    WHERE chain_id = $1",
+};
 
 pub struct PostgresReservePriceStore {
     pool: Pool,
@@ -49,10 +52,7 @@ impl PostgresReservePriceStore {
 impl ReservePriceStore for PostgresReservePriceStore {
     async fn latest(&self, chain_id: u32) -> Result<HashMap<ReserveKey, ReservePrice>, Error> {
         let client = connection(&self.pool).await?;
-        let rows = client
-            .query(LATEST, &[&i64::from(chain_id)])
-            .instrument(postgres::query_span("SELECT", "reserve_prices", LATEST))
-            .await?;
+        let rows = postgres::query(&client, &LATEST, &[&i64::from(chain_id)]).await?;
 
         rows.iter().map(priced).collect()
     }
@@ -99,13 +99,7 @@ fn unsigned(column: &'static str, value: &str) -> Result<U256, Error> {
 mod tests {
     //! The port's specification, against a real Postgres.
 
-    use std::sync::{Arc, Mutex};
-
-    use tracing::instrument::WithSubscriber as _;
-    use tracing_subscriber::fmt::format::FmtSpan;
-
-    use crate::ReservePriceStore;
-    use crate::conformance::{self, Harness};
+    use crate::conformance;
     use crate::postgres::harness::PostgresHarness;
 
     macro_rules! conformance {
@@ -127,59 +121,5 @@ mod tests {
         answers_a_checksummed_spoke_from_a_lower_cased_row,
         reads_a_price_past_what_a_double_can_hold,
         ages_a_price_by_the_database_clock,
-    }
-
-    /// Somewhere a case can read a span back from. Ten lines because
-    /// `MakeWriter` is implemented for any `Fn() -> impl Write`, so this needs
-    /// no impl of its own.
-    #[derive(Clone, Default)]
-    struct Sink(Arc<Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Sink {
-        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buffer);
-            Ok(buffer.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// The store's own read, seen as a trace sees it.
-    ///
-    /// **`tokio-postgres` opens no span** — it speaks `log`, not `tracing` — so
-    /// without the `instrument` on the read above, a trace through this store is
-    /// a gap between the request and the answer.
-    #[tokio::test]
-    async fn the_read_is_one_span_a_trace_can_see() {
-        let harness = PostgresHarness::fresh("traces_its_read").await;
-        let sink = Sink::default();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer({
-                let sink = sink.clone();
-                move || sink.clone()
-            })
-            .with_ansi(false)
-            .with_span_events(FmtSpan::CLOSE)
-            .finish();
-
-        harness
-            .store()
-            .latest(1)
-            .with_subscriber(subscriber)
-            .await
-            .unwrap();
-
-        let written = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
-
-        assert!(
-            written.contains(r#"otel.name="SELECT reserve_prices""#),
-            "{written}"
-        );
-        assert!(
-            written.contains(r#"db.system.name="postgresql""#),
-            "{written}"
-        );
     }
 }

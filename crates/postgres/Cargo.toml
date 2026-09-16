@@ -20,6 +20,9 @@ tracing = "0.1.44"
 [dev-dependencies]
 # Only the cases need a runtime; the crate itself starts none.
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
+# Reading the span a read opens back out of a subscriber. The only copy of this
+# in the workspace, because the two reads above are the only way to issue one.
+tracing-subscriber = "0.3.23"
 
 [lints]
 workspace = true

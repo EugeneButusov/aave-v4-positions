@@ -223,45 +223,22 @@ mod tests {
         );
     }
 
-    /// Collects what a subscriber was given, so a case can assert on a log line.
+    /// What the panic handler wrote, as a deployment would read it.
     ///
-    /// Worth the twenty lines: reading the message is done at one call site with
-    /// a coercion that can silently pick the wrong thing, and asserting on
+    /// Worth a case of its own: reading the message is done at one call site
+    /// with a coercion that can silently pick the wrong thing, and asserting on
     /// [`said`] alone leaves that call site uncovered — which is exactly how the
     /// bug this catches got as far as a running process.
-    #[derive(Clone, Default)]
-    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buffer);
-            Ok(buffer.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-        type Writer = Self;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
     fn logged_by(panic: Box<dyn Any + Send>) -> String {
-        let captured = Captured::default();
+        let written = crate::test_support::Written::default();
         let subscriber = tracing_subscriber::fmt()
             .json()
-            .with_writer(captured.clone())
+            .with_writer(written.clone())
             .finish();
 
         tracing::subscriber::with_default(subscriber, || drop(panicked(panic)));
 
-        let written = captured.0.lock().unwrap().clone();
-        String::from_utf8(written).unwrap()
+        written.read()
     }
 
     #[test]
