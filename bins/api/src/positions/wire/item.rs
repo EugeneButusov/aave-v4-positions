@@ -4,14 +4,13 @@ use std::collections::HashMap;
 
 use aave_positions::scale::{self, ORACLE_DECIMALS, RAY_DECIMALS, VALUE_DECIMALS};
 use aave_positions::store::{Position, PositionAsset};
-use aave_positions::valuation::{Valuation, to_value};
+use aave_positions::valuation::{self, Valuation, to_value};
 use alloy_primitives::{Address, I256};
 use prices::ReservePrice;
 use serde::Serialize;
 use token_metadata::TokenLabel;
 
 use super::{Prices, price_for};
-use crate::errors::BoxedAppError;
 
 type Labels = HashMap<Address, TokenLabel>;
 
@@ -164,7 +163,7 @@ pub(crate) fn item(
     position: &Position,
     labels: &Labels,
     prices: &Prices,
-) -> Result<Item, BoxedAppError> {
+) -> Result<Item, valuation::Error> {
     // **The asset carries the scale.** An unscaled integer in a field the
     // contract calls decimal is wrong by up to eighteen orders of magnitude.
     let decimals = position.asset.as_ref().map(|asset| asset.decimals);
@@ -236,7 +235,7 @@ fn usd(
     asset: &PositionAsset,
     value: &Valuation,
     price: &ReservePrice,
-) -> Result<Usd, BoxedAppError> {
+) -> Result<Usd, valuation::Error> {
     Ok(Usd {
         price: scale::unsigned(price.price, ORACLE_DECIMALS),
         supplied_amount: scale::unsigned(
