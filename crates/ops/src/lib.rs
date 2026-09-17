@@ -18,5 +18,5 @@ mod probe;
 mod shutdown;
 
 pub use health::{Alive, CheckResult, CheckStatus, Liveness, Readiness, Report, check};
-pub use probe::{Uptime, probe_router};
+pub use probe::{HEALTH_PREFIX, Uptime, probe_router};
 pub use shutdown::ShutdownFlag;

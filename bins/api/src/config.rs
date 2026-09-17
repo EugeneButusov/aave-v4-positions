@@ -13,17 +13,20 @@
 //! the `OTEL_*` group arrives with `telemetry` — and it cannot drift from what
 //! the process honours.
 //!
-//! **One variable has no default.** A cursor signing key every deployment shares
-//! is not a signature, so an unset `POSITIONS_CURSOR_SECRET` is a process that
-//! refuses to boot rather than one that serves forgeable cursors.
+//! **Two variables have no default**, and both refuse rather than fall back. A
+//! cursor signing key every deployment shares is not a signature, so an unset
+//! `POSITIONS_CURSOR_SECRET` is a process that serves forgeable cursors. And
+//! every signal is grouped by `service.name`, so an unset `OTEL_SERVICE_NAME` is
+//! telemetry that is present, plausible and impossible to attribute — noticed
+//! for the first time during an incident. `OTEL_SDK_DISABLED=true` is how a
+//! process says it wants none of it.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::time::Duration;
 
-use tracing::level_filters::LevelFilter;
-
 use env::{Env, Invalid, Source};
+use telemetry::Sampling;
 
 use crate::positions::MIN_SECRET_BYTES;
 
@@ -35,9 +38,22 @@ use crate::positions::MIN_SECRET_BYTES;
 /// and just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
+/// The six the specification spells, and no name of our own: an operator who
+/// knows OpenTelemetry should not have to learn ours.
+const SAMPLERS: [(&str, Sampling); 6] = [
+    ("always_on", Sampling::AlwaysOn),
+    ("always_off", Sampling::AlwaysOff),
+    ("traceidratio", Sampling::TraceIdRatio),
+    ("parentbased_always_on", Sampling::ParentBasedAlwaysOn),
+    ("parentbased_always_off", Sampling::ParentBasedAlwaysOff),
+    (
+        "parentbased_traceidratio",
+        Sampling::ParentBasedTraceIdRatio,
+    ),
+];
+
 pub(crate) struct Config {
-    pub(crate) level: LevelFilter,
-    pub(crate) pretty: bool,
+    pub(crate) telemetry: telemetry::Settings,
     pub(crate) host: IpAddr,
     pub(crate) port: u16,
     pub(crate) grace: Duration,
@@ -82,7 +98,7 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// [`Invalid`], listing every variable that could not be read.
+    /// [`Invalid`], naming the first variable that could not be read.
     pub(crate) fn from_env() -> Result<Self, Invalid> {
         Self::parse(&Source::from_env().read())
     }
@@ -91,24 +107,23 @@ impl Config {
     /// name three bad variables without touching global state the other tests
     /// are running against.
     fn parse(vars: &HashMap<String, String>) -> Result<Self, Invalid> {
-        let mut env = Env::new(vars);
+        let env = Env::new(vars);
 
-        let config = Self {
-            level: env.level("LOG_LEVEL"),
-            pretty: env.flag("LOG_PRETTY", false),
-            host: env.address("API_HOST", "0.0.0.0"),
-            port: env.port("API_PORT", 3000),
-            grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)),
+        Ok(Self {
+            telemetry: telemetry(&env)?,
+            host: env.address("API_HOST", "0.0.0.0")?,
+            port: env.port("API_PORT", 3000)?,
+            grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)?),
             prefix: env.text("API_GLOBAL_PREFIX", "api"),
             docs_path: env.text("API_DOCS_PATH", "docs"),
             docs_assets: env.text("API_DOCS_ASSETS", "/usr/share/api/docs"),
-            cursor_secret: env.secret("POSITIONS_CURSOR_SECRET", MIN_SECRET_BYTES),
+            cursor_secret: env.secret("POSITIONS_CURSOR_SECRET", MIN_SECRET_BYTES)?,
             staleness: Staleness {
-                sync: env.seconds("API_SYNC_STALE_AFTER_SECONDS", 60, MAX_STALENESS_SECONDS),
-                price: env.seconds("API_PRICE_STALE_AFTER_SECONDS", 300, MAX_STALENESS_SECONDS),
+                sync: env.seconds("API_SYNC_STALE_AFTER_SECONDS", 60, MAX_STALENESS_SECONDS)?,
+                price: env.seconds("API_PRICE_STALE_AFTER_SECONDS", 300, MAX_STALENESS_SECONDS)?,
             },
             clickhouse: clickhouse_client::Config {
-                url: env.url("CLICKHOUSE_URL", "http://localhost:8123"),
+                url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
                 database: env.text("CLICKHOUSE_DATABASE", "default"),
                 user: env.text("CLICKHOUSE_USER", "default"),
                 // Empty is legitimate: a container started with
@@ -119,12 +134,37 @@ impl Config {
             postgres_url: env.url(
                 "POSTGRES_URL",
                 "postgres://postgres@localhost:5432/postgres",
-            ),
-        };
-
-        env.finish()?;
-        Ok(config)
+            )?,
+        })
     }
+}
+
+/// Everything the exporters and the formatter are set up from.
+///
+/// **The `OTEL_*` spellings are the specification's**, which is the whole reason
+/// they can be read here alongside everything else: the service this replaces
+/// had to let its SDK read them before its own configuration existed, and that
+/// exception does not survive the port.
+fn telemetry(env: &Env<'_>) -> Result<telemetry::Settings, Invalid> {
+    let disabled = env.flag("OTEL_SDK_DISABLED", false)?;
+
+    Ok(telemetry::Settings {
+        service: if disabled {
+            String::new()
+        } else {
+            env.required("OTEL_SERVICE_NAME")?
+        },
+        endpoint: env.url("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")?,
+        sampler: env.choice(
+            "OTEL_TRACES_SAMPLER",
+            &SAMPLERS,
+            Sampling::ParentBasedAlwaysOn,
+        )?,
+        ratio: env.ratio("OTEL_TRACES_SAMPLER_ARG", 1.0)?,
+        level: env.level("LOG_LEVEL")?,
+        pretty: env.flag("LOG_PRETTY", false)?,
+        disabled,
+    })
 }
 
 #[cfg(test)]
@@ -132,6 +172,8 @@ mod tests {
     //! The mapping, not the readers: which variable reaches which field, and
     //! what a deployment that sets none of them gets. [`env`](mod@env) proves that a
     //! port is a port.
+
+    use tracing::level_filters::LevelFilter;
 
     use super::*;
 
@@ -150,11 +192,12 @@ mod tests {
         Config::parse(&vars)
     }
 
-    /// Every case that is not about the secret still has to set it: it is the
-    /// one variable here with no default, and without it nothing else parses.
+    /// Every case that is not about them still has to set the two variables
+    /// with no default, because without either nothing else parses.
     fn configured(pairs: &[(&str, &str)]) -> Result<Config, Invalid> {
         let mut all = pairs.to_vec();
         all.push(SECRET);
+        all.push(("OTEL_SERVICE_NAME", "api-rust"));
 
         parse(&all)
     }
@@ -163,8 +206,12 @@ mod tests {
     fn an_empty_environment_is_the_local_defaults() {
         let config = configured(&[]).expect("defaults should stand alone");
 
-        assert_eq!(config.level, LevelFilter::INFO);
-        assert!(!config.pretty);
+        assert_eq!(config.telemetry.level, LevelFilter::INFO);
+        assert!(!config.telemetry.pretty);
+        assert!(!config.telemetry.disabled);
+        assert_eq!(config.telemetry.endpoint, "http://localhost:4318");
+        assert_eq!(config.telemetry.sampler, Sampling::ParentBasedAlwaysOn);
+        assert!((config.telemetry.ratio - 1.0).abs() < f64::EPSILON);
         assert_eq!(config.host, IpAddr::from([0, 0, 0, 0]));
         assert_eq!(config.port, 3000);
         assert_eq!(config.grace, Duration::from_secs(10));
@@ -188,10 +235,33 @@ mod tests {
         // A default here would be a key every deployment shares, and a shared
         // key is not a signature. The alternative to this refusal is a process
         // that runs and serves forgeable cursors.
-        let refusal = parse(&[]).err().expect("expected a refusal").to_string();
+        //
+        // The service name is set because the first bad variable is the one
+        // reported and telemetry is read first. This case is about the secret.
+        let refusal = parse(&[("OTEL_SERVICE_NAME", "api-rust")])
+            .err()
+            .expect("expected a refusal")
+            .to_string();
 
         assert!(refusal.contains("POSITIONS_CURSOR_SECRET"), "{refusal}");
         assert!(!refusal.contains("a-test-key"), "the key reached the log");
+    }
+
+    #[test]
+    fn the_first_bad_variable_in_reading_order_is_the_one_reported() {
+        // Which is the mapping's to prove and not the reader's: fields are
+        // evaluated in source order, so this pins the order a deployment reads
+        // its refusals in. Both of these are wrong; the one named is the one
+        // read first.
+        let refusal = configured(&[("API_PORT", "0"), ("SHUTDOWN_GRACE_SECONDS", "600")])
+            .err()
+            .expect("expected a refusal")
+            .to_string();
+
+        assert!(
+            refusal.ends_with("API_PORT: must be 1..=65535, got \"0\""),
+            "{refusal}"
+        );
     }
 
     #[test]
@@ -229,11 +299,20 @@ mod tests {
             ("API_GLOBAL_PREFIX", "gateway"),
             ("API_SYNC_STALE_AFTER_SECONDS", "30"),
             ("API_PRICE_STALE_AFTER_SECONDS", "900"),
+            ("OTEL_SDK_DISABLED", "false"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://telemetry:4318"),
+            ("OTEL_TRACES_SAMPLER", "parentbased_traceidratio"),
+            ("OTEL_TRACES_SAMPLER_ARG", "0.25"),
         ])
         .expect("every value is valid");
 
-        assert_eq!(config.level, LevelFilter::DEBUG);
-        assert!(config.pretty);
+        assert_eq!(config.telemetry.level, LevelFilter::DEBUG);
+        assert!(config.telemetry.pretty);
+        assert_eq!(config.telemetry.service, "api-rust");
+        assert_eq!(config.telemetry.endpoint, "http://telemetry:4318");
+        assert_eq!(config.telemetry.sampler, Sampling::ParentBasedTraceIdRatio);
+        assert!((config.telemetry.ratio - 0.25).abs() < f64::EPSILON);
+        assert!(!config.telemetry.disabled);
         assert_eq!(config.host, IpAddr::from([127, 0, 0, 1]));
         assert_eq!(config.port, 8080);
         assert_eq!(config.grace, Duration::from_secs(5));
@@ -243,6 +322,54 @@ mod tests {
         assert_eq!(config.cursor_secret, SECRET.1);
         assert_eq!(config.staleness.sync, 30);
         assert_eq!(config.staleness.price, 900);
+    }
+
+    #[test]
+    fn refuses_to_boot_unnamed_while_telemetry_is_on() {
+        // Every signal is grouped by `service.name`. Defaulting it produces
+        // telemetry that is present, plausible and attributed to nothing, which
+        // is the shape that is only ever noticed during an incident.
+        let refusal = parse(&[SECRET])
+            .err()
+            .expect("expected a refusal")
+            .to_string();
+
+        assert!(
+            refusal.contains("OTEL_SERVICE_NAME: must be set"),
+            "{refusal}"
+        );
+    }
+
+    #[test]
+    fn a_process_that_wants_no_telemetry_needs_no_name_for_it() {
+        // The switch a deployment already knows, rather than a name of ours.
+        let config =
+            parse(&[SECRET, ("OTEL_SDK_DISABLED", "true")]).expect("disabled is a complete answer");
+
+        assert!(config.telemetry.disabled);
+        assert_eq!(config.telemetry.service, "");
+    }
+
+    #[test]
+    fn takes_the_samplers_the_specification_spells_and_no_others() {
+        let sampler = |value| {
+            configured(&[("OTEL_TRACES_SAMPLER", value)]).map(|config| config.telemetry.sampler)
+        };
+
+        assert_eq!(sampler("always_off").expect("spelled"), Sampling::AlwaysOff);
+        assert_eq!(
+            sampler("traceidratio").expect("spelled"),
+            Sampling::TraceIdRatio
+        );
+
+        let refusal = sampler("parentbased_jaeger_remote")
+            .expect_err("expected a refusal")
+            .to_string();
+
+        assert!(
+            refusal.contains("OTEL_TRACES_SAMPLER: must be one of"),
+            "{refusal}"
+        );
     }
 
     #[test]

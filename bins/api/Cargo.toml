@@ -15,6 +15,7 @@ indexing.workspace = true
 ops.workspace = true
 postgres.workspace = true
 prices.workspace = true
+telemetry.workspace = true
 token-metadata.workspace = true
 
 # `Address` and the two 256-bit integers the stores hand back. Already linked
@@ -52,14 +53,16 @@ thiserror = "2.0.19"
 # the three fields name, and `formatting` is what that module's `serialize` half
 # is gated on.
 time = { version = "0.3.55", features = ["formatting", "serde"] }
-# `ServiceBuilder`, so the two request-id layers are ordered where a reader can
-# see it rather than by the direction `Router::layer` happens to compose.
+# The one instrument this service records. `telemetry` installs the provider;
+# what to measure belongs to the code doing the measuring, which is here.
+opentelemetry = { version = "0.31.0", default-features = false, features = ["metrics"] }
+# `ServiceBuilder`, so the request-id layers are ordered where a reader can see
+# it rather than by the direction `Router::layer` happens to compose.
 tower = { version = "0.5.3", features = ["util"] }
 # `fs` for the three Swagger UI files, served off disk rather than embedded:
 # `utoipa-swagger-ui` bakes 11 MB in to ship the 2 MB a page loads.
 tower-http = { version = "0.7.0", features = ["catch-panic", "fs", "request-id"] }
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["json"] }
 # The document, generated from the handler and the view types so a route or a
 # field that moves takes the contract with it. `time` for the three
 # `OffsetDateTime` fields; `preserve_order` because the default map alphabetises
@@ -72,6 +75,15 @@ utoipa = { version = "5.5.0", features = ["preserve_order", "time", "yaml"] }
 utoipa-axum = "0.2.0"
 
 [dev-dependencies]
+# The in-memory exporters the span and instrument cases read back, which is the
+# shape `docs/rust-migration.md` asks the inventory test for.
+opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
+# The layer under test: a case installs it on a subscriber of its own, so
+# nothing here touches the process-wide provider.
+tracing-opentelemetry = "0.32.1"
+# The subscriber a case installs for itself. Not a dependency of the binary any
+# more: `crates/telemetry` builds the one the process runs on.
+tracing-subscriber = { version = "0.3.23", features = ["json"] }
 # The document is too large to assert as a literal and too small to describe.
 # `json` so the committed form is the document rather than a `Debug` of it.
 insta = { version = "1.48.0", features = ["json"] }

@@ -21,12 +21,16 @@ use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
 use clickhouse_client::clickhouse::Client;
 use indexing::{Error as SyncError, SyncStatus, SyncStatusStore};
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SpanData};
 use ops::{ShutdownFlag, Uptime};
 use postgres::Pool;
 use prices::{Error as PriceError, ReserveKey, ReservePrice, ReservePriceStore};
 use time::OffsetDateTime;
 use token_metadata::{Error as LabelError, TokenLabel, TokenMetadataStore};
 use tower::ServiceExt;
+use tracing_subscriber::layer::SubscriberExt as _;
 
 use crate::app::{self as app, App};
 use crate::config::Staleness;
@@ -226,4 +230,115 @@ pub(crate) async fn answered(error: BoxedAppError) -> (StatusCode, String) {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
 
     (status, String::from_utf8(body.to_vec()).unwrap())
+}
+
+/// Everything one request produced, through a subscriber of the case's own.
+///
+/// **Nothing process-wide.** Spans, log lines and the echoed header all come
+/// from one `with_default`, so cases can run in parallel without reading each
+/// other's telemetry — which a global provider would make them do.
+pub(crate) struct Observed {
+    pub(crate) request_id: Option<String>,
+    pub(crate) spans: Vec<SpanData>,
+
+    /// The JSON lines the formatter wrote, as a deployment would read them.
+    pub(crate) logged: String,
+}
+
+/// Makes every callsite in this binary interesting, once.
+///
+/// **`tracing` caches callsite interest globally**, and computes it from the
+/// *global* subscriber — which is `NoSubscriber` here, answering "never" for
+/// every callsite. A `with_default` on one thread rebuilds that cache, and a
+/// second test rebuilding it while the first is between its span and its event
+/// leaves the event disabled: the case sees an empty log and a correct response,
+/// which is exactly the shape that makes it look like a bug in the code under
+/// test. A permissive global keeps the answer "yes" whoever is asking.
+pub(crate) fn interesting() {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+    ONCE.get_or_init(|| {
+        let _ = tracing::subscriber::set_global_default(
+            tracing_subscriber::registry().with(tracing::level_filters::LevelFilter::TRACE),
+        );
+    });
+}
+
+pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
+    interesting();
+
+    // The propagator is a global by design: it is what the ClickHouse driver
+    // reads to put `traceparent` on its own request. Every case setting the same
+    // one is not a case setting a different one.
+    opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let written = Written::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(written.clone()),
+        )
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer(telemetry::SCOPE)));
+
+    let request_id = tracing::subscriber::with_default(subscriber, || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                router
+                    .oneshot(request)
+                    .await
+                    .unwrap()
+                    .headers()
+                    .get("x-request-id")
+                    .map(|value| value.to_str().unwrap().to_owned())
+            })
+    });
+    provider.force_flush().unwrap();
+
+    Observed {
+        request_id,
+        spans: exporter.get_finished_spans().unwrap(),
+        logged: written.read(),
+    }
+}
+
+/// What a subscriber wrote, held where a case can read it back.
+///
+/// **One of these, for both suites here.** `MakeWriter` is what
+/// `with_writer` takes, and nothing in `std` or `tracing-subscriber` gives a
+/// shared byte buffer that satisfies it — `MakeWriter for Arc<W>` wants
+/// `&W: Write`, which `&Mutex<Vec<u8>>` is not.
+#[derive(Clone, Default)]
+pub(crate) struct Written(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Written {
+    pub(crate) fn read(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+}
+
+impl std::io::Write for Written {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Written {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
 }
