@@ -1,15 +1,18 @@
-//! One variable at a time, and everything wrong with the lot of them.
+//! One variable at a time, and what is wrong with the one that is.
 //!
-//! **Every error at once, not the first**: a deployment with three variables
-//! wrong learns all three on the first boot instead of one per crash loop. Every
-//! reader below returns a usable value *and* records a problem, so parsing
-//! continues past a bad variable and [`Env::finish`] reports the lot.
+//! **A read is a read.** Every reader below takes `&self` and hands back a
+//! `Result`, which is the shape
+//! [crates.io's `crates_io_env_vars`](https://github.com/rust-lang/crates.io/blob/main/crates/crates_io_env_vars/src/lib.rs)
+//! uses for the same job across forty-nine variables and sixteen files — free
+//! functions returning `anyhow::Result`, and a config that assembles them with
+//! `?`. Nothing here accumulates, so nothing here needs `&mut`.
 //!
-//! **Which is why it is hand-rolled.** The derive-based readers stop at the
-//! first bad field — measured, against `API_PORT=0`, `API_HOST=nowhere` and
-//! `SHUTDOWN_GRACE_SECONDS=600`, which they report one of. The environment is
-//! taken as a map rather than read, so a case can name three bad variables
-//! without touching what the other tests are running against.
+//! The version this replaces did accumulate, reporting every bad variable in one
+//! boot. That behaviour came from the TypeScript rather than from Rust: Zod's
+//! `safeParse` returns every issue at once, and `z.prettifyError` prints them one
+//! per line, which is the message the Rust side was built to reproduce. Nothing
+//! reads that message but a person, once, on a first deployment — and the price
+//! was a `&mut` on eleven readers and on everything that borrowed one.
 //!
 //! **[`Invalid`] lives here rather than in an `error.rs`** of its own, which is
 //! what the other crates in this workspace have. Nothing else produces it and it
@@ -22,27 +25,36 @@ use std::net::IpAddr;
 
 use tracing::level_filters::LevelFilter;
 
-/// The environment as a map, and what has been wrong with it so far.
+/// The environment as a map, read one variable at a time.
 pub struct Env<'a> {
     vars: &'a HashMap<String, String>,
-    errors: Vec<String>,
 }
 
-/// Everything wrong with the environment, in the order the variables are read.
+/// The variable that could not be read, and why.
 #[derive(Debug)]
-pub struct Invalid(Vec<String>);
+pub struct Invalid {
+    key: String,
+    reason: String,
+}
 
 impl fmt::Display for Invalid {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(out, "invalid environment configuration:")?;
-        for problem in &self.0 {
-            write!(out, "\n  {problem}")?;
-        }
-        Ok(())
+        let Self { key, reason } = self;
+
+        write!(out, "invalid environment configuration: {key}: {reason}")
     }
 }
 
 impl std::error::Error for Invalid {}
+
+impl Invalid {
+    fn new(key: &str, reason: &str) -> Self {
+        Self {
+            key: key.to_owned(),
+            reason: reason.to_owned(),
+        }
+    }
+}
 
 /// The seven spellings a deployment may already be setting.
 ///
@@ -64,62 +76,57 @@ const FLAGS: [(&str, bool); 4] = [("true", true), ("1", true), ("false", false),
 
 impl<'a> Env<'a> {
     /// Takes the environment as a map rather than reading it, so a case can
-    /// name three bad variables without touching global state the other tests
-    /// are running against.
+    /// name a bad variable without touching global state the other tests are
+    /// running against.
+    #[must_use]
     pub fn new(vars: &'a HashMap<String, String>) -> Self {
-        Self {
-            vars,
-            errors: Vec::new(),
-        }
+        Self { vars }
     }
 
-    /// # Errors
-    ///
-    /// [`Invalid`], listing every variable that could not be read.
-    pub fn finish(self) -> Result<(), Invalid> {
-        if self.errors.is_empty() {
-            Ok(())
-        } else {
-            Err(Invalid(self.errors))
-        }
-    }
-
+    /// The one reader that cannot fail, which is why it is the one that returns
+    /// no `Result`: an absent value is the default and any present value is
+    /// itself.
+    #[must_use]
     pub fn text(&self, key: &str, default: &str) -> String {
         self.raw(key).unwrap_or(default).to_owned()
     }
 
-    /// A shared key, and the only reader here with no default: a key every
-    /// deployment shares is not a signature, so an absent one is a problem
-    /// rather than a fallback. The empty string handed back only lets the
-    /// remaining variables still be read.
+    /// A shared key, and one of two readers here with no default: a key every
+    /// deployment shares is not a signature, so an absent one is a refusal
+    /// rather than a fallback.
     ///
     /// **The value never reaches the message**, unlike every other reader here —
     /// that would put a signing key in the log of any deployment that mis-set
     /// it. Length only, in bytes, which is what a key is measured in.
-    pub fn secret(&mut self, key: &str, minimum: usize) -> String {
+    ///
+    /// # Errors
+    ///
+    /// [`Invalid`] when the value is shorter than `minimum` bytes.
+    pub fn secret(&self, key: &str, minimum: usize) -> Result<String, Invalid> {
         let value = self.raw(key).unwrap_or_default().to_owned();
 
         if value.len() < minimum {
             let length = value.len();
-            self.reject(
+            return Err(Invalid::new(
                 key,
                 &format!("must be at least {minimum} bytes, got {length}"),
-            );
+            ));
         }
-        value
+        Ok(value)
     }
 
     /// No default, and no fallback worth having: the value names something
     /// outside this process, so guessing it produces a plausible answer to the
-    /// wrong question. The empty string handed back only lets the remaining
-    /// variables still be read.
-    pub fn required(&mut self, key: &str) -> String {
-        let value = self.raw(key).unwrap_or_default().to_owned();
-
-        if value.is_empty() {
-            self.reject(key, "must be set");
+    /// wrong question.
+    ///
+    /// # Errors
+    ///
+    /// [`Invalid`] when the variable is absent or empty.
+    pub fn required(&self, key: &str) -> Result<String, Invalid> {
+        match self.raw(key) {
+            Some(value) if !value.is_empty() => Ok(value.to_owned()),
+            _ => Err(Invalid::new(key, "must be set")),
         }
-        value
     }
 
     /// As lenient as the WHATWG standard `url` implements, deliberately.
@@ -128,124 +135,153 @@ impl<'a> Env<'a> {
     /// Requiring `http` here would be a stricter boot contract than a deployment
     /// expects, and the driver is the authority on its own URL anyway:
     /// `build_pool` parses this again with libpq's rules.
-    pub fn url(&mut self, key: &str, default: &str) -> String {
+    ///
+    /// # Errors
+    ///
+    /// [`Invalid`] when `url` will not parse it.
+    pub fn url(&self, key: &str, default: &str) -> Result<String, Invalid> {
         let value = self.text(key, default);
+
         if url::Url::parse(&value).is_err() {
-            self.reject(key, &format!("must be a URL, got {value:?}"));
+            return Err(Invalid::new(key, &format!("must be a URL, got {value:?}")));
         }
-        value
+        Ok(value)
     }
 
-    pub fn address(&mut self, key: &str, default: &str) -> IpAddr {
+    /// # Errors
+    ///
+    /// [`Invalid`] when the value is not an IP address. Stricter than
+    /// `app.listen(port, host)`, which would resolve a hostname: every
+    /// deployment of this sets an address, and a typo in one should fail at boot
+    /// rather than bind somewhere unintended.
+    pub fn address(&self, key: &str, default: &str) -> Result<IpAddr, Invalid> {
         let value = self.text(key, default);
-        value.parse().unwrap_or_else(|_| {
-            // Stricter than `app.listen(port, host)`, which would resolve a
-            // hostname. Every deployment of this sets an address, and a typo in
-            // one should fail at boot rather than bind somewhere unintended.
-            self.reject(key, &format!("must be an IP address, got {value:?}"));
-            IpAddr::from([0, 0, 0, 0])
-        })
+
+        value
+            .parse()
+            .map_err(|_| Invalid::new(key, &format!("must be an IP address, got {value:?}")))
     }
 
-    pub fn port(&mut self, key: &str, default: u16) -> u16 {
+    /// # Errors
+    ///
+    /// [`Invalid`] outside `1..=65535`. `u16` is the range; 0 is "any port",
+    /// which is never what a service meant to be reachable at a known address
+    /// was asking for.
+    pub fn port(&self, key: &str, default: u16) -> Result<u16, Invalid> {
         let Some(value) = self.raw(key) else {
-            return default;
+            return Ok(default);
         };
 
-        // `u16` is the range: 0 is "any port", which is never what a service
-        // meant to be reachable at a known address was asking for.
         match value.parse::<u16>() {
-            Ok(port) if port > 0 => port,
-            _ => {
-                self.reject(key, &format!("must be 1..=65535, got {value:?}"));
-                default
-            }
+            Ok(port) if port > 0 => Ok(port),
+            _ => Err(Invalid::new(
+                key,
+                &format!("must be 1..=65535, got {value:?}"),
+            )),
         }
     }
 
-    pub fn seconds(&mut self, key: &str, default: u64, max: u64) -> u64 {
+    /// # Errors
+    ///
+    /// [`Invalid`] outside `0..=max`.
+    pub fn seconds(&self, key: &str, default: u64, max: u64) -> Result<u64, Invalid> {
         let Some(value) = self.raw(key) else {
-            return default;
+            return Ok(default);
         };
 
         match value.parse::<u64>() {
-            Ok(seconds) if seconds <= max => seconds,
-            _ => {
-                self.reject(key, &format!("must be 0..={max}, got {value:?}"));
-                default
-            }
+            Ok(seconds) if seconds <= max => Ok(seconds),
+            _ => Err(Invalid::new(
+                key,
+                &format!("must be 0..={max}, got {value:?}"),
+            )),
         }
     }
 
-    pub fn ratio(&mut self, key: &str, default: f64) -> f64 {
+    /// # Errors
+    ///
+    /// [`Invalid`] outside `0.0..=1.0`.
+    pub fn ratio(&self, key: &str, default: f64) -> Result<f64, Invalid> {
         let Some(value) = self.raw(key) else {
-            return default;
+            return Ok(default);
         };
 
         match value.parse::<f64>() {
-            Ok(ratio) if (0.0..=1.0).contains(&ratio) => ratio,
-            _ => {
-                self.reject(key, &format!("must be 0.0..=1.0, got {value:?}"));
-                default
-            }
+            Ok(ratio) if (0.0..=1.0).contains(&ratio) => Ok(ratio),
+            _ => Err(Invalid::new(
+                key,
+                &format!("must be 0.0..=1.0, got {value:?}"),
+            )),
         }
     }
 
-    pub fn flag(&mut self, key: &str, default: bool) -> bool {
+    /// # Errors
+    ///
+    /// [`Invalid`] for anything but the four spellings in [`FLAGS`].
+    pub fn flag(&self, key: &str, default: bool) -> Result<bool, Invalid> {
         let Some(value) = self.raw(key) else {
-            return default;
+            return Ok(default);
         };
 
-        self.one_of(key, value, &FLAGS).unwrap_or(default)
+        self.one_of(key, value, &FLAGS)
     }
 
-    pub fn level(&mut self, key: &str) -> LevelFilter {
+    /// # Errors
+    ///
+    /// [`Invalid`] for anything but the seven spellings in [`LEVELS`].
+    pub fn level(&self, key: &str) -> Result<LevelFilter, Invalid> {
         let Some(value) = self.raw(key) else {
-            return LevelFilter::INFO;
+            return Ok(LevelFilter::INFO);
         };
 
         self.one_of(key, value, &LEVELS)
-            .unwrap_or(LevelFilter::INFO)
     }
 
-    /// The spellings a caller accepts, and what each one means to it. `flag` and
-    /// `level` are this with the table built in; a table nothing else shares
-    /// stays with the code that gives it meaning, so this crate keeps knowing
-    /// nothing about what a service is.
-    pub fn choice<T: Copy>(&mut self, key: &str, table: &[(&str, T)], default: T) -> T {
+    /// The spellings a caller accepts, and what each one means to it. [`flag`]
+    /// and [`level`] are this with the table built in; a table nothing else
+    /// shares stays with the code that gives it meaning, so this crate keeps
+    /// knowing nothing about what a service is.
+    ///
+    /// # Errors
+    ///
+    /// [`Invalid`] for anything not in `table`.
+    ///
+    /// [`flag`]: Self::flag
+    /// [`level`]: Self::level
+    pub fn choice<T: Copy>(
+        &self,
+        key: &str,
+        table: &[(&str, T)],
+        default: T,
+    ) -> Result<T, Invalid> {
         let Some(value) = self.raw(key) else {
-            return default;
+            return Ok(default);
         };
 
-        self.one_of(key, value, table).unwrap_or(default)
+        self.one_of(key, value, table)
     }
 
     /// Borrowed from the map rather than from `self`, so a value can be read
-    /// and then handed to a method that records a problem.
+    /// and then named in an error about it.
     fn raw(&self, key: &str) -> Option<&'a str> {
         // An empty value is a value: `CLICKHOUSE_PASSWORD=` means no password,
         // and treating it as absent would substitute a default nobody asked for.
         self.vars.get(key).map(String::as_str)
     }
 
-    fn reject(&mut self, key: &str, reason: &str) {
-        self.errors.push(format!("{key}: {reason}"));
-    }
-
-    fn one_of<T: Copy>(&mut self, key: &str, value: &str, table: &[(&str, T)]) -> Option<T> {
-        let found = table
+    fn one_of<T: Copy>(&self, key: &str, value: &str, table: &[(&str, T)]) -> Result<T, Invalid> {
+        table
             .iter()
             .find(|(spelling, _)| *spelling == value)
-            .map(|(_, mapped)| *mapped);
+            .map(|(_, mapped)| *mapped)
+            .ok_or_else(|| {
+                let allowed: Vec<_> = table.iter().map(|(spelling, _)| *spelling).collect();
 
-        if found.is_none() {
-            let allowed: Vec<_> = table.iter().map(|(spelling, _)| *spelling).collect();
-            self.reject(
-                key,
-                &format!("must be one of {}, got {value:?}", allowed.join(", ")),
-            );
-        }
-        found
+                Invalid::new(
+                    key,
+                    &format!("must be one of {}, got {value:?}", allowed.join(", ")),
+                )
+            })
     }
 }
 
@@ -263,81 +299,68 @@ mod tests {
             .collect()
     }
 
-    /// Reads one key with `read`, and returns the value beside any problem.
-    fn read<T>(pairs: &[(&str, &str)], read: impl FnOnce(&mut Env<'_>) -> T) -> (T, Vec<String>) {
-        let map = vars(pairs);
-        let mut env = Env::new(&map);
-        let value = read(&mut env);
-
-        (value, env.finish().err().map_or_else(Vec::new, |bad| bad.0))
+    /// Reads one key with `read`, and hands back whatever it answered.
+    fn read<T>(pairs: &[(&str, &str)], read: impl FnOnce(&Env<'_>) -> T) -> T {
+        read(&Env::new(&vars(pairs)))
     }
 
-    fn problems<T>(pairs: &[(&str, &str)], reader: impl FnOnce(&mut Env<'_>) -> T) -> Vec<String> {
-        read(pairs, reader).1
+    /// The refusal a bad variable earns, as a deployment would read it.
+    fn refusal<T: fmt::Debug>(
+        pairs: &[(&str, &str)],
+        reader: impl FnOnce(&Env<'_>) -> Result<T, Invalid>,
+    ) -> String {
+        read(pairs, reader)
+            .expect_err("expected a refusal")
+            .to_string()
     }
 
     #[test]
     fn an_absent_variable_is_its_default_and_not_a_problem() {
-        let (port, problems) = read(&[], |env| env.port("PORT", 3000));
-
-        assert_eq!(port, 3000);
-        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(read(&[], |env| env.port("PORT", 3000)).unwrap(), 3000);
     }
 
     #[test]
     fn an_empty_value_is_a_value_and_not_an_absence() {
         // A container started with CLICKHOUSE_SKIP_USER_SETUP has no password,
         // and falling back to the default here would send one nobody set.
-        let (text, _) = read(&[("PASSWORD", "")], |env| env.text("PASSWORD", "default"));
+        let text = read(&[("PASSWORD", "")], |env| env.text("PASSWORD", "default"));
 
         assert_eq!(text, "");
     }
 
     #[test]
-    fn reports_every_bad_variable_rather_than_the_first() {
-        // The property the collection exists for: one boot, one list, rather
-        // than three restarts each naming the next mistake.
-        let map = vars(&[("LEVEL", "loud"), ("PORT", "0"), ("GRACE", "600")]);
-        let mut env = Env::new(&map);
-
-        env.level("LEVEL");
-        env.port("PORT", 3000);
-        env.seconds("GRACE", 10, 300);
-        let problems = env.finish().expect_err("expected a refusal").0;
-
-        assert_eq!(problems.len(), 3);
-        assert!(problems[0].starts_with("LEVEL: must be one of fatal, error, warn"));
-        assert!(problems[1].starts_with("PORT: must be 1..=65535"));
-        assert!(problems[2].starts_with("GRACE: must be 0..=300"));
+    fn the_message_names_the_variable_and_says_what_was_wanted() {
+        assert_eq!(
+            refusal(&[("PORT", "0")], |env| env.port("PORT", 3000)),
+            "invalid environment configuration: PORT: must be 1..=65535, got \"0\""
+        );
     }
 
     #[test]
     fn rejects_a_port_at_either_end_of_its_range() {
-        assert!(problems(&[("PORT", "0")], |env| env.port("PORT", 3000))[0].contains("got \"0\""));
+        assert!(refusal(&[("PORT", "0")], |env| env.port("PORT", 3000)).contains("got \"0\""));
         assert!(
-            problems(&[("PORT", "65536")], |env| env.port("PORT", 3000))[0]
-                .contains("got \"65536\"")
+            refusal(&[("PORT", "65536")], |env| env.port("PORT", 3000)).contains("got \"65536\"")
         );
     }
 
     #[test]
     fn rejects_seconds_past_the_ceiling_but_allows_none() {
         assert!(
-            problems(&[("GRACE", "301")], |env| env.seconds("GRACE", 10, 300))[0]
-                .contains("0..=300")
+            refusal(&[("GRACE", "301")], |env| env.seconds("GRACE", 10, 300)).contains("0..=300")
         );
 
-        let (seconds, problems) = read(&[("GRACE", "0")], |env| env.seconds("GRACE", 10, 300));
+        let seconds = read(&[("GRACE", "0")], |env| env.seconds("GRACE", 10, 300)).unwrap();
+
         assert_eq!(seconds, 0, "zero is a choice");
-        assert!(problems.is_empty(), "{problems:?}");
     }
 
     #[test]
     fn rejects_a_host_that_is_not_an_address() {
         assert!(
-            problems(&[("HOST", "localhost")], |env| env
-                .address("HOST", "0.0.0.0"))[0]
-                .contains("must be an IP address")
+            refusal(&[("HOST", "localhost")], |env| env
+                .address("HOST", "0.0.0.0"))
+            .contains("must be an IP address")
         );
     }
 
@@ -345,66 +368,68 @@ mod tests {
     fn rejects_a_url_that_is_not_one() {
         // A missing scheme is what neither `new URL()` nor this will take.
         assert!(
-            problems(&[("URL", "http//localhost:8123")], |env| env.url("URL", ""))[0]
+            refusal(&[("URL", "http//localhost:8123")], |env| env.url("URL", ""))
                 .contains("must be a URL")
         );
     }
 
     #[test]
-    fn takes_a_scheme_it_does_not_recognise() {
-        // `new URL("clickhouse:8123")` is valid and so is this, and the point
-        // is that the two agree rather than that the value is sensible.
-        let problems = problems(&[("URL", "clickhouse:8123")], |env| env.url("URL", ""));
-
-        assert!(problems.is_empty(), "as lenient as z.url(): {problems:?}");
-    }
-
-    #[test]
-    fn maps_the_log_levels_that_have_no_counterpart() {
-        // A deployment already setting either of these keeps working.
-        let (fatal, _) = read(&[("LEVEL", "fatal")], |env| env.level("LEVEL"));
-        let (silent, _) = read(&[("LEVEL", "silent")], |env| env.level("LEVEL"));
-
-        assert_eq!(fatal, LevelFilter::ERROR);
-        assert_eq!(silent, LevelFilter::OFF);
-    }
-
-    #[test]
-    fn accepts_all_four_spellings_of_a_flag() {
+    fn takes_every_spelling_of_a_level_and_of_a_flag() {
+        for (spelling, expected) in LEVELS {
+            assert_eq!(
+                read(&[("LEVEL", spelling)], |env| env.level("LEVEL")).unwrap(),
+                expected
+            );
+        }
         for (spelling, expected) in FLAGS {
-            let (flag, problems) = read(&[("FLAG", spelling)], |env| env.flag("FLAG", false));
-
-            assert_eq!(flag, expected, "FLAG={spelling}");
-            assert!(problems.is_empty(), "FLAG={spelling}: {problems:?}");
+            assert_eq!(
+                read(&[("FLAG", spelling)], |env| env.flag("FLAG", !expected)).unwrap(),
+                expected
+            );
         }
     }
 
     #[test]
-    fn a_secret_has_no_default_and_an_absent_one_is_a_problem() {
-        let (secret, problems) = read(&[], |env| env.secret("SECRET", 32));
-
-        assert_eq!(secret, "", "usable enough for the remaining reads");
-        assert_eq!(problems, ["SECRET: must be at least 32 bytes, got 0"]);
+    fn an_absent_level_is_info_and_an_absent_flag_is_its_default() {
+        assert_eq!(
+            read(&[], |env| env.level("LEVEL")).unwrap(),
+            LevelFilter::INFO
+        );
+        assert!(read(&[], |env| env.flag("FLAG", true)).unwrap());
     }
 
     #[test]
-    fn a_secret_never_appears_in_the_problem_it_causes() {
-        // Every other reader quotes the value it refused. This one is a signing
-        // key, and the refusal goes to the log of whatever mis-set it.
-        let problems = problems(&[("SECRET", "too-short-but-still-a-key")], |env| {
+    fn rejects_a_level_and_a_flag_it_does_not_know() {
+        assert!(refusal(&[("LEVEL", "loud")], |env| env.level("LEVEL")).contains("must be one of"));
+        assert!(
+            refusal(&[("FLAG", "yes")], |env| env.flag("FLAG", false)).contains("must be one of")
+        );
+    }
+
+    #[test]
+    fn a_secret_shorter_than_the_minimum_is_refused_without_being_logged() {
+        let refusal = refusal(&[("SECRET", "too-short-to-sign-anything")], |env| {
             env.secret("SECRET", 32)
         });
 
-        assert_eq!(problems, ["SECRET: must be at least 32 bytes, got 25"]);
+        assert!(
+            refusal.contains("SECRET: must be at least 32 bytes, got 26"),
+            "{refusal}"
+        );
+        assert!(
+            !refusal.contains("too-short"),
+            "the value reached the message"
+        );
     }
 
     #[test]
     fn a_secret_at_the_minimum_is_long_enough() {
         let key = "a".repeat(32);
-        let (secret, problems) = read(&[("SECRET", &key)], |env| env.secret("SECRET", 32));
 
-        assert_eq!(secret, key);
-        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            read(&[("SECRET", &key)], |env| env.secret("SECRET", 32)).unwrap(),
+            key
+        );
     }
 
     #[test]
@@ -412,75 +437,53 @@ mod tests {
         // The empty case is the one worth a test: every other reader here
         // treats an empty value as a value, and this is the reader where that
         // rule would hand back a name nothing can be grouped by.
-        assert_eq!(
-            problems(&[], |env| env.required("NAME")),
-            ["NAME: must be set"]
-        );
-        assert_eq!(
-            problems(&[("NAME", "")], |env| env.required("NAME")),
-            ["NAME: must be set"]
-        );
+        for pairs in [vec![], vec![("NAME", "")]] {
+            assert!(refusal(&pairs, |env| env.required("NAME")).ends_with("NAME: must be set"));
+        }
     }
 
     #[test]
     fn a_required_variable_that_is_set_is_read_as_it_stands() {
-        let (name, problems) = read(&[("NAME", "api-rust")], |env| env.required("NAME"));
-
-        assert_eq!(name, "api-rust");
-        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            read(&[("NAME", "api-rust")], |env| env.required("NAME")).unwrap(),
+            "api-rust"
+        );
     }
 
     #[test]
     fn a_choice_maps_the_spellings_its_caller_offered() {
         const SIDES: [(&str, u8); 2] = [("heads", 0), ("tails", 1)];
 
-        let (side, problems) = read(&[("SIDE", "tails")], |env| env.choice("SIDE", &SIDES, 0));
-
-        assert_eq!(side, 1);
-        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(
+            read(&[("SIDE", "tails")], |env| env.choice("SIDE", &SIDES, 0)).unwrap(),
+            1
+        );
+        assert_eq!(read(&[], |env| env.choice("SIDE", &SIDES, 0)).unwrap(), 0);
     }
 
     #[test]
     fn a_choice_names_the_spellings_it_would_have_taken() {
         const SIDES: [(&str, u8); 2] = [("heads", 0), ("tails", 1)];
 
-        assert_eq!(
-            problems(&[("SIDE", "edge")], |env| env.choice("SIDE", &SIDES, 0)),
-            [r#"SIDE: must be one of heads, tails, got "edge""#]
+        assert!(
+            refusal(&[("SIDE", "edge")], |env| env.choice("SIDE", &SIDES, 0))
+                .ends_with(r#"SIDE: must be one of heads, tails, got "edge""#)
         );
     }
 
     #[test]
     fn a_ratio_holds_to_its_ends_and_refuses_what_is_past_them() {
-        let (zero, bad) = read(&[("SHARE", "0")], |env| env.ratio("SHARE", 1.0));
+        let zero = read(&[("SHARE", "0")], |env| env.ratio("SHARE", 1.0)).unwrap();
         assert!(zero.abs() < f64::EPSILON, "{zero}");
-        assert!(bad.is_empty(), "{bad:?}");
 
-        let (one, bad) = read(&[("SHARE", "1.0")], |env| env.ratio("SHARE", 0.0));
+        let one = read(&[("SHARE", "1.0")], |env| env.ratio("SHARE", 0.0)).unwrap();
         assert!((one - 1.0).abs() < f64::EPSILON, "{one}");
-        assert!(bad.is_empty(), "{bad:?}");
 
         for past in ["-0.1", "1.1", "half"] {
-            assert_eq!(
-                problems(&[("SHARE", past)], |env| env.ratio("SHARE", 1.0)),
-                [format!(r#"SHARE: must be 0.0..=1.0, got "{past}""#)]
+            assert!(
+                refusal(&[("SHARE", past)], |env| env.ratio("SHARE", 1.0))
+                    .ends_with(&format!(r#"SHARE: must be 0.0..=1.0, got "{past}""#))
             );
         }
-    }
-
-    #[test]
-    fn the_message_lists_the_problems_one_per_line() {
-        let map = vars(&[("PORT", "0"), ("HOST", "nowhere")]);
-        let mut env = Env::new(&map);
-
-        env.address("HOST", "0.0.0.0");
-        env.port("PORT", 3000);
-
-        assert_eq!(
-            env.finish().expect_err("expected a refusal").to_string(),
-            "invalid environment configuration:\n  \
-             HOST: must be an IP address, got \"nowhere\"\n  \
-             PORT: must be 1..=65535, got \"0\""
-        );
     }
 }

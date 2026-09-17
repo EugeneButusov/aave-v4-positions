@@ -680,7 +680,7 @@ TypeScript indexer still needs them, and only the ones it has stopped needing go
 **Landed so far.** [#45](https://github.com/EugeneButusov/aave-v4-positions/pull/45): the
 `PositionStore` port and its ClickHouse adapter, with the port's specs as an executable contract every
 implementation runs. Then `crates/ops` and `bins/api` — the process before it serves anything: config
-parsed once and every error at once, JSON logs, `/health/live` and `/health/ready`, the
+parsed once and a refusal rather than a default, JSON logs, `/health/live` and `/health/ready`, the
 readiness-first drain, an image and an `api-rust` compose service beside the Node one. The four probe
 bodies were captured off the running TypeScript service rather than read from its DTO classes, which
 is how the 503 turned out to be the report verbatim with no framework envelope — a shape no

@@ -98,7 +98,7 @@ impl Config {
     ///
     /// # Errors
     ///
-    /// [`Invalid`], listing every variable that could not be read.
+    /// [`Invalid`], naming the first variable that could not be read.
     pub(crate) fn from_env() -> Result<Self, Invalid> {
         Self::parse(&Source::from_env().read())
     }
@@ -107,23 +107,23 @@ impl Config {
     /// name three bad variables without touching global state the other tests
     /// are running against.
     fn parse(vars: &HashMap<String, String>) -> Result<Self, Invalid> {
-        let mut env = Env::new(vars);
+        let env = Env::new(vars);
 
-        let config = Self {
-            telemetry: telemetry(&mut env),
-            host: env.address("API_HOST", "0.0.0.0"),
-            port: env.port("API_PORT", 3000),
-            grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)),
+        Ok(Self {
+            telemetry: telemetry(&env)?,
+            host: env.address("API_HOST", "0.0.0.0")?,
+            port: env.port("API_PORT", 3000)?,
+            grace: Duration::from_secs(env.seconds("SHUTDOWN_GRACE_SECONDS", 10, 300)?),
             prefix: env.text("API_GLOBAL_PREFIX", "api"),
             docs_path: env.text("API_DOCS_PATH", "docs"),
             docs_assets: env.text("API_DOCS_ASSETS", "/usr/share/api/docs"),
-            cursor_secret: env.secret("POSITIONS_CURSOR_SECRET", MIN_SECRET_BYTES),
+            cursor_secret: env.secret("POSITIONS_CURSOR_SECRET", MIN_SECRET_BYTES)?,
             staleness: Staleness {
-                sync: env.seconds("API_SYNC_STALE_AFTER_SECONDS", 60, MAX_STALENESS_SECONDS),
-                price: env.seconds("API_PRICE_STALE_AFTER_SECONDS", 300, MAX_STALENESS_SECONDS),
+                sync: env.seconds("API_SYNC_STALE_AFTER_SECONDS", 60, MAX_STALENESS_SECONDS)?,
+                price: env.seconds("API_PRICE_STALE_AFTER_SECONDS", 300, MAX_STALENESS_SECONDS)?,
             },
             clickhouse: clickhouse_client::Config {
-                url: env.url("CLICKHOUSE_URL", "http://localhost:8123"),
+                url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
                 database: env.text("CLICKHOUSE_DATABASE", "default"),
                 user: env.text("CLICKHOUSE_USER", "default"),
                 // Empty is legitimate: a container started with
@@ -134,11 +134,8 @@ impl Config {
             postgres_url: env.url(
                 "POSTGRES_URL",
                 "postgres://postgres@localhost:5432/postgres",
-            ),
-        };
-
-        env.finish()?;
-        Ok(config)
+            )?,
+        })
     }
 }
 
@@ -148,28 +145,26 @@ impl Config {
 /// they can be read here alongside everything else: the service this replaces
 /// had to let its SDK read them before its own configuration existed, and that
 /// exception does not survive the port.
-fn telemetry(env: &mut Env<'_>) -> telemetry::Settings {
-    let level = env.level("LOG_LEVEL");
-    let pretty = env.flag("LOG_PRETTY", false);
-    let disabled = env.flag("OTEL_SDK_DISABLED", false);
+fn telemetry(env: &Env<'_>) -> Result<telemetry::Settings, Invalid> {
+    let disabled = env.flag("OTEL_SDK_DISABLED", false)?;
 
-    telemetry::Settings {
+    Ok(telemetry::Settings {
         service: if disabled {
             String::new()
         } else {
-            env.required("OTEL_SERVICE_NAME")
+            env.required("OTEL_SERVICE_NAME")?
         },
-        endpoint: env.url("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318"),
+        endpoint: env.url("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")?,
         sampler: env.choice(
             "OTEL_TRACES_SAMPLER",
             &SAMPLERS,
             Sampling::ParentBasedAlwaysOn,
-        ),
-        ratio: env.ratio("OTEL_TRACES_SAMPLER_ARG", 1.0),
-        level,
-        pretty,
+        )?,
+        ratio: env.ratio("OTEL_TRACES_SAMPLER_ARG", 1.0)?,
+        level: env.level("LOG_LEVEL")?,
+        pretty: env.flag("LOG_PRETTY", false)?,
         disabled,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -240,10 +235,33 @@ mod tests {
         // A default here would be a key every deployment shares, and a shared
         // key is not a signature. The alternative to this refusal is a process
         // that runs and serves forgeable cursors.
-        let refusal = parse(&[]).err().expect("expected a refusal").to_string();
+        //
+        // The service name is set because the first bad variable is the one
+        // reported and telemetry is read first. This case is about the secret.
+        let refusal = parse(&[("OTEL_SERVICE_NAME", "api-rust")])
+            .err()
+            .expect("expected a refusal")
+            .to_string();
 
         assert!(refusal.contains("POSITIONS_CURSOR_SECRET"), "{refusal}");
         assert!(!refusal.contains("a-test-key"), "the key reached the log");
+    }
+
+    #[test]
+    fn the_first_bad_variable_in_reading_order_is_the_one_reported() {
+        // Which is the mapping's to prove and not the reader's: fields are
+        // evaluated in source order, so this pins the order a deployment reads
+        // its refusals in. Both of these are wrong; the one named is the one
+        // read first.
+        let refusal = configured(&[("API_PORT", "0"), ("SHUTDOWN_GRACE_SECONDS", "600")])
+            .err()
+            .expect("expected a refusal")
+            .to_string();
+
+        assert!(
+            refusal.ends_with("API_PORT: must be 1..=65535, got \"0\""),
+            "{refusal}"
+        );
     }
 
     #[test]
