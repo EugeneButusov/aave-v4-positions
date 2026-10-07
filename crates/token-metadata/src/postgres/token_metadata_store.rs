@@ -3,21 +3,17 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
-use postgres::{Pool, Statement, connection};
+use postgres::{Pool, connection};
 use tokio_postgres::Row;
 
 use crate::{Error, TokenLabel, TokenMetadataStore};
 
 /// Keyed by chain and nothing else, so it does not depend on the page and can
 /// be issued beside the ClickHouse query rather than after it.
-const LABELS: Statement = Statement {
-    operation: "SELECT",
-    table: "token_metadata",
-    sql: "\
+const LABELS: &str = "\
     SELECT token, symbol, name \
     FROM token_metadata \
-    WHERE chain_id = $1",
-};
+    WHERE chain_id = $1";
 
 pub struct PostgresTokenMetadataStore {
     pool: Pool,
@@ -38,7 +34,13 @@ impl TokenMetadataStore for PostgresTokenMetadataStore {
     async fn labels(&self, chain_id: u32) -> Result<HashMap<Address, TokenLabel>, Error> {
         let client = connection(&self.pool).await?;
         // `bigint`, so the parameter is signed however the port spells it.
-        let rows = postgres::query(&client, &LABELS, &[&i64::from(chain_id)]).await?;
+        let rows = postgres::query(
+            &client,
+            "SELECT token_metadata",
+            LABELS,
+            &[&i64::from(chain_id)],
+        )
+        .await?;
 
         rows.iter().map(label).collect()
     }

@@ -2008,9 +2008,12 @@ opens `clickhouse.query` itself, and its `opentelemetry` feature makes that a cl
 `tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::query` and
 `query_opt` carry the span themselves — functions rather than a span to hang beside a read, because a
 span a call site can leave off is a gap nothing fails over. There `db.query.text` is safe by the type rather than
-by care — a `Statement` holds `&'static str`, so a `format!` cannot be passed and every value travels
-as a bind parameter, where `traced-sql.ts` needed `strings.raw` and a join to keep an interpolated
-value off a span.
+by care — the statement is taken as `&'static str`, so a `format!` cannot be passed and every value
+travels as a bind parameter, where `traced-sql.ts` needed `strings.raw` and a join to keep an
+interpolated value off a span. `db.operation.name` and `db.collection.name` are left unset although
+the specification asks for them when readily available: nothing here reads either, and the
+ClickHouse driver emits neither on its own span. The span's *name* is what a person reads, and that
+is given rather than parsed out of the SQL.
 
 **Plaintext OTLP only.** The exporter posts over hyper, which the process already links, rather than
 the crate's default `reqwest-blocking-client`; every TLS backend available would bring `ring` or

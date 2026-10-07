@@ -4,7 +4,7 @@
 //! duplicating one, because there is exactly one answer to "where is the
 //! indexer" and a second copy of it would be a second thing to keep in step.
 
-use postgres::{Pool, Statement, connection};
+use postgres::{Pool, connection};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
 
@@ -16,10 +16,7 @@ use crate::cursor::{Error, SyncStatus, SyncStatusStore};
 /// stale. Floored to whole seconds: `EXTRACT` returns microseconds, and six
 /// decimal places on a figure compared against a threshold in tens of seconds
 /// is precision nobody can use and everybody has to read.
-const STATUS: Statement = Statement {
-    operation: "SELECT",
-    table: "indexer_cursor",
-    sql: "\
+const STATUS: &str = "\
     SELECT \
         last_block, \
         last_hash, \
@@ -27,8 +24,7 @@ const STATUS: Statement = Statement {
         floor(EXTRACT(EPOCH FROM (now() - updated_at)))::bigint AS age_seconds \
     FROM indexer_cursor \
     WHERE chain_id = $1 \
-    LIMIT 1",
-};
+    LIMIT 1";
 
 pub struct PostgresSyncStatusStore {
     pool: Pool,
@@ -45,7 +41,13 @@ impl PostgresSyncStatusStore {
 impl SyncStatusStore for PostgresSyncStatusStore {
     async fn get(&self, chain_id: u32) -> Result<Option<SyncStatus>, Error> {
         let client = connection(&self.pool).await?;
-        let row = postgres::query_opt(&client, &STATUS, &[&i64::from(chain_id)]).await?;
+        let row = postgres::query_opt(
+            &client,
+            "SELECT indexer_cursor",
+            STATUS,
+            &[&i64::from(chain_id)],
+        )
+        .await?;
 
         row.as_ref().map(|row| status(chain_id, row)).transpose()
     }

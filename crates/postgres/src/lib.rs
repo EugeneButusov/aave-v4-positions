@@ -25,4 +25,4 @@ pub type Client = tokio_postgres::Client;
 pub use error::Error;
 pub use health::ping;
 pub use pool::{Connection, Pool, build_pool, connection};
-pub use query::{Statement, query, query_opt};
+pub use query::{query, query_opt};

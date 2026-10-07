@@ -410,9 +410,11 @@ holds, and the only unbound string remains the DDL in the migration runner, whic
 `then` — is **deleted rather than ported**, but not for the reason first written here: the driver
 emits nothing, because `tokio-postgres` speaks `log` rather than `tracing`. What goes instead is
 `postgres::query` and `query_opt`, which is a dozen lines rather than a hundred and publishes
-`db.query.text` safely — a `Statement` holds `&'static str`, so a `format!` cannot be passed and
-every value travels as a bind parameter, where the TypeScript needed `strings.raw` to keep
-interpolated values off a span.
+`db.query.text` safely — the statement is taken as `&'static str`, so a `format!` cannot be passed
+and every value travels as a bind parameter, where the TypeScript needed `strings.raw` to keep
+interpolated values off a span. The span's name is given rather than derived for the same reason
+`normalise()` exists on that side: parsing SQL to name a span is what produced `SELECT its` out of
+prose inside a comment.
 
 ### Config ordering
 

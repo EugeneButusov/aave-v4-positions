@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use postgres::{Pool, Statement, connection};
+use postgres::{Pool, connection};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
 
@@ -23,10 +23,7 @@ use crate::{Error, ReserveKey, ReservePrice, ReservePriceStore};
 /// `f64` has already rounded the tail off, and the driver has no lossless
 /// integer of that width — the same reason the ClickHouse store keeps its
 /// `toString(...)` casts (§7.5).
-const LATEST: Statement = Statement {
-    operation: "SELECT",
-    table: "reserve_prices",
-    sql: "\
+const LATEST: &str = "\
     SELECT \
         spoke, \
         reserve_id::text AS reserve_id, \
@@ -34,8 +31,7 @@ const LATEST: Statement = Statement {
         priced_at, \
         floor(EXTRACT(EPOCH FROM (now() - priced_at)))::bigint AS age_seconds \
     FROM reserve_prices \
-    WHERE chain_id = $1",
-};
+    WHERE chain_id = $1";
 
 pub struct PostgresReservePriceStore {
     pool: Pool,
@@ -52,7 +48,13 @@ impl PostgresReservePriceStore {
 impl ReservePriceStore for PostgresReservePriceStore {
     async fn latest(&self, chain_id: u32) -> Result<HashMap<ReserveKey, ReservePrice>, Error> {
         let client = connection(&self.pool).await?;
-        let rows = postgres::query(&client, &LATEST, &[&i64::from(chain_id)]).await?;
+        let rows = postgres::query(
+            &client,
+            "SELECT reserve_prices",
+            LATEST,
+            &[&i64::from(chain_id)],
+        )
+        .await?;
 
         rows.iter().map(priced).collect()
     }

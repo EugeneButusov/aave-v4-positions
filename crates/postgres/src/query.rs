@@ -16,55 +16,29 @@ use tokio_postgres::{Error, Row};
 
 use crate::Client;
 
-/// One statement, and what a trace should call it.
+/// One read, named as a trace should name it.
+///
+/// **`name` is `{operation} {target}`** — the shape the specification spells for
+/// a database span name — and it is given rather than derived, because deriving
+/// it means parsing SQL. `traced-sql.ts` did that, and produced a span called
+/// `SELECT its` out of prose inside a comment.
 ///
 /// **`sql` is `&'static str` because it is published as `db.query.text`.** Every
 /// value travels as a bind parameter, which is what makes publishing the text
-/// safe — and the type is what keeps that true, rather than a note asking the
-/// next caller not to pass a `format!`.
-pub struct Statement {
-    /// `SELECT`, `INSERT` — `db.operation.name`, and half the span's name.
-    pub operation: &'static str,
-
-    /// `db.collection.name`, and the other half.
-    pub table: &'static str,
-    pub sql: &'static str,
-}
-
-impl Statement {
-    fn span(&self) -> tracing::Span {
-        let Self {
-            operation,
-            table,
-            sql,
-        } = *self;
-
-        tracing::info_span!(
-            "postgres.query",
-            otel.name = format!("{operation} {table}"),
-            otel.kind = "client",
-            db.system.name = "postgresql",
-            db.operation.name = operation,
-            db.collection.name = table,
-            db.query.text = sql,
-        )
-    }
-}
-
+/// safe, and the type is what keeps that true rather than a note asking the next
+/// caller not to pass a `format!`.
 /// # Errors
 ///
 /// Whatever the driver says about the statement or the connection under it.
 pub async fn query(
     client: &Client,
-    statement: &Statement,
+    name: &'static str,
+    sql: &'static str,
     params: &[&(dyn ToSql + Sync)],
 ) -> Result<Vec<Row>, Error> {
     use tracing::Instrument as _;
 
-    client
-        .query(statement.sql, params)
-        .instrument(statement.span())
-        .await
+    client.query(sql, params).instrument(span(name, sql)).await
 }
 
 /// # Errors
@@ -72,15 +46,32 @@ pub async fn query(
 /// As [`query`].
 pub async fn query_opt(
     client: &Client,
-    statement: &Statement,
+    name: &'static str,
+    sql: &'static str,
     params: &[&(dyn ToSql + Sync)],
 ) -> Result<Option<Row>, Error> {
     use tracing::Instrument as _;
 
     client
-        .query_opt(statement.sql, params)
-        .instrument(statement.span())
+        .query_opt(sql, params)
+        .instrument(span(name, sql))
         .await
+}
+
+/// **`db.operation.name` and `db.collection.name` are deliberately absent.**
+/// The specification asks for them when they are readily available, and here
+/// they would be — but nothing in this deployment reads either, and the
+/// `clickhouse` driver beside this emits neither for the same span. The name
+/// below is what a person reads in a trace list, and it is the part that earns
+/// its keep.
+fn span(name: &'static str, sql: &'static str) -> tracing::Span {
+    tracing::info_span!(
+        "postgres.query",
+        otel.name = name,
+        otel.kind = "client",
+        db.system.name = "postgresql",
+        db.query.text = sql,
+    )
 }
 
 #[cfg(test)]
@@ -94,11 +85,8 @@ mod tests {
     use crate::{build_pool, connection};
 
     /// A statement every server has the answer to, so this needs no schema.
-    const TABLES: Statement = Statement {
-        operation: "SELECT",
-        table: "pg_tables",
-        sql: "SELECT schemaname FROM pg_catalog.pg_tables WHERE schemaname = $1 LIMIT 1",
-    };
+    const TABLES: &str =
+        "SELECT schemaname FROM pg_catalog.pg_tables WHERE schemaname = $1 LIMIT 1";
 
     /// Somewhere a case can read a span back from. `MakeWriter` is implemented
     /// for any `Fn() -> impl Write`, so this needs no impl of its own.
@@ -117,7 +105,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_read_is_one_client_span_naming_its_table() {
+    async fn a_read_is_one_client_span_naming_what_it_read() {
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
@@ -132,13 +120,15 @@ mod tests {
             .with_span_events(FmtSpan::CLOSE)
             .finish();
 
-        query(&client, &TABLES, &[&"public"])
+        query(&client, "SELECT pg_tables", TABLES, &[&"public"])
             .with_subscriber(subscriber)
             .await
             .unwrap();
 
         let written = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
 
+        // The name and the statement are both `&'static str` and adjacent, so
+        // this is also what fails if a caller passes them the other way round.
         assert!(
             written.contains(r#"otel.name="SELECT pg_tables""#),
             "{written}"
@@ -148,9 +138,9 @@ mod tests {
             written.contains(r#"db.system.name="postgresql""#),
             "{written}"
         );
-        // The text, which is safe to publish only because the value above
-        // travelled as `$1` rather than through the string.
         assert!(written.contains("WHERE schemaname = $1"), "{written}");
+        // Safe to publish the text only because the value above travelled as
+        // `$1` rather than through the string.
         assert!(
             !written.contains("public"),
             "a bound value reached the span"
