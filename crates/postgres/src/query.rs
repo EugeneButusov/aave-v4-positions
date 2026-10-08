@@ -14,35 +14,34 @@ use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
 
 use crate::error::Error;
-use crate::pool::{Connection, Pool, connection};
+use crate::pool::{Pool, connection};
 
-/// A connection that reads under a span, and does nothing else.
+/// A pool whose reads are seen, and which does nothing else.
+///
+/// **Held rather than acquired**, which is the whole shape: a store takes one of
+/// these once in its constructor, and a read is a single line with no connection
+/// bookkeeping in front of it. The connection is still taken per read, because
+/// it has to be — `deadpool` checks `is_closed()` when handing one out, so a
+/// connection held across a server restart or an idle timeout is one that fails
+/// every request from then on while the readiness probe, which asks the pool for
+/// a fresh one, still reports healthy. Measured, that check costs **1.4 µs**
+/// against **552 µs** for the `SELECT` it precedes.
 ///
 /// **A wrapper rather than an extension trait**, which is what makes the method
 /// names the driver's own: `query` here is this one, and the untraced `query`
 /// underneath is not reachable through it at all. An extension trait had to call
-/// its methods something else, because an inherent method wins resolution — so
-/// the traced and untraced reads sat on one receiver with the untraced one
-/// holding the better name.
+/// its methods something else, because an inherent method wins resolution.
 ///
-/// **It does not `Deref`**, deliberately. Everything a read needs is below; a
-/// caller wanting the rest of the driver's surface asks [`connection`] for it and
-/// is then visibly holding something else.
-///
-/// [`Client`](crate::Client) stays an alias either way: refinery implements its
-/// traits for that exact type, and `bins/migrate` hands it `&mut **connection`.
-pub struct Traced(Connection);
-
-/// One connection out of the pool, wrapped so its reads are seen.
-///
-/// # Errors
-///
-/// As [`connection`], which this is.
-pub async fn traced(pool: &Pool) -> Result<Traced, Error> {
-    connection(pool).await.map(Traced)
-}
+/// [`Client`](crate::Client) stays an alias: refinery implements its traits for
+/// that exact type, and `bins/migrate` hands it `&mut **connection`.
+pub struct Traced(Pool);
 
 impl Traced {
+    #[must_use]
+    pub fn new(pool: Pool) -> Self {
+        Self(pool)
+    }
+
     /// **`name` is `{operation} {target}`** — the shape the specification spells
     /// for a database span name — and it is given rather than derived, because
     /// deriving it means parsing SQL. `traced-sql.ts` did that, and produced a
@@ -61,10 +60,15 @@ impl Traced {
         name: &'static str,
         sql: &'static str,
         params: &[&(dyn ToSql + Sync)],
-    ) -> Result<Vec<Row>, tokio_postgres::Error> {
+    ) -> Result<Vec<Row>, Error> {
         use tracing::Instrument as _;
 
-        self.0.query(sql, params).instrument(span(name, sql)).await
+        connection(&self.0)
+            .await?
+            .query(sql, params)
+            .instrument(span(name, sql))
+            .await
+            .map_err(|source| Error::QueryFailed { source })
     }
 
     /// At most one row, as the driver's `query_opt` means it.
@@ -77,13 +81,15 @@ impl Traced {
         name: &'static str,
         sql: &'static str,
         params: &[&(dyn ToSql + Sync)],
-    ) -> Result<Option<Row>, tokio_postgres::Error> {
+    ) -> Result<Option<Row>, Error> {
         use tracing::Instrument as _;
 
-        self.0
+        connection(&self.0)
+            .await?
             .query_opt(sql, params)
             .instrument(span(name, sql))
             .await
+            .map_err(|source| Error::QueryFailed { source })
     }
 }
 
@@ -159,7 +165,7 @@ mod tests {
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
-        let client = traced(&pool).await.unwrap();
+        let client = Traced::new(pool);
         let sink = Sink::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer({

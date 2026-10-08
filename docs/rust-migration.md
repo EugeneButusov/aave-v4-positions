@@ -273,9 +273,9 @@ paragraph's first guess in both directions:
   layers. That histogram is the one the dashboard's three API panels are written against, and the
   service this replaces publishes it without writing a line.
 - **Postgres is hand-written too**, which the line below this section got wrong: `tokio-postgres`
-  depends on `log`, not `tracing`, and opens no span at all. `postgres::traced` hands back a
-  connection whose `query` and `query_opt` carry it, so there is no `instrument` for a store to leave
-  off and no untraced read reachable through it.
+  depends on `log`, not `tracing`, and opens no span at all. `postgres::Traced` is a pool whose
+  `query` and `query_opt` carry it, held by a store from its constructor, so there is no `instrument`
+  for a store to leave off and no untraced read reachable through it.
 - **ClickHouse is not hand-written after all.** The `clickhouse` crate already opens
   `clickhouse.query`; its `opentelemetry` feature makes it a client span and puts `traceparent` on
   the request, so the server records the same trace — checked against

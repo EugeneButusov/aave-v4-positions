@@ -19,6 +19,12 @@ pub enum Error {
         source: deadpool_postgres::PoolError,
     },
 
+    #[error("the query failed")]
+    QueryFailed {
+        #[source]
+        source: tokio_postgres::Error,
+    },
+
     #[error("the health query failed")]
     PingFailed {
         #[source]

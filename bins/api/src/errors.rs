@@ -62,7 +62,13 @@ impl IntoResponse for BoxedAppError {
 /// stranger.
 impl<E: Error + Send + 'static> AppError for E {
     fn response(&self) -> Response {
-        tracing::error!(error = %self, "a request failed");
+        // The chain, not just the head. A store names its own stage and leaves
+        // the cause to `source()`, so `%self` alone says "the sync status read
+        // failed" and never whether Postgres was unreachable or the query was
+        // refused. `ops` already reconciles the two error conventions in this
+        // tree for the probe report, and a second walk written here would be a
+        // second answer to the same question.
+        tracing::error!(error = %ops::error_message_with_causes(self), "a request failed");
 
         (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
     }
@@ -115,5 +121,39 @@ mod tests {
             !body.contains("clickhouse.internal"),
             "the cause reached the wire: {body}"
         );
+    }
+
+    /// A store's own message, with the half that failed underneath it.
+    #[derive(Debug, thiserror::Error)]
+    #[error("the sync status read failed")]
+    struct Read(#[source] std::io::Error);
+
+    #[test]
+    fn the_log_line_carries_the_cause_and_the_wire_still_does_not() {
+        // The store names its stage and leaves the rest to `source()`, so
+        // without the walk this line says only which read failed and never
+        // whether Postgres was unreachable or the query was refused.
+        //
+        // `interesting` because the case above reaches this same callsite with
+        // nothing in scope, which is enough to settle it off for the process.
+        crate::test_support::interesting();
+        let written = crate::test_support::Written::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(written.clone())
+            .finish();
+        let failed = Read(std::io::Error::other("Connection refused"));
+
+        let (_, body) = tracing::subscriber::with_default(subscriber, || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(answered(Box::new(failed)))
+        });
+        let logged = written.read();
+
+        assert!(logged.contains("the sync status read failed"), "{logged}");
+        assert!(logged.contains("Connection refused"), "{logged}");
+        assert_eq!(body, "Internal Server Error");
     }
 }

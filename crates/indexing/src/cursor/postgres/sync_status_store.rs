@@ -4,7 +4,7 @@
 //! duplicating one, because there is exactly one answer to "where is the
 //! indexer" and a second copy of it would be a second thing to keep in step.
 
-use postgres::{Pool, traced};
+use postgres::{Pool, Traced};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
 
@@ -27,21 +27,23 @@ const STATUS: &str = "\
     LIMIT 1";
 
 pub struct PostgresSyncStatusStore {
-    pool: Pool,
+    db: Traced,
 }
 
 impl PostgresSyncStatusStore {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self {
+            db: Traced::new(pool),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl SyncStatusStore for PostgresSyncStatusStore {
     async fn get(&self, chain_id: u32) -> Result<Option<SyncStatus>, Error> {
-        let client = traced(&self.pool).await?;
-        let row = client
+        let row = self
+            .db
             .query_opt("SELECT indexer_cursor", STATUS, &[&i64::from(chain_id)])
             .await?;
 

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
-use postgres::{Pool, traced};
+use postgres::{Pool, Traced};
 use tokio_postgres::Row;
 
 use crate::{Error, TokenLabel, TokenMetadataStore};
@@ -16,7 +16,7 @@ const LABELS: &str = "\
     WHERE chain_id = $1";
 
 pub struct PostgresTokenMetadataStore {
-    pool: Pool,
+    db: Traced,
 }
 
 impl PostgresTokenMetadataStore {
@@ -25,16 +25,18 @@ impl PostgresTokenMetadataStore {
     /// be used twice in one process against two servers.
     #[must_use]
     pub fn new(pool: Pool) -> Self {
-        Self { pool }
+        Self {
+            db: Traced::new(pool),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl TokenMetadataStore for PostgresTokenMetadataStore {
     async fn labels(&self, chain_id: u32) -> Result<HashMap<Address, TokenLabel>, Error> {
-        let client = traced(&self.pool).await?;
         // `bigint`, so the parameter is signed however the port spells it.
-        let rows = client
+        let rows = self
+            .db
             .query("SELECT token_metadata", LABELS, &[&i64::from(chain_id)])
             .await?;
 
