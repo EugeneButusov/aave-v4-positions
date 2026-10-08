@@ -1,93 +1,87 @@
-//! Reads that appear in a trace.
+//! A connection whose reads appear in a trace.
 //!
-//! **The span is not something a call site can leave off**, which is why a read
-//! goes through here at all. The driver opens none of its own — `tokio-postgres`
-//! speaks `log`, not `tracing` — so a read issued straight against it is a gap
-//! in every trace that passes through, and nothing anywhere fails.
+//! **The span is not something a call site can leave off**, which is the whole
+//! reason this type exists rather than a `Span` to hang beside `client.query`.
+//! The driver opens none of its own — `tokio-postgres` speaks `log`, not
+//! `tracing` — so a read issued straight against it is a gap in every trace that
+//! passes through, and nothing anywhere fails.
 //!
 //! Here rather than at each store for the reason the probe paths live in `ops`:
 //! three crates read one statement each, and three spellings of the same span is
 //! three things a dashboard has to know about.
 
-use std::future::Future;
-
+use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
-use tokio_postgres::{Error, Row};
 
-use crate::Client;
+use crate::error::Error;
+use crate::pool::{Connection, Pool, connection};
 
-/// Reads that carry a span, on the driver's own client.
+/// A connection that reads under a span, and does nothing else.
 ///
-/// **A trait because [`Client`] is an alias for the driver's type.** An inherent
-/// `impl` on it is `E0116` — rustc's words, "does not define a new type, only an
-/// alias" — and a newtype is what [`crate`] already rules out, refinery
-/// implementing its traits for that exact type. Reached through
-/// [`Connection`](crate::Connection)'s `Deref`, which is what every store holds.
+/// **A wrapper rather than an extension trait**, which is what makes the method
+/// names the driver's own: `query` here is this one, and the untraced `query`
+/// underneath is not reachable through it at all. An extension trait had to call
+/// its methods something else, because an inherent method wins resolution — so
+/// the traced and untraced reads sat on one receiver with the untraced one
+/// holding the better name.
 ///
-/// **The methods cannot be called `query`.** Inherent methods win resolution, so
-/// `client.query(name, sql, params)` would find the driver's two-argument one
-/// and fail on arity rather than arriving here. The suffix is what the method
-/// adds, which also puts the difference at the call site: `query_traced` beside
-/// `query` says which one a reader is looking at without going to the imports.
+/// **It does not `Deref`**, deliberately. Everything a read needs is below; a
+/// caller wanting the rest of the driver's surface asks [`connection`] for it and
+/// is then visibly holding something else.
 ///
-/// **`name` is `{operation} {target}`** — the shape the specification spells for
-/// a database span name — and it is given rather than derived, because deriving
-/// it means parsing SQL. `traced-sql.ts` did that, and produced a span called
-/// `SELECT its` out of prose inside a comment.
+/// [`Client`](crate::Client) stays an alias either way: refinery implements its
+/// traits for that exact type, and `bins/migrate` hands it `&mut **connection`.
+pub struct Traced(Connection);
+
+/// One connection out of the pool, wrapped so its reads are seen.
 ///
-/// **Desugared rather than `async fn`**, because an `async fn` in a public trait
-/// leaves the future's auto traits unstated: `Send` is what lets a caller spawn
-/// a read, and in a trait that cannot be added later without breaking the API.
+/// # Errors
 ///
-/// **`sql` is `&'static str` because it is published as `db.query.text`.** Every
-/// value travels as a bind parameter, which is what makes publishing the text
-/// safe, and the type is what keeps that true rather than a note asking the next
-/// caller not to pass a `format!`.
-pub trait Traced {
+/// As [`connection`], which this is.
+pub async fn traced(pool: &Pool) -> Result<Traced, Error> {
+    connection(pool).await.map(Traced)
+}
+
+impl Traced {
+    /// **`name` is `{operation} {target}`** — the shape the specification spells
+    /// for a database span name — and it is given rather than derived, because
+    /// deriving it means parsing SQL. `traced-sql.ts` did that, and produced a
+    /// span called `SELECT its` out of prose inside a comment.
+    ///
+    /// **`sql` is `&'static str` because it is published as `db.query.text`.**
+    /// Every value travels as a bind parameter, which is what makes publishing
+    /// the text safe, and the type is what keeps that true rather than a note
+    /// asking the next caller not to pass a `format!`.
+    ///
     /// # Errors
     ///
     /// Whatever the driver says about the statement or the connection under it.
-    fn query_traced(
+    pub async fn query(
         &self,
         name: &'static str,
         sql: &'static str,
         params: &[&(dyn ToSql + Sync)],
-    ) -> impl Future<Output = Result<Vec<Row>, Error>> + Send;
+    ) -> Result<Vec<Row>, tokio_postgres::Error> {
+        use tracing::Instrument as _;
+
+        self.0.query(sql, params).instrument(span(name, sql)).await
+    }
 
     /// At most one row, as the driver's `query_opt` means it.
     ///
     /// # Errors
     ///
-    /// As [`query_traced`](Self::query_traced).
-    fn query_opt_traced(
+    /// As [`query`](Self::query).
+    pub async fn query_opt(
         &self,
         name: &'static str,
         sql: &'static str,
         params: &[&(dyn ToSql + Sync)],
-    ) -> impl Future<Output = Result<Option<Row>, Error>> + Send;
-}
-
-impl Traced for Client {
-    async fn query_traced(
-        &self,
-        name: &'static str,
-        sql: &'static str,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> Result<Vec<Row>, Error> {
+    ) -> Result<Option<Row>, tokio_postgres::Error> {
         use tracing::Instrument as _;
 
-        self.query(sql, params).instrument(span(name, sql)).await
-    }
-
-    async fn query_opt_traced(
-        &self,
-        name: &'static str,
-        sql: &'static str,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> Result<Option<Row>, Error> {
-        use tracing::Instrument as _;
-
-        self.query_opt(sql, params)
+        self.0
+            .query_opt(sql, params)
             .instrument(span(name, sql))
             .await
     }
@@ -96,9 +90,8 @@ impl Traced for Client {
 /// **`db.operation.name` and `db.collection.name` are deliberately absent.**
 /// The specification asks for them when they are readily available, and here
 /// they would be — but nothing in this deployment reads either, and the
-/// `clickhouse` driver beside this emits neither for the same span. The name
-/// below is what a person reads in a trace list, and it is the part that earns
-/// its keep.
+/// `clickhouse` driver beside this emits neither for the same span. The name is
+/// what a person reads in a trace list, and it is the part that earns its keep.
 fn span(name: &'static str, sql: &'static str) -> tracing::Span {
     tracing::info_span!(
         "postgres.query",
@@ -117,7 +110,7 @@ mod tests {
     use tracing_subscriber::fmt::format::FmtSpan;
 
     use super::*;
-    use crate::{build_pool, connection};
+    use crate::build_pool;
 
     /// A statement every server has the answer to, so this needs no schema.
     const TABLES: &str =
@@ -140,11 +133,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_traced_query_is_one_client_span_naming_what_it_read() {
+    async fn a_read_is_one_client_span_naming_what_it_read() {
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
-        let client = connection(&pool).await.unwrap();
+        let client = traced(&pool).await.unwrap();
         let sink = Sink::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer({
@@ -156,7 +149,7 @@ mod tests {
             .finish();
 
         client
-            .query_traced("SELECT pg_tables", TABLES, &[&"public"])
+            .query("SELECT pg_tables", TABLES, &[&"public"])
             .with_subscriber(subscriber)
             .await
             .unwrap();
