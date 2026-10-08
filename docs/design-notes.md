@@ -381,18 +381,19 @@ local-development convenience and is skipped entirely under `NODE_ENV=test`.
 `OTEL_EXPORTER_OTLP_ENDPOINT` (`http://localhost:4318`), `OTEL_TRACES_SAMPLER`
 (`parentbased_always_on`), `OTEL_TRACES_SAMPLER_ARG`.
 
-These are the one group where the paragraph above is **not quite true**, and it is worth being exact
-rather than tidy. The SDK is preloaded with `node --require`, so it reads these from `process.env`
-itself, before Nest — and therefore before Zod — exists. They are declared in both schemas anyway,
-for the two things that still buys: a malformed endpoint aborts the process rather than being dropped
-by an exporter nobody is watching, and the contract lives in one place with everything else instead
-of only in a `Dockerfile`. Standard `OTEL_*` spellings, no repo-invented `TELEMETRY_ENABLED` — an
-operator who knows OpenTelemetry should not have to learn our names for its variables.
+In the Node services these are the one group where the paragraph above is **not quite true**, and it
+is worth being exact rather than tidy. The SDK is preloaded with `node --require`, so it reads them
+from `process.env` itself, before Nest — and therefore before Zod — exists. They are declared in both
+schemas anyway, for the two things that still buys: a malformed endpoint aborts the process rather
+than being dropped by an exporter nobody is watching, and the contract lives in one place with
+everything else instead of only in a `Dockerfile`. The same ordering is why
+[`start.ts`](../packages/telemetry/src/start.ts) calls `process.loadEnvFile()` itself: without it, an
+`OTEL_*` line in a local `.env` would be the one variable in the file that silently did nothing.
 
-The same ordering is why [`start.ts`](../packages/telemetry/src/start.ts) calls `process.loadEnvFile()`
-itself. `@nestjs/config` writes dotenv values into `process.env` only once the module graph is built,
-which is far too late for a preload; without that call, an `OTEL_*` line in a local `.env` would be
-the one variable in the file that silently did nothing.
+**The Rust service has no such exception**, and the difference is the preload rather than the
+language: telemetry is compiled in, so `main` parses one environment and hands the group down like
+every other. Standard `OTEL_*` spellings on both sides, no repo-invented `TELEMETRY_ENABLED` — an
+operator who knows OpenTelemetry should not have to learn our names for its variables.
 
 `OTEL_SERVICE_NAME` is refused rather than defaulted when telemetry is on. Every signal is grouped by
 `service.name`, so an unnamed service produces telemetry that is present, plausible and impossible to
@@ -1983,6 +1984,57 @@ span attribute.
 OTLP/gRPC exporters, which put `@grpc/grpc-js` — **4.3 MB, measured** — into the runtime image for a
 service that exports over HTTP. The three providers are composed by hand instead, in about sixty
 lines; `pnpm why @grpc/grpc-js` now returns nothing.
+
+#### The same three signals, in the Rust service
+
+`bins/api` exports over OTLP too, and everything above holds — one JSON object per line on stdout,
+the OTLP copy additive, `x-request-id` naming the trace. What changes is where each signal comes
+from, because **Rust has no auto-instrumentation to name**: the four packages above become one
+hand-written layer, one driver feature and one helper.
+
+`bins/api/src/requests.rs` is the first of those, and it does in one pass what
+`instrumentation-http`, `instrumentation-nestjs-core` and `pino-http` did between them: the server
+span, the request line, and `http.server.request.duration` — a histogram the other service publishes
+without writing a line, and the one three panels of the dashboard are written against. Doing it in
+one place is not only economy; the route, the status and the latency all reach all three without
+being carried between layers. `http.route` is the matched template and never the path, for the
+reason `providerLabel` takes a host and never a URL: an attribute filled in from what a stranger sent
+is unbounded cardinality anyone can mint.
+
+The database seam comes out **asymmetric again, and the other way round**. The `clickhouse` crate
+opens `clickhouse.query` itself, and its `opentelemetry` feature makes that a client span and puts
+`traceparent` on the request — so ClickHouse records the same trace in
+`system.opentelemetry_span_log`, which the TypeScript never asked it to. Postgres is the opposite:
+`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::Traced` is a pool whose
+`query` and `query_opt` carry the span, held by a store from its constructor — rather than a span to hang
+beside a read, because a span a call site can leave off is a gap nothing fails over. An extension
+trait because the client is an alias for the driver's type, so an inherent `impl` on it is not
+allowed; A wrapper rather than an extension trait, which is what lets the methods keep the
+driver's own names: the untraced `query` underneath is not reachable through it, where a trait had to
+call its methods something else and left the two sitting on one receiver. The client stays an alias
+either way, because refinery implements its traits for that exact type.
+
+**The connection is still taken per read**, and that is not an oversight.
+[`deadpool`](https://docs.rs/deadpool-postgres) checks `is_closed()` when it hands one out, so a
+connection held for the life of a store is one that fails every request after a server restart or an
+idle timeout — while the readiness probe, which asks the pool for a fresh one, still reports healthy.
+Measured, that check costs **1.4 µs** against **552 µs** for the `SELECT` it precedes, and
+`list.rs`'s `tokio::join!` is what makes the three reads overlap rather than queue on one wire. There `db.query.text` is safe by the type rather than
+by care — the statement is taken as `&'static str`, so a `format!` cannot be passed and every value
+travels as a bind parameter, where `traced-sql.ts` needed `strings.raw` and a join to keep an
+interpolated value off a span. `db.operation.name` and `db.collection.name` are left unset although
+the specification asks for them when readily available: nothing here reads either, and the
+ClickHouse driver emits neither on its own span. The span's *name* is what a person reads, and that
+is given rather than parsed out of the SQL.
+
+**Plaintext OTLP only.** The exporter posts over hyper, which the process already links, rather than
+the crate's default `reqwest-blocking-client`; every TLS backend available would bring `ring` or
+`aws-lc-sys` and break the claim in `Dockerfile` that this tree needs no C compiler. A collector
+behind `https://` needs that trade reopened, and it is a feature flag rather than a redesign.
+
+Its cost, measured on the musl image rather than guessed: the binary goes **7,072,072 bytes to
+12,321,608**, and RSS **2.7 MiB to 4.1 MiB** — against the +23 MiB the Node SDK costs above.
+`OTEL_SDK_DISABLED=true` leaves the process serving and logging exactly as before.
 
 ### What the indexer reports
 

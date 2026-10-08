@@ -7,9 +7,19 @@ publish.workspace = true
 
 [dependencies]
 # Only this crate builds against the driver; everyone else goes through it.
-clickhouse = "0.15.1"
+#
+# `opentelemetry` is what makes the `clickhouse.query` span it already emits a
+# proper client span: `db.system.name` and `otel.kind` on the way out, the error
+# status recorded when a query fails, and `traceparent` put on the request so the
+# server can be asked about the same trace. Nothing here calls into it — the
+# driver reads the propagator `telemetry` sets.
+clickhouse = { version = "0.15.1", features = ["opentelemetry"] }
 
 [dev-dependencies]
+# Reading the driver's span back out of a subscriber, which is what tells the
+# `opentelemetry` feature being on from it being off.
+tracing-subscriber = "0.3.23"
+tracing = "0.1.44"
 # `#[tokio::test]`. The driver pulls tokio in regardless; this only asks for the
 # attribute and a current-thread runtime to hang it on.
 tokio = { version = "1.53.1", features = ["macros", "rt"] }

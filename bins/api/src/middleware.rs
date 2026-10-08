@@ -6,35 +6,57 @@
 //! `from_fn_with_state` middleware it has; this one has none yet and a parameter
 //! nothing reads is `dead_code`, which the workspace denies.
 //!
-//! **No `TraceLayer` yet, and that is not a gap.** The TypeScript excludes
-//! `/health` from request logging, so a process serving only probes emits
-//! exactly what its predecessor does for the same traffic — nothing. It lands
-//! with the first route worth tracing, where the exclusion has something to
-//! exclude.
+//! **The observation layer is outermost, and that ordering is the contract**:
+//! a request id prefers the trace id, so the span has to exist before the id is
+//! minted.
 
 use std::any::Any;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{StatusCode, header};
+use axum::http::{Request, StatusCode, header};
 use axum::response::Response;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
-use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
+use tower_http::request_id::{
+    MakeRequestId, MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
+};
+
+use crate::requests::{self, Instruments};
 
 pub(crate) fn apply(router: Router) -> Router {
+    let instruments = Instruments::new();
+
     router.layer(
-        // Ordered explicitly, because it has to be: `SetRequestId` is outermost
-        // so the header exists before anything downstream reads it,
-        // `PropagateRequestId` sits inside it to copy the value onto the way
-        // out, and `CatchPanic` is innermost so the 500 it makes still travels
-        // out through both and carries the id. Reversed, every response would
-        // carry a fresh id unrelated to the one the caller sent.
+        // Ordered explicitly, because it has to be: the span outermost so the
+        // id is minted inside a traced request, `SetRequestId` next so the
+        // header exists before anything reads it, `PropagateRequestId` to copy
+        // it onto the way out, and `CatchPanic` innermost so its 500 still
+        // travels out through all three. Reversed, every response carries a
+        // fresh id unrelated to the one the caller sent.
         ServiceBuilder::new()
-            .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
+            .layer(axum::middleware::from_fn(move |request, next| {
+                requests::observe(instruments.clone(), request, next)
+            }))
+            .layer(SetRequestIdLayer::x_request_id(Traced))
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(CatchPanicLayer::custom(panicked)),
     )
+}
+
+/// The trace id when there is one, a fresh UUID when there is not.
+#[derive(Clone, Copy)]
+struct Traced;
+
+impl MakeRequestId for Traced {
+    fn make_request_id<B>(&mut self, request: &Request<B>) -> Option<RequestId> {
+        // Only reached when the caller sent none: `SetRequestId` keeps theirs,
+        // which is echoed and stable across a retry where a trace id is not.
+        telemetry::trace_id(&tracing::Span::current())
+            .and_then(|id| id.parse().ok())
+            .map(RequestId::new)
+            .or_else(|| MakeRequestUuid.make_request_id(request))
+    }
 }
 
 /// A panic is a bug here, and the caller learns nothing about it.
@@ -144,45 +166,64 @@ mod tests {
         assert_eq!(request_id.as_deref(), Some("from-the-caller"));
     }
 
-    /// Collects what a subscriber was given, so a case can assert on a log line.
+    #[test]
+    fn the_request_id_a_caller_gets_back_is_the_trace_id() {
+        // Without this a line carries a `request_id` and a `trace_id` with
+        // nothing to do with each other, and an echoed header naming neither.
+        let request = Request::builder()
+            .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
+            .body(Body::empty())
+            .unwrap();
+
+        let observed = crate::test_support::observed(
+            crate::test_support::handler(crate::test_support::unreachable_postgres()),
+            request,
+        );
+        let trace = observed.spans[0].span_context.trace_id().to_string();
+
+        assert_eq!(observed.request_id.as_deref(), Some(trace.as_str()));
+    }
+
+    #[test]
+    fn a_caller_s_own_request_id_outranks_the_trace_id() {
+        let request = Request::builder()
+            .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
+            .header("x-request-id", "from-the-caller")
+            .body(Body::empty())
+            .unwrap();
+
+        let observed = crate::test_support::observed(
+            crate::test_support::handler(crate::test_support::unreachable_postgres()),
+            request,
+        );
+
+        assert_eq!(observed.request_id.as_deref(), Some("from-the-caller"));
+        assert!(
+            observed
+                .logged
+                .contains(r#""request_id":"from-the-caller""#),
+            "{}",
+            observed.logged
+        );
+    }
+
+    /// What the panic handler wrote, as a deployment would read it.
     ///
-    /// Worth the twenty lines: reading the message is done at one call site with
-    /// a coercion that can silently pick the wrong thing, and asserting on
+    /// Worth a case of its own: reading the message is done at one call site
+    /// with a coercion that can silently pick the wrong thing, and asserting on
     /// [`said`] alone leaves that call site uncovered — which is exactly how the
     /// bug this catches got as far as a running process.
-    #[derive(Clone, Default)]
-    struct Captured(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for Captured {
-        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buffer);
-            Ok(buffer.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
-        type Writer = Self;
-
-        fn make_writer(&'a self) -> Self::Writer {
-            self.clone()
-        }
-    }
-
     fn logged_by(panic: Box<dyn Any + Send>) -> String {
-        let captured = Captured::default();
+        crate::test_support::interesting();
+        let written = crate::test_support::Written::default();
         let subscriber = tracing_subscriber::fmt()
             .json()
-            .with_writer(captured.clone())
+            .with_writer(written.clone())
             .finish();
 
         tracing::subscriber::with_default(subscriber, || drop(panicked(panic)));
 
-        let written = captured.0.lock().unwrap().clone();
-        String::from_utf8(written).unwrap()
+        written.read()
     }
 
     #[test]

@@ -3,13 +3,11 @@
 /// A dimension that cannot be served.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// No connection to take the query.
-    #[error("no connection to Postgres")]
-    Unavailable(#[from] postgres::Error),
-
-    /// The server refused the query.
-    #[error("the token metadata query failed")]
-    QueryFailed(#[from] tokio_postgres::Error),
+    /// Postgres would not answer: no connection to be had, or a query it
+    /// refused. Which of the two is in the cause, and `ops`'s chain formatter is
+    /// what puts it on the line the API logs.
+    #[error("the token label read failed")]
+    Read(#[from] postgres::Error),
 
     /// A column held something its type says it cannot.
     ///

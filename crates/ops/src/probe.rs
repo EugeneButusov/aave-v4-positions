@@ -20,6 +20,12 @@ use axum::{Json, Router, http::StatusCode};
 use crate::health::{Alive, CheckResult, Liveness, Readiness, Report};
 use crate::shutdown::ShutdownFlag;
 
+/// What both probe paths begin with.
+///
+/// Published because the request log and the tracing layer both drop traffic
+/// under it, and a second spelling of `/health` stops excluding anything.
+pub const HEALTH_PREFIX: &str = "/health";
+
 /// When the process started, taken as early as `main` can take it.
 ///
 /// A type rather than a bare `Instant` parameter, because the value only means
@@ -131,6 +137,17 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
 
         (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn both_probes_answer_under_the_prefix_callers_exclude() {
+        // The routes above stay literals; this keeps the prefix on them.
+        for probe in ["live", "ready"] {
+            let path = format!("{HEALTH_PREFIX}/{probe}");
+            let (status, _) = request(router(ShutdownFlag::new(), vec![]), &path).await;
+
+            assert_eq!(status, StatusCode::OK, "{path}");
+        }
     }
 
     #[tokio::test]

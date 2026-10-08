@@ -18,6 +18,7 @@ migrations = { path = "crates/migrations" }
 ops = { path = "crates/ops" }
 postgres = { path = "crates/postgres" }
 prices = { path = "crates/prices" }
+telemetry = { path = "crates/telemetry" }
 token-metadata = { path = "crates/token-metadata" }
 
 [workspace.lints.rust]

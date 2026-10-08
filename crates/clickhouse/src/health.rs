@@ -16,3 +16,77 @@
 pub async fn ping(client: &clickhouse::Client) -> Result<(), clickhouse::error::Error> {
     client.query("SELECT 1").fetch_one::<u8>().await.map(drop)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use tracing::instrument::WithSubscriber as _;
+    use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    use super::*;
+
+    /// Somewhere a case can read a span back from.
+    #[derive(Clone, Default)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// What the driver's `opentelemetry` feature buys. The span is emitted
+    /// either way; the feature makes it a client span and puts `traceparent` on
+    /// the request. Dropping it from the manifest is silent everywhere else.
+    /// `tracing` caches callsite interest from the *global* subscriber, which is
+    /// `NoSubscriber` here and answers "never". A sibling case querying with
+    /// nothing in scope leaves `clickhouse.query` disabled for the process.
+    fn interesting() {
+        static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+        ONCE.get_or_init(|| {
+            let _ = tracing::subscriber::set_global_default(
+                tracing_subscriber::registry().with(tracing::level_filters::LevelFilter::TRACE),
+            );
+        });
+    }
+
+    #[tokio::test]
+    async fn a_query_is_a_client_span_of_a_named_system() {
+        interesting();
+        let client = crate::build_client(crate::Config {
+            url: std::env::var("CLICKHOUSE_URL")
+                .unwrap_or_else(|_| "http://localhost:8123".to_owned()),
+            database: "default".to_owned(),
+            user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
+            password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
+        });
+        let sink = Sink::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer({
+                let sink = sink.clone();
+                move || sink.clone()
+            })
+            .with_ansi(false)
+            .with_span_events(FmtSpan::CLOSE)
+            .finish();
+
+        ping(&client).with_subscriber(subscriber).await.unwrap();
+
+        let written = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+
+        assert!(written.contains("clickhouse.query"), "{written}");
+        assert!(
+            written.contains(r#"db.system.name="clickhouse""#),
+            "{written}"
+        );
+        assert!(written.contains(r#"otel.kind="client""#), "{written}");
+    }
+}
