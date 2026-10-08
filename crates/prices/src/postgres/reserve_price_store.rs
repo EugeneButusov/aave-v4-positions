@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use postgres::{Pool, connection};
+use postgres::{Pool, Traced, connection};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
 
@@ -48,13 +48,9 @@ impl PostgresReservePriceStore {
 impl ReservePriceStore for PostgresReservePriceStore {
     async fn latest(&self, chain_id: u32) -> Result<HashMap<ReserveKey, ReservePrice>, Error> {
         let client = connection(&self.pool).await?;
-        let rows = postgres::query(
-            &client,
-            "SELECT reserve_prices",
-            LATEST,
-            &[&i64::from(chain_id)],
-        )
-        .await?;
+        let rows = client
+            .read("SELECT reserve_prices", LATEST, &[&i64::from(chain_id)])
+            .await?;
 
         rows.iter().map(priced).collect()
     }

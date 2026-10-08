@@ -2005,9 +2005,12 @@ The database seam comes out **asymmetric again, and the other way round**. The `
 opens `clickhouse.query` itself, and its `opentelemetry` feature makes that a client span and puts
 `traceparent` on the request — so ClickHouse records the same trace in
 `system.opentelemetry_span_log`, which the TypeScript never asked it to. Postgres is the opposite:
-`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::query` and
-`query_opt` carry the span themselves — functions rather than a span to hang beside a read, because a
-span a call site can leave off is a gap nothing fails over. There `db.query.text` is safe by the type rather than
+`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::Traced` adds `read`
+and `read_opt` to the driver's own client and those carry the span — rather than a span to hang
+beside a read, because a span a call site can leave off is a gap nothing fails over. An extension
+trait because the client is an alias for the driver's type, so an inherent `impl` on it is not
+allowed; and the methods cannot be called `query`, since an inherent method wins resolution over a
+trait one. There `db.query.text` is safe by the type rather than
 by care — the statement is taken as `&'static str`, so a `format!` cannot be passed and every value
 travels as a bind parameter, where `traced-sql.ts` needed `strings.raw` and a join to keep an
 interpolated value off a span. `db.operation.name` and `db.collection.name` are left unset although
