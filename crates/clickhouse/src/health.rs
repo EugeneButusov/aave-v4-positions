@@ -23,6 +23,7 @@ mod tests {
 
     use tracing::instrument::WithSubscriber as _;
     use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
 
@@ -48,8 +49,29 @@ mod tests {
     /// span rather than an unattributed one, and what puts `traceparent` on the
     /// request so the server can be asked about the same trace. Dropping the
     /// feature from the manifest is silent everywhere else.
+    /// Makes every callsite in this binary interesting, once.
+    ///
+    /// **`tracing` caches callsite interest globally**, and computes it from the
+    /// *global* subscriber — `NoSubscriber` here, which answers "never" for every
+    /// callsite. A case that reads a span back through a scoped subscriber then
+    /// depends on whether its callsite was first registered inside one, and a
+    /// sibling case issuing a query with nothing in scope is enough to leave it
+    /// disabled for the rest of the process. Measured, not theorised: the run
+    /// that caught this captured the driver's `response` span and not
+    /// `clickhouse.query`, from the same subscriber, in the same test.
+    fn interesting() {
+        static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+        ONCE.get_or_init(|| {
+            let _ = tracing::subscriber::set_global_default(
+                tracing_subscriber::registry().with(tracing::level_filters::LevelFilter::TRACE),
+            );
+        });
+    }
+
     #[tokio::test]
     async fn a_query_is_a_client_span_of_a_named_system() {
+        interesting();
         let client = crate::build_client(crate::Config {
             url: std::env::var("CLICKHOUSE_URL")
                 .unwrap_or_else(|_| "http://localhost:8123".to_owned()),

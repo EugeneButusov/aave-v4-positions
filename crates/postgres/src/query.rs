@@ -108,6 +108,7 @@ mod tests {
 
     use tracing::instrument::WithSubscriber as _;
     use tracing_subscriber::fmt::format::FmtSpan;
+    use tracing_subscriber::layer::SubscriberExt as _;
 
     use super::*;
     use crate::build_pool;
@@ -132,8 +133,29 @@ mod tests {
         }
     }
 
+    /// Makes every callsite in this binary interesting, once.
+    ///
+    /// **`tracing` caches callsite interest globally**, and computes it from the
+    /// *global* subscriber — `NoSubscriber` here, which answers "never" for every
+    /// callsite. A case that reads a span back through a scoped subscriber then
+    /// depends on whether its callsite was first registered inside one, and a
+    /// sibling case issuing a query with nothing in scope is enough to leave it
+    /// disabled for the rest of the process. Measured, not theorised: the run
+    /// that caught this failed this case and the
+    /// ClickHouse one together, each with an empty buffer.
+    fn interesting() {
+        static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+        ONCE.get_or_init(|| {
+            let _ = tracing::subscriber::set_global_default(
+                tracing_subscriber::registry().with(tracing::level_filters::LevelFilter::TRACE),
+            );
+        });
+    }
+
     #[tokio::test]
     async fn a_read_is_one_client_span_naming_what_it_read() {
+        interesting();
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
