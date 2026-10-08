@@ -232,28 +232,21 @@ pub(crate) async fn answered(error: BoxedAppError) -> (StatusCode, String) {
     (status, String::from_utf8(body.to_vec()).unwrap())
 }
 
-/// Everything one request produced, through a subscriber of the case's own.
-///
-/// **Nothing process-wide.** Spans, log lines and the echoed header all come
-/// from one `with_default`, so cases can run in parallel without reading each
-/// other's telemetry — which a global provider would make them do.
+/// Everything one request produced, through a subscriber of the case's own, so
+/// cases run in parallel without reading each other's telemetry.
 pub(crate) struct Observed {
     pub(crate) request_id: Option<String>,
     pub(crate) spans: Vec<SpanData>,
 
-    /// The JSON lines the formatter wrote, as a deployment would read them.
+    /// The JSON lines the formatter wrote.
     pub(crate) logged: String,
 }
 
 /// Makes every callsite in this binary interesting, once.
 ///
-/// **`tracing` caches callsite interest globally**, and computes it from the
-/// *global* subscriber — which is `NoSubscriber` here, answering "never" for
-/// every callsite. A `with_default` on one thread rebuilds that cache, and a
-/// second test rebuilding it while the first is between its span and its event
-/// leaves the event disabled: the case sees an empty log and a correct response,
-/// which is exactly the shape that makes it look like a bug in the code under
-/// test. A permissive global keeps the answer "yes" whoever is asking.
+/// `tracing` caches callsite interest from the *global* subscriber, which is
+/// `NoSubscriber` here and answers "never". Without this, a case reads an empty
+/// log and a correct response — a harness failure wearing the code's clothes.
 pub(crate) fn interesting() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
@@ -267,9 +260,7 @@ pub(crate) fn interesting() {
 pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     interesting();
 
-    // The propagator is a global by design: it is what the ClickHouse driver
-    // reads to put `traceparent` on its own request. Every case setting the same
-    // one is not a case setting a different one.
+    // A global by design, and every case sets the same one.
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     let exporter = InMemorySpanExporter::default();
@@ -309,12 +300,8 @@ pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     }
 }
 
-/// What a subscriber wrote, held where a case can read it back.
-///
-/// **One of these, for both suites here.** `MakeWriter` is what
-/// `with_writer` takes, and nothing in `std` or `tracing-subscriber` gives a
-/// shared byte buffer that satisfies it — `MakeWriter for Arc<W>` wants
-/// `&W: Write`, which `&Mutex<Vec<u8>>` is not.
+/// What a subscriber wrote, held where a case can read it back. One of these,
+/// for both suites here.
 #[derive(Clone, Default)]
 pub(crate) struct Written(Arc<std::sync::Mutex<Vec<u8>>>);
 

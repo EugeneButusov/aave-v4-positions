@@ -6,11 +6,9 @@
 //! `from_fn_with_state` middleware it has; this one has none yet and a parameter
 //! nothing reads is `dead_code`, which the workspace denies.
 //!
-//! **The observation layer is outermost, and that ordering is the contract.**
-//! A request id prefers the trace id over a fresh UUID, so the span has to exist
-//! before the id is minted — which is the order the service this ports from gets
-//! for free, its HTTP instrumentation having opened a server span long before
-//! `genReqId` runs.
+//! **The observation layer is outermost, and that ordering is the contract**:
+//! a request id prefers the trace id, so the span has to exist before the id is
+//! minted.
 
 use std::any::Any;
 
@@ -30,13 +28,11 @@ pub(crate) fn apply(router: Router) -> Router {
     let instruments = Instruments::new();
 
     router.layer(
-        // Ordered explicitly, because it has to be: the span is outermost so
-        // everything below it, the request id included, is made inside a
-        // request that is already being traced; `SetRequestId` next so the
-        // header exists before anything downstream reads it;
-        // `PropagateRequestId` inside it to copy the value onto the way out; and
-        // `CatchPanic` innermost so the 500 it makes still travels out through
-        // all three and carries the id. Reversed, every response would carry a
+        // Ordered explicitly, because it has to be: the span outermost so the
+        // id is minted inside a traced request, `SetRequestId` next so the
+        // header exists before anything reads it, `PropagateRequestId` to copy
+        // it onto the way out, and `CatchPanic` innermost so its 500 still
+        // travels out through all three. Reversed, every response carries a
         // fresh id unrelated to the one the caller sent.
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn(move |request, next| {
@@ -49,21 +45,13 @@ pub(crate) fn apply(router: Router) -> Router {
 }
 
 /// The trace id when there is one, a fresh UUID when there is not.
-///
-/// **They answer different questions, which is why both travel.** `x-request-id`
-/// is caller-supplied, echoed on the response and stable across a retry; a trace
-/// id is none of those. Preferring it here is only what stops a line carrying a
-/// request id and a trace id that have nothing to do with each other, and an
-/// echoed header that names neither.
 #[derive(Clone, Copy)]
 struct Traced;
 
 impl MakeRequestId for Traced {
     fn make_request_id<B>(&mut self, request: &Request<B>) -> Option<RequestId> {
-        // Only reached when the caller sent none: `SetRequestId` keeps the one
-        // it was given, which is the ordering that matters. An id a caller can
-        // quote is theirs; everyone else gets the trace rather than a UUID
-        // unrelated to anything else on the line.
+        // Only reached when the caller sent none: `SetRequestId` keeps theirs,
+        // which is echoed and stable across a retry where a trace id is not.
         telemetry::trace_id(&tracing::Span::current())
             .and_then(|id| id.parse().ok())
             .map(RequestId::new)
@@ -180,9 +168,8 @@ mod tests {
 
     #[test]
     fn the_request_id_a_caller_gets_back_is_the_trace_id() {
-        // Without this a line carries a `request_id` and a `trace_id` that have
-        // nothing to do with each other, and the echoed header names neither.
-        // It is the branch the service this ports from never had a test for.
+        // Without this a line carries a `request_id` and a `trace_id` with
+        // nothing to do with each other, and an echoed header naming neither.
         let request = Request::builder()
             .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
             .body(Body::empty())
@@ -199,9 +186,6 @@ mod tests {
 
     #[test]
     fn a_caller_s_own_request_id_outranks_the_trace_id() {
-        // It is caller-supplied, echoed and stable across a retry, none of
-        // which a trace id is. Replacing it would lose the one thing that makes
-        // a client-side bug report findable.
         let request = Request::builder()
             .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
             .header("x-request-id", "from-the-caller")

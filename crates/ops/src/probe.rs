@@ -22,10 +22,8 @@ use crate::shutdown::ShutdownFlag;
 
 /// What both probe paths begin with.
 ///
-/// Published because the rest of a deployment has to agree with it and cannot
-/// see these routes: probe traffic arrives every few seconds, and both the
-/// request log and the tracing layer drop it. A second spelling of `/health` is
-/// an exclusion that quietly stops excluding.
+/// Published because the request log and the tracing layer both drop traffic
+/// under it, and a second spelling of `/health` stops excluding anything.
 pub const HEALTH_PREFIX: &str = "/health";
 
 /// When the process started, taken as early as `main` can take it.
@@ -143,8 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn both_probes_answer_under_the_prefix_callers_exclude() {
-        // The routes above are literals, as a reader greps for them. This is
-        // what keeps the published prefix from drifting off them.
+        // The routes above stay literals; this keeps the prefix on them.
         for probe in ["live", "ready"] {
             let path = format!("{HEALTH_PREFIX}/{probe}");
             let (status, _) = request(router(ShutdownFlag::new(), vec![]), &path).await;

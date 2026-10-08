@@ -13,13 +13,10 @@
 //! the `OTEL_*` group arrives with `telemetry` — and it cannot drift from what
 //! the process honours.
 //!
-//! **Two variables have no default**, and both refuse rather than fall back. A
-//! cursor signing key every deployment shares is not a signature, so an unset
-//! `POSITIONS_CURSOR_SECRET` is a process that serves forgeable cursors. And
-//! every signal is grouped by `service.name`, so an unset `OTEL_SERVICE_NAME` is
-//! telemetry that is present, plausible and impossible to attribute — noticed
-//! for the first time during an incident. `OTEL_SDK_DISABLED=true` is how a
-//! process says it wants none of it.
+//! **Two variables have no default**, and both refuse rather than fall back: a
+//! shared `POSITIONS_CURSOR_SECRET` is not a signature, and an unset
+//! `OTEL_SERVICE_NAME` is telemetry nothing can be attributed to.
+//! `OTEL_SDK_DISABLED=true` is how a process says it wants none of it.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -38,8 +35,7 @@ use crate::positions::MIN_SECRET_BYTES;
 /// and just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
-/// The six the specification spells, and no name of our own: an operator who
-/// knows OpenTelemetry should not have to learn ours.
+/// The six the specification spells, and no name of our own.
 const SAMPLERS: [(&str, Sampling); 6] = [
     ("always_on", Sampling::AlwaysOn),
     ("always_off", Sampling::AlwaysOff),
@@ -140,11 +136,6 @@ impl Config {
 }
 
 /// Everything the exporters and the formatter are set up from.
-///
-/// **The `OTEL_*` spellings are the specification's**, which is the whole reason
-/// they can be read here alongside everything else: the service this replaces
-/// had to let its SDK read them before its own configuration existed, and that
-/// exception does not survive the port.
 fn telemetry(env: &Env<'_>) -> Result<telemetry::Settings, Invalid> {
     let disabled = env.flag("OTEL_SDK_DISABLED", false)?;
 
@@ -235,9 +226,7 @@ mod tests {
         // A default here would be a key every deployment shares, and a shared
         // key is not a signature. The alternative to this refusal is a process
         // that runs and serves forgeable cursors.
-        //
-        // The service name is set because the first bad variable is the one
-        // reported and telemetry is read first. This case is about the secret.
+        // The service name is set because telemetry is read first.
         let refusal = parse(&[("OTEL_SERVICE_NAME", "api-rust")])
             .err()
             .expect("expected a refusal")
@@ -249,10 +238,8 @@ mod tests {
 
     #[test]
     fn the_first_bad_variable_in_reading_order_is_the_one_reported() {
-        // Which is the mapping's to prove and not the reader's: fields are
-        // evaluated in source order, so this pins the order a deployment reads
-        // its refusals in. Both of these are wrong; the one named is the one
-        // read first.
+        // Fields evaluate in source order, so this pins the order a deployment
+        // reads its refusals in. Both are wrong; the one named is read first.
         let refusal = configured(&[("API_PORT", "0"), ("SHUTDOWN_GRACE_SECONDS", "600")])
             .err()
             .expect("expected a refusal")
@@ -326,9 +313,7 @@ mod tests {
 
     #[test]
     fn refuses_to_boot_unnamed_while_telemetry_is_on() {
-        // Every signal is grouped by `service.name`. Defaulting it produces
-        // telemetry that is present, plausible and attributed to nothing, which
-        // is the shape that is only ever noticed during an incident.
+        // Defaulting it produces telemetry attributed to nothing.
         let refusal = parse(&[SECRET])
             .err()
             .expect("expected a refusal")
@@ -342,7 +327,6 @@ mod tests {
 
     #[test]
     fn a_process_that_wants_no_telemetry_needs_no_name_for_it() {
-        // The switch a deployment already knows, rather than a name of ours.
         let config =
             parse(&[SECRET, ("OTEL_SDK_DISABLED", "true")]).expect("disabled is a complete answer");
 

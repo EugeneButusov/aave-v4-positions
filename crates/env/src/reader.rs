@@ -1,23 +1,9 @@
 //! One variable at a time, and what is wrong with the one that is.
 //!
-//! **A read is a read.** Every reader below takes `&self` and hands back a
-//! `Result`, which is the shape
+//! Every reader takes `&self` and returns a `Result`, so a config assembles them
+//! with `?` — the shape
 //! [crates.io's `crates_io_env_vars`](https://github.com/rust-lang/crates.io/blob/main/crates/crates_io_env_vars/src/lib.rs)
-//! uses for the same job across forty-nine variables and sixteen files — free
-//! functions returning `anyhow::Result`, and a config that assembles them with
-//! `?`. Nothing here accumulates, so nothing here needs `&mut`.
-//!
-//! The version this replaces did accumulate, reporting every bad variable in one
-//! boot. That behaviour came from the TypeScript rather than from Rust: Zod's
-//! `safeParse` returns every issue at once, and `z.prettifyError` prints them one
-//! per line, which is the message the Rust side was built to reproduce. Nothing
-//! reads that message but a person, once, on a first deployment — and the price
-//! was a `&mut` on eleven readers and on everything that borrowed one.
-//!
-//! **[`Invalid`] lives here rather than in an `error.rs`** of its own, which is
-//! what the other crates in this workspace have. Nothing else produces it and it
-//! carries no variants — splitting it out would buy a file boundary with a
-//! constructor and an accessor, which is ceremony rather than structure.
+//! uses for forty-nine variables. Nothing accumulates.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -75,29 +61,22 @@ const LEVELS: [(&str, LevelFilter); 7] = [
 const FLAGS: [(&str, bool); 4] = [("true", true), ("1", true), ("false", false), ("0", false)];
 
 impl<'a> Env<'a> {
-    /// Takes the environment as a map rather than reading it, so a case can
-    /// name a bad variable without touching global state the other tests are
-    /// running against.
+    /// A map rather than the environment, so a case touches no global state.
     #[must_use]
     pub fn new(vars: &'a HashMap<String, String>) -> Self {
         Self { vars }
     }
 
-    /// The one reader that cannot fail, which is why it is the one that returns
-    /// no `Result`: an absent value is the default and any present value is
-    /// itself.
+    /// The one reader that cannot fail, hence the only one without a `Result`.
     #[must_use]
     pub fn text(&self, key: &str, default: &str) -> String {
         self.raw(key).unwrap_or(default).to_owned()
     }
 
-    /// A shared key, and one of two readers here with no default: a key every
-    /// deployment shares is not a signature, so an absent one is a refusal
-    /// rather than a fallback.
+    /// No default: a key every deployment shares is not a signature.
     ///
     /// **The value never reaches the message**, unlike every other reader here —
-    /// that would put a signing key in the log of any deployment that mis-set
-    /// it. Length only, in bytes, which is what a key is measured in.
+    /// that would put a signing key in a mis-set deployment's log.
     ///
     /// # Errors
     ///
@@ -115,9 +94,8 @@ impl<'a> Env<'a> {
         Ok(value)
     }
 
-    /// No default, and no fallback worth having: the value names something
-    /// outside this process, so guessing it produces a plausible answer to the
-    /// wrong question.
+    /// No default: the value names something outside this process, so a guess
+    /// is a plausible answer to the wrong question.
     ///
     /// # Errors
     ///
@@ -129,12 +107,8 @@ impl<'a> Env<'a> {
         }
     }
 
-    /// As lenient as the WHATWG standard `url` implements, deliberately.
-    ///
-    /// `clickhouse:8123` is a valid URL — a scheme and a path — and is accepted.
-    /// Requiring `http` here would be a stricter boot contract than a deployment
-    /// expects, and the driver is the authority on its own URL anyway:
-    /// `build_pool` parses this again with libpq's rules.
+    /// As lenient as WHATWG, deliberately: `clickhouse:8123` is a valid URL and
+    /// is accepted. The driver is the authority on its own.
     ///
     /// # Errors
     ///
@@ -150,10 +124,8 @@ impl<'a> Env<'a> {
 
     /// # Errors
     ///
-    /// [`Invalid`] when the value is not an IP address. Stricter than
-    /// `app.listen(port, host)`, which would resolve a hostname: every
-    /// deployment of this sets an address, and a typo in one should fail at boot
-    /// rather than bind somewhere unintended.
+    /// [`Invalid`] when the value is not an IP address. A hostname is refused
+    /// rather than resolved, so a typo fails at boot instead of binding.
     pub fn address(&self, key: &str, default: &str) -> Result<IpAddr, Invalid> {
         let value = self.text(key, default);
 
@@ -164,9 +136,8 @@ impl<'a> Env<'a> {
 
     /// # Errors
     ///
-    /// [`Invalid`] outside `1..=65535`. `u16` is the range; 0 is "any port",
-    /// which is never what a service meant to be reachable at a known address
-    /// was asking for.
+    /// [`Invalid`] outside `1..=65535`. 0 is "any port", which a service meant
+    /// to be reachable never asked for.
     pub fn port(&self, key: &str, default: u16) -> Result<u16, Invalid> {
         let Some(value) = self.raw(key) else {
             return Ok(default);
@@ -237,10 +208,9 @@ impl<'a> Env<'a> {
         self.one_of(key, value, &LEVELS)
     }
 
-    /// The spellings a caller accepts, and what each one means to it. [`flag`]
-    /// and [`level`] are this with the table built in; a table nothing else
-    /// shares stays with the code that gives it meaning, so this crate keeps
-    /// knowing nothing about what a service is.
+    /// The spellings a caller accepts. [`flag`] and [`level`] are this with the
+    /// table built in; an unshared table stays with its caller, so this crate
+    /// keeps knowing nothing about what a service is.
     ///
     /// # Errors
     ///
@@ -261,8 +231,7 @@ impl<'a> Env<'a> {
         self.one_of(key, value, table)
     }
 
-    /// Borrowed from the map rather than from `self`, so a value can be read
-    /// and then named in an error about it.
+    /// Borrowed from the map, not `self`, so a value can be named in its error.
     fn raw(&self, key: &str) -> Option<&'a str> {
         // An empty value is a value: `CLICKHOUSE_PASSWORD=` means no password,
         // and treating it as absent would substitute a default nobody asked for.
@@ -287,8 +256,7 @@ impl<'a> Env<'a> {
 
 #[cfg(test)]
 mod tests {
-    //! The readers on their own terms, with keys that mean nothing to anyone.
-    //! What a variable is actually called, and which reader it gets, is a
+    //! The readers on their own terms. Which variable gets which reader is a
     //! consumer's `config` to prove.
     use super::*;
 
@@ -321,8 +289,6 @@ mod tests {
 
     #[test]
     fn an_empty_value_is_a_value_and_not_an_absence() {
-        // A container started with CLICKHOUSE_SKIP_USER_SETUP has no password,
-        // and falling back to the default here would send one nobody set.
         let text = read(&[("PASSWORD", "")], |env| env.text("PASSWORD", "default"));
 
         assert_eq!(text, "");
@@ -434,9 +400,8 @@ mod tests {
 
     #[test]
     fn a_required_variable_is_refused_when_absent_and_when_empty() {
-        // The empty case is the one worth a test: every other reader here
-        // treats an empty value as a value, and this is the reader where that
-        // rule would hand back a name nothing can be grouped by.
+        // Every other reader treats an empty value as a value; this is the one
+        // where that would hand back a name nothing can be grouped by.
         for pairs in [vec![], vec![("NAME", "")]] {
             assert!(refusal(&pairs, |env| env.required("NAME")).ends_with("NAME: must be set"));
         }

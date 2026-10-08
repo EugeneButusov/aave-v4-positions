@@ -27,8 +27,7 @@ mod tests {
 
     use super::*;
 
-    /// Somewhere a case can read a span back from. `MakeWriter` is implemented
-    /// for any `Fn() -> impl Write`, so this needs no impl of its own.
+    /// Somewhere a case can read a span back from.
     #[derive(Clone, Default)]
     struct Sink(Arc<Mutex<Vec<u8>>>);
 
@@ -43,22 +42,12 @@ mod tests {
         }
     }
 
-    /// What the driver's `opentelemetry` feature buys, as a query can show it.
-    ///
-    /// **The span is emitted either way**; the feature is what makes it a client
-    /// span rather than an unattributed one, and what puts `traceparent` on the
-    /// request so the server can be asked about the same trace. Dropping the
-    /// feature from the manifest is silent everywhere else.
-    /// Makes every callsite in this binary interesting, once.
-    ///
-    /// **`tracing` caches callsite interest globally**, and computes it from the
-    /// *global* subscriber — `NoSubscriber` here, which answers "never" for every
-    /// callsite. A case that reads a span back through a scoped subscriber then
-    /// depends on whether its callsite was first registered inside one, and a
-    /// sibling case issuing a query with nothing in scope is enough to leave it
-    /// disabled for the rest of the process. Measured, not theorised: the run
-    /// that caught this captured the driver's `response` span and not
-    /// `clickhouse.query`, from the same subscriber, in the same test.
+    /// What the driver's `opentelemetry` feature buys. The span is emitted
+    /// either way; the feature makes it a client span and puts `traceparent` on
+    /// the request. Dropping it from the manifest is silent everywhere else.
+    /// `tracing` caches callsite interest from the *global* subscriber, which is
+    /// `NoSubscriber` here and answers "never". A sibling case querying with
+    /// nothing in scope leaves `clickhouse.query` disabled for the process.
     fn interesting() {
         static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 

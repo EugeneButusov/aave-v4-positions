@@ -10,17 +10,15 @@ pub struct Settings {
     /// The collector's base address. The signal paths are this crate's to add.
     pub endpoint: String,
     pub sampler: Sampling,
-    /// What [`Sampling::TraceIdRatio`] and [`Sampling::ParentBasedTraceIdRatio`]
-    /// sample. Ignored by the other four.
+    /// Read by the two ratio samplers, ignored by the other four.
     pub ratio: f64,
     pub level: LevelFilter,
     pub pretty: bool,
-    /// No providers, no exporters, and the formatter alone. The process still
-    /// logs exactly what it logged before any of this existed.
+    /// No providers and no exporters: the formatter alone.
     pub disabled: bool,
 }
 
-/// The six samplers the specification spells, and nothing of our own.
+/// The six the specification spells.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Sampling {
     AlwaysOn,

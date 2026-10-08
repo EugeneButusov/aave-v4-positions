@@ -1,16 +1,7 @@
-//! One span, one line and one measurement per request.
+//! One span, one line and one measurement per request, in one pass.
 //!
-//! **Hand-written, because Rust has no auto-instrumentation.** The service this
-//! ports from got a server span, a request log line and a latency histogram from
-//! three packages it named and nothing it wrote. All three are here instead, in
-//! one pass over the request, which is also what lets the route, the status and
-//! the latency reach all three without being carried between layers.
-//!
-//! **Probe traffic is none of it.** `/health/live` and `/health/ready` are
-//! answered every few seconds by compose, by a load balancer and by an
-//! orchestrator; left in, they are the overwhelming majority of every trace list
-//! and every log stream, and a latency graph of a process that answers nothing
-//! else.
+//! Probe traffic is none of it: answered every few seconds from three places,
+//! it would be the majority of every trace list and log stream.
 
 use std::time::Instant;
 
@@ -23,15 +14,12 @@ use opentelemetry::{KeyValue, global};
 use tracing::Instrument as _;
 use tracing::field::Empty;
 
-/// Duration of HTTP server requests, in seconds.
-///
-/// The name, the unit and the bucket boundaries are the specification's, not
-/// ours: this is the series three panels of the dashboard are already written
-/// against, and the service this replaces published it without writing a line.
+/// Duration of HTTP server requests, in seconds. The name, unit and boundaries
+/// are the specification's — three dashboard panels are written against them.
 const DURATION: &str = "http.server.request.duration";
 
-/// The advisory boundaries the specification gives for that histogram. Without
-/// them the SDK's default buckets top out where a slow page begins.
+/// The specification's advisory boundaries. The SDK's defaults top out where a
+/// slow page begins.
 const BUCKETS: [f64; 14] = [
     0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0,
 ];
@@ -47,9 +35,7 @@ impl Instruments {
         Self::from(global::meter(telemetry::SCOPE))
     }
 
-    /// **The whole inventory, in one place.** Everything this binary records is
-    /// made here, which is what `names_every_instrument_this_binary_records`
-    /// can then be an inventory of rather than a spot check.
+    /// The whole inventory: everything this binary records is made here.
     fn from(meter: Meter) -> Self {
         Self {
             duration: meter
@@ -70,9 +56,8 @@ pub(crate) async fn observe(instruments: Instruments, request: Request, next: Ne
         return next.run(request).await;
     }
 
-    // The template, never the path. A route is a bounded set the service
-    // declares; a path is whatever a stranger sent, so filling this in from the
-    // URL would let anyone mint unbounded metric series by varying a 404.
+    // The template, never the path: a path is whatever a stranger sent, so
+    // anyone could mint unbounded metric series by varying a 404.
     let route = request
         .extensions()
         .get::<MatchedPath>()
@@ -81,9 +66,8 @@ pub(crate) async fn observe(instruments: Instruments, request: Request, next: Ne
 
     let span = tracing::info_span!(
         "request",
-        // What the exporter publishes the span as. The specification's shape is
-        // method and route, which is why an unmatched request is the method
-        // alone rather than a name carrying somebody's URL.
+        // Method and route, so an unmatched request is the method alone
+        // rather than a name carrying somebody's URL.
         otel.name = route.as_ref().map_or_else(
             || method.to_string(),
             |route| format!("{method} {route}"),
@@ -96,8 +80,6 @@ pub(crate) async fn observe(instruments: Instruments, request: Request, next: Ne
         url.scheme = %scheme,
         http.response.status_code = Empty,
         request_id = Empty,
-        // Recorded onto the line as well as the span, which is the job
-        // `instrumentation-pino` did for one dependency on the other side.
         trace_id = Empty,
     );
     if let Some(route) = route.as_deref() {
@@ -114,9 +96,8 @@ pub(crate) async fn observe(instruments: Instruments, request: Request, next: Ne
     let status = response.status();
 
     span.record("http.response.status_code", status.as_u16());
-    // Read back off the response rather than recorded where it is made:
-    // `SetRequestId` only calls its maker when the caller sent no header, so
-    // this is the one place both branches pass through.
+    // Off the response, because `SetRequestId` calls its maker only when the
+    // caller sent no header: this is the one place both branches pass through.
     if let Some(id) = response
         .headers()
         .get("x-request-id")
@@ -125,9 +106,8 @@ pub(crate) async fn observe(instruments: Instruments, request: Request, next: Ne
         span.record("request_id", id);
     }
     if status.is_server_error() {
-        // 5xx only. A refusal is the caller's fault and a correct answer by this
-        // service, so marking those failed would leave no signal for the ones
-        // that are ours.
+        // 5xx only: a refusal is a correct answer, and marking those failed
+        // would leave no signal for the faults that are ours.
         span.record("otel.status_code", "Error");
     }
 
@@ -151,17 +131,10 @@ pub(crate) async fn observe(instruments: Instruments, request: Request, next: Ne
     response
 }
 
-/// One line per answered request, at the level the status earns.
-///
-/// **Flat fields, not the nested `req`/`res` the other service logs.** What a
-/// deployment reads is that each line is one parseable object; the names inside
-/// it are this process's to choose, and `tracing` already spells them.
-///
-/// No header is logged at all, which is why nothing here redacts one.
+/// One line per answered request, at the level the status earns. No header is
+/// logged, which is why nothing here redacts one.
 fn line(span: &tracing::Span, status: StatusCode, latency_ms: u64) {
-    // Inside the span, so the formatter puts the method, the route, the status
-    // and the trace id on the line beside this. Only the latency is the event's
-    // own, because only the latency is not a property of the request.
+    // Inside the span, so the formatter puts its fields on the line too.
     let _entered = span.enter();
 
     if status.is_server_error() {
@@ -195,8 +168,7 @@ mod tests {
     const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const CALLERS_TRACE: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 
-    /// Shaped like the router this binary serves: one parameterised route, one
-    /// probe, one way to fail.
+    /// Shaped like the router this binary serves.
     fn router(instruments: Instruments) -> Router {
         Router::new()
             .route("/v1/positions/{user}", get(async || "[]"))
@@ -272,9 +244,8 @@ mod tests {
 
     #[tokio::test]
     async fn names_every_instrument_this_binary_records() {
-        // The whole set, not a lookup of one name. An instrument that arrives
-        // without a dashboard panel, or leaves with one still pointed at it,
-        // fails here rather than showing up as a flat line nobody explains.
+        // The whole set, not a lookup: an instrument arriving without a panel,
+        // or leaving with one pointed at it, fails here.
         let (exporter, _provider) = measured(&["/v1/positions/0xabc", "/boom"]).await;
 
         assert_eq!(
@@ -285,9 +256,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_route_is_the_template_and_never_the_path() {
-        // The cardinality rule. A route is a bounded set this service declares;
-        // a path is whatever a stranger sent, so recording the second would let
-        // anyone mint unbounded series by varying a URL.
+        // The cardinality rule: recording the path would let anyone mint
+        // unbounded series by varying a URL.
         let (exporter, _provider) = measured(&["/v1/positions/0xdeadbeef"]).await;
         let points = points(&exporter);
 
@@ -306,8 +276,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_unmatched_path_reports_no_route_at_all() {
-        // The same rule from the other side: an absent attribute rather than
-        // one holding the URL that missed.
+        // The same rule from the other side.
         let (exporter, _provider) = measured(&["/not-a-route"]).await;
         let points = points(&exporter);
 
@@ -346,8 +315,6 @@ mod tests {
 
     #[tokio::test]
     async fn probes_are_not_timed() {
-        // They arrive every few seconds from compose, a load balancer and an
-        // orchestrator. Left in, the latency graph is a graph of answering them.
         let (exporter, _provider) = measured(&["/health/live"]).await;
 
         assert!(instrument_names(&exporter).is_empty());
@@ -379,8 +346,7 @@ mod tests {
 
     #[test]
     fn an_unmatched_request_is_named_by_its_method_alone() {
-        // The other half of the cardinality rule: a span name is a low-cardinality
-        // label too, so it cannot be built from a URL that missed.
+        // A span name is a low-cardinality label too.
         let spans = observed(router(Instruments::new()), request("/not-a-route")).spans;
 
         assert_eq!(spans.len(), 1, "{spans:?}");
@@ -390,8 +356,6 @@ mod tests {
 
     #[test]
     fn only_a_fault_of_ours_marks_the_span_failed() {
-        // A refusal is the caller's fault and a correct answer by this service.
-        // Marking those failed leaves no signal for the ones that are ours.
         let refused = observed(router(Instruments::new()), request("/not-a-route")).spans;
         let broken = observed(router(Instruments::new()), request("/boom")).spans;
 
@@ -406,9 +370,7 @@ mod tests {
 
     #[test]
     fn every_line_a_request_emits_carries_its_trace_id() {
-        // The job `instrumentation-pino` did for one dependency on the other
-        // side: a log line and a span that name the same trace, so one leads to
-        // the other. Without it the two streams are unrelated.
+        // A line and a span naming the same trace, so one leads to the other.
         let observed = observed(router(Instruments::new()), request("/v1/positions/0xabc"));
         let trace = observed.spans[0].span_context.trace_id().to_string();
 
@@ -428,8 +390,7 @@ mod tests {
 
     #[test]
     fn a_line_is_warned_for_a_refusal_and_errored_for_a_fault() {
-        // `pino-http`'s mapping, which is what a log-level alert is written
-        // against: a 404 is somebody else's mistake and a 500 is ours.
+        // What a log-level alert is written against.
         let refused = observed(router(Instruments::new()), request("/not-a-route")).logged;
         let broken = observed(router(Instruments::new()), request("/boom")).logged;
         let served = observed(router(Instruments::new()), request("/v1/positions/0xa")).logged;
@@ -441,8 +402,6 @@ mod tests {
 
     #[test]
     fn a_probe_is_not_logged_at_all() {
-        // They arrive every few seconds from three places at once. Logged, they
-        // bury everything a stream is read for.
         let logged = observed(router(Instruments::new()), request("/health/live")).logged;
 
         assert!(logged.is_empty(), "{logged}");

@@ -13,22 +13,15 @@ use opentelemetry_semantic_conventions::resource::SERVICE_NAME;
 
 use crate::settings::{Sampling, Settings};
 
-/// The SDK's default is 60 seconds. A gauge sampled once a minute cannot show a
-/// backfill catching up, which is the thing these metrics exist for.
+/// The SDK's default is 60s, too coarse to show a backfill catching up.
 const EXPORT_INTERVAL: Duration = Duration::from_secs(15);
 
-/// One posted batch. Long, because the alternative to waiting is losing the
-/// batch, and short enough that a wedged collector cannot hold the drain open.
+/// Long enough not to lose a batch, short enough not to hold the drain open.
 const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Posts a batch, from a thread that has no runtime of its own.
-///
-/// The SDK's batch processors run on plain OS threads and drive the export with
-/// `futures_executor::block_on`. Hyper's timers and sockets need a Tokio
-/// reactor, and there is none on that thread — measured, it panics with "there
-/// is no reactor running" on the first export. So the work is spawned back onto
-/// the runtime the binary already has, and only the waiting happens on the batch
-/// thread.
+/// Posts a batch from a batch-processor thread, which has no runtime of its
+/// own: hyper needs a reactor, so the work is spawned back onto the binary's.
+/// Without this it panics with "there is no reactor running" on first export.
 #[derive(Debug)]
 struct Client {
     inner: Arc<opentelemetry_http::hyper::HyperClient>,
@@ -60,17 +53,13 @@ impl HttpClient for Client {
     }
 }
 
-/// **The signal path is ours to add.** `with_endpoint` is taken verbatim as the
-/// full URL — measured, a collector configured with the base address alone
-/// receives every batch on `/` and answers 404, in the background, for the life
-/// of the process. Only the value read from `OTEL_EXPORTER_OTLP_ENDPOINT` has
-/// the path appended for it, and this one is read through `config` instead.
+/// `with_endpoint` is taken verbatim, so the signal path is ours to add: given
+/// the base address alone, every batch posts to `/` and is 404ed in silence.
 fn address(endpoint: &str, signal: &str) -> String {
     format!("{}/v1/{signal}", endpoint.trim_end_matches('/'))
 }
 
-/// What every signal is grouped by. `service.name` and nothing else, as the
-/// service this replaces sets.
+/// What every signal is grouped by.
 fn resource(service: &str) -> Resource {
     Resource::builder()
         .with_attribute(opentelemetry::KeyValue::new(

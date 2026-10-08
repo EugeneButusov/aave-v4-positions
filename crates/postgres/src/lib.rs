@@ -1,15 +1,8 @@
 //! Connecting to Postgres.
 //!
 //! Connectivity, for the reason `clickhouse-client` gives, and the two reads
-//! that carry a span. One way in: [`build_pool`], then [`connection`] for each
-//! connection wanted — one, for a job that applies migrations and exits, or one
-//! per request for a service.
-//!
-//! **[`Traced`] is here because the span cannot be**, and that is the only
-//! reason: `tokio-postgres` opens none, so a read issued straight against the
-//! driver is a silent gap in a trace. Which door a caller takes is the whole of
-//! the choice — [`Traced`] for a read, [`connection`] for the rest of the
-//! driver's surface — and `Traced` does not hand the second one out.
+//! that carry a span. One way in: [`build_pool`], then [`Traced`] for a read or
+//! [`connection`] for the rest of the driver's surface.
 
 mod error;
 mod health;

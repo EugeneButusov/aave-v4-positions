@@ -62,12 +62,8 @@ impl IntoResponse for BoxedAppError {
 /// stranger.
 impl<E: Error + Send + 'static> AppError for E {
     fn response(&self) -> Response {
-        // The chain, not just the head. A store names its own stage and leaves
-        // the cause to `source()`, so `%self` alone says "the sync status read
-        // failed" and never whether Postgres was unreachable or the query was
-        // refused. `ops` already reconciles the two error conventions in this
-        // tree for the probe report, and a second walk written here would be a
-        // second answer to the same question.
+        // The chain, not just the head: a store names its own stage and leaves
+        // the cause to `source()`, so `%self` never says which half failed.
         tracing::error!(error = %ops::error_message_with_causes(self), "a request failed");
 
         (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
@@ -130,12 +126,8 @@ mod tests {
 
     #[test]
     fn the_log_line_carries_the_cause_and_the_wire_still_does_not() {
-        // The store names its stage and leaves the rest to `source()`, so
-        // without the walk this line says only which read failed and never
-        // whether Postgres was unreachable or the query was refused.
-        //
         // `interesting` because the case above reaches this same callsite with
-        // nothing in scope, which is enough to settle it off for the process.
+        // nothing in scope, which settles it off for the process.
         crate::test_support::interesting();
         let written = crate::test_support::Written::default();
         let subscriber = tracing_subscriber::fmt()

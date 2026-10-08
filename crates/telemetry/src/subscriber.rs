@@ -9,8 +9,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use crate::provider::{self, Providers};
 use crate::settings::Settings;
 
-/// The instrumentation scope every span and instrument this workspace records
-/// is attributed to.
+/// The instrumentation scope everything here is attributed to.
 pub const SCOPE: &str = "aave-v4-positions";
 
 #[derive(Debug, thiserror::Error)]
@@ -29,18 +28,14 @@ pub struct Telemetry(Option<Providers>);
 impl Telemetry {
     /// Flushes what is batched and stops the three exporters.
     ///
-    /// **Blocking, and deliberately called last.** Each provider waits for a
-    /// thread that is posting the final batch through the runtime, so this must
-    /// not run on the last thread able to serve that post — `spawn_blocking` is
-    /// what the caller uses.
+    /// **Blocking.** Each provider waits on a thread posting its final batch
+    /// through the runtime, so a caller runs this off a worker.
     pub fn shutdown(self) {
         let Some(providers) = self.0 else {
             return;
         };
 
-        // Reported rather than propagated: the process is already stopping, and
-        // a failure to export the last batch is not a reason to change how it
-        // exits.
+        // The process is already stopping; a lost last batch changes nothing.
         if let Err(error) = providers.traces.shutdown() {
             tracing::warn!(%error, "the trace exporter did not stop cleanly");
         }
@@ -76,9 +71,8 @@ pub fn init(settings: Settings) -> Result<Telemetry, Error> {
 
     opentelemetry::global::set_tracer_provider(providers.traces.clone());
     opentelemetry::global::set_meter_provider(providers.meters.clone());
-    // W3C in and out. Inbound it is what continues a caller's trace; outbound it
-    // is what the ClickHouse driver reads to put `traceparent` on its own
-    // request, which is why this is a global rather than a field.
+    // A global rather than a field because the ClickHouse driver reads it to
+    // put `traceparent` on its own requests.
     opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
     tracing_subscriber::registry()
@@ -94,26 +88,20 @@ pub fn init(settings: Settings) -> Result<Telemetry, Error> {
     Ok(Telemetry(Some(providers)))
 }
 
-/// **The exporters' own diagnostics do not become log records.** They are
-/// `tracing` events like any other, and exporting them produces more of them:
-/// one batch posted is several lines, which is another batch. stdout still
-/// carries them, which is where a broken exporter is meant to be read.
+/// Keeps the exporters' own diagnostics out of the log bridge: exporting them
+/// produces more of them, and one posted batch is several lines. stdout still
+/// carries them.
 fn ours(metadata: &tracing::Metadata<'_>) -> bool {
     !metadata.target().starts_with("opentelemetry")
 }
 
 /// One JSON object per line, on stdout.
-///
-/// `tracing-subscriber`'s own formatter rather than anything of ours: what a
-/// deployment reads is that each line parses, and the fields a line carries are
-/// `tracing`'s to name.
 fn formatter<S>(settings: &Settings) -> Box<dyn Layer<S> + Send + Sync>
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
     if settings.pretty {
-        // Local development only. Anywhere else this must stay off so each line
-        // remains a single parseable object.
+        // Local only: anywhere else a line has to stay one parseable object.
         Box::new(tracing_subscriber::fmt::layer().pretty())
     } else {
         Box::new(tracing_subscriber::fmt::layer().json())
@@ -167,8 +155,7 @@ mod tests {
         }
     }
 
-    /// Emits both an exporter's line and a service's, through the same filter
-    /// the log bridge carries, and returns what survived it.
+    /// What survives the filter the log bridge carries.
     fn through_the_filter() -> String {
         let captured = Captured::default();
         let layer = tracing_subscriber::fmt::layer()
@@ -187,9 +174,6 @@ mod tests {
 
     #[test]
     fn the_exporters_own_diagnostics_are_not_exported() {
-        // Each posted batch logs several lines, and exporting those is another
-        // batch. stdout still carries them, which is where a broken exporter is
-        // meant to be read.
         let survived = through_the_filter();
 
         assert!(survived.contains("request completed"), "{survived}");
@@ -199,17 +183,14 @@ mod tests {
 
     #[test]
     fn a_process_with_no_runtime_is_told_so_rather_than_panicking() {
-        // The exporters post through the binary's runtime. Reaching for one
-        // that is not there is a configuration error at boot, not a panic on
-        // the first batch half a minute later.
+        // A configuration error at boot, not a panic on the first batch.
         assert!(matches!(init(settings(false)), Err(Error::Runtime)));
     }
 
     #[test]
     fn disabled_asks_for_no_runtime_and_holds_no_exporter() {
-        // Not an async test, deliberately: the disabled path must reach the
-        // formatter without ever looking for a runtime to export from. It is
-        // also the one case here that installs the process-wide subscriber.
+        // Not async, deliberately: the disabled path must never look for a
+        // runtime. Also the one case here that installs a global subscriber.
         let telemetry = init(settings(true)).expect("the formatter needs nothing");
 
         assert!(telemetry.0.is_none());
