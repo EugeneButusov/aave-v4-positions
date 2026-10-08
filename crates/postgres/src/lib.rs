@@ -8,13 +8,13 @@
 //! **[`Traced`] is here because the span cannot be**, and that is the only
 //! reason: `tokio-postgres` opens none, so a read issued straight against the
 //! driver is a silent gap in a trace. A caller that reaches past it gets the
-//! driver's own `query` and no span, which is the shape this exists to make
-//! deliberate rather than accidental.
+//! driver's own `query` and no span, which the `_traced` suffix is there to make
+//! visible at the call site rather than only in the imports.
 
 mod error;
 mod health;
 mod pool;
-mod read;
+mod query;
 
 /// The driver's client, which a [`Connection`] derefs to.
 ///
@@ -25,4 +25,4 @@ pub type Client = tokio_postgres::Client;
 pub use error::Error;
 pub use health::ping;
 pub use pool::{Connection, Pool, build_pool, connection};
-pub use read::Traced;
+pub use query::Traced;

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
-use postgres::{Pool, Traced, connection};
+use postgres::{Pool, Traced as _, connection};
 use tokio_postgres::Row;
 
 use crate::{Error, TokenLabel, TokenMetadataStore};
@@ -35,7 +35,7 @@ impl TokenMetadataStore for PostgresTokenMetadataStore {
         let client = connection(&self.pool).await?;
         // `bigint`, so the parameter is signed however the port spells it.
         let rows = client
-            .read("SELECT token_metadata", LABELS, &[&i64::from(chain_id)])
+            .query_traced("SELECT token_metadata", LABELS, &[&i64::from(chain_id)])
             .await?;
 
         rows.iter().map(label).collect()

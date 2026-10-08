@@ -25,9 +25,10 @@ use crate::Client;
 /// [`Connection`](crate::Connection)'s `Deref`, which is what every store holds.
 ///
 /// **The methods cannot be called `query`.** Inherent methods win resolution, so
-/// `client.query(name, sql, params)` finds the driver's two-argument one and
-/// fails on arity rather than arriving here. `read` and `read_opt` mirror its
-/// vocabulary without colliding with it.
+/// `client.query(name, sql, params)` would find the driver's two-argument one
+/// and fail on arity rather than arriving here. The suffix is what the method
+/// adds, which also puts the difference at the call site: `query_traced` beside
+/// `query` says which one a reader is looking at without going to the imports.
 ///
 /// **`name` is `{operation} {target}`** — the shape the specification spells for
 /// a database span name — and it is given rather than derived, because deriving
@@ -46,7 +47,7 @@ pub trait Traced {
     /// # Errors
     ///
     /// Whatever the driver says about the statement or the connection under it.
-    fn read(
+    fn query_traced(
         &self,
         name: &'static str,
         sql: &'static str,
@@ -57,8 +58,8 @@ pub trait Traced {
     ///
     /// # Errors
     ///
-    /// As [`read`](Self::read).
-    fn read_opt(
+    /// As [`query_traced`](Self::query_traced).
+    fn query_opt_traced(
         &self,
         name: &'static str,
         sql: &'static str,
@@ -67,7 +68,7 @@ pub trait Traced {
 }
 
 impl Traced for Client {
-    async fn read(
+    async fn query_traced(
         &self,
         name: &'static str,
         sql: &'static str,
@@ -78,7 +79,7 @@ impl Traced for Client {
         self.query(sql, params).instrument(span(name, sql)).await
     }
 
-    async fn read_opt(
+    async fn query_opt_traced(
         &self,
         name: &'static str,
         sql: &'static str,
@@ -139,7 +140,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_read_is_one_client_span_naming_what_it_read() {
+    async fn a_traced_query_is_one_client_span_naming_what_it_read() {
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
@@ -155,7 +156,7 @@ mod tests {
             .finish();
 
         client
-            .read("SELECT pg_tables", TABLES, &[&"public"])
+            .query_traced("SELECT pg_tables", TABLES, &[&"public"])
             .with_subscriber(subscriber)
             .await
             .unwrap();
