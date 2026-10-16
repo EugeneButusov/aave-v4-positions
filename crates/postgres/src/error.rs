@@ -1,4 +1,4 @@
-/// What connecting can fail at.
+/// What a connection and the reads it carries can fail at.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("could not parse the Postgres URL")]

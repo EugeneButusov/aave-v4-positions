@@ -7,7 +7,7 @@ pub enum Error {
     /// refused. Which of the two is in the cause, and `ops`'s chain formatter is
     /// what puts it on the line the API logs.
     #[error("the sync status read failed")]
-    Read(#[from] postgres::Error),
+    ReadFailed(#[from] postgres::Error),
 
     /// A column held something its type says it cannot.
     ///
