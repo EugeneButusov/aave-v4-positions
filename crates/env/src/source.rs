@@ -8,36 +8,25 @@
 
 use std::collections::HashMap;
 
-/// Where a process's variables are read from.
-///
-/// **Owned here rather than by a `main` that mutates the environment before
-/// anything reads it.** A binary asks its config for a `Config`; what that is
-/// built out of is this crate's answer, and a deployment can change it.
+/// Where a process's variables are read from. Owned here rather than by a
+/// `main` that mutates the environment before anything reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     /// The process environment alone, which is what a deployment injects. A
     /// `.env` sitting on disk is not consulted.
     Process,
-    /// The process environment, with a `.env` beside the working directory
-    /// filling in what it leaves out — never replacing it. An exported variable
-    /// beats the file, which is what makes the file a default rather than an
-    /// override.
+    /// The process environment, with a `.env` filling in what it leaves out and
+    /// never replacing it — so the file is a default, not an override.
     ProcessAndFile,
 }
 
 impl Source {
-    /// What `APP_ENV` asks for.
+    /// What `APP_ENV` asks for. The one variable this crate will not read from
+    /// a file, because it decides whether there is a file to read.
     ///
-    /// **The one variable this crate will not read from a file**, because it
-    /// decides whether there is a file to read. It comes from the process
-    /// environment or not at all.
-    ///
-    /// **Where the TypeScript is deliberately not matched.** Nest skips the file
-    /// only when `NODE_ENV` is `test` — a production deployment reads it, and
-    /// would honour one that reached the image. Nothing ships one here:
-    /// `.dockerignore` excludes `.env` and `.env.*`. This moves that guarantee
-    /// out of a packaging rule and into the process, so a file arriving by some
-    /// route nobody predicted still changes nothing.
+    /// Deliberately stricter than the TypeScript, which skips the file only
+    /// under `NODE_ENV=test`: the guarantee moves out of `.dockerignore` and
+    /// into the process.
     #[must_use]
     pub fn from_env() -> Self {
         Self::pick(std::env::var("APP_ENV").ok().as_deref())
@@ -50,9 +39,8 @@ impl Source {
 
         match self {
             Self::Process => process,
-            // Ignoring the error, because the usual one is that there is no
-            // file. A malformed one is silent too, which is a local-development
-            // problem with a local-development symptom.
+            // The usual error is that there is no file. A malformed one is
+            // silent too, which is a local problem with a local symptom.
             Self::ProcessAndFile => match dotenvy::dotenv_iter() {
                 Ok(file) => merge(process, file.flatten()),
                 Err(_) => process,
@@ -60,12 +48,10 @@ impl Source {
         }
     }
 
-    /// Absent is local, which is the default the TypeScript's `NODE_ENV` also
-    /// carries and what the repository's `cp .env.example .env` expects.
+    /// Absent is local, as the TypeScript's `NODE_ENV` also has it.
     ///
-    /// A spelling nobody recognises reads the file as well. That is the safe
-    /// side of the mistake: a deployment that fat-fingers this has no file for
-    /// the fallback to find, while a developer who does keeps working.
+    /// An unrecognised spelling reads the file too, which is the safe side: a
+    /// deployment that fat-fingers it has no file to find.
     fn pick(value: Option<&str>) -> Self {
         match value {
             Some("production" | "test") => Self::Process,
@@ -74,8 +60,7 @@ impl Source {
     }
 }
 
-/// The file fills gaps and nothing else, which is the whole contract a
-/// deployment is owed.
+/// The file fills gaps and nothing else.
 fn merge(
     mut process: HashMap<String, String>,
     file: impl Iterator<Item = (String, String)>,
@@ -88,8 +73,7 @@ fn merge(
 
 #[cfg(test)]
 mod tests {
-    //! The two pure halves of the decision: which source a deployment asked
-    //! for, and what merging owes the process that already has its variables.
+    //! Which source a deployment asked for, and what merging leaves alone.
     use super::*;
 
     fn pairs(items: &[(&str, &str)]) -> HashMap<String, String> {
@@ -101,9 +85,8 @@ mod tests {
 
     #[test]
     fn a_deployments_variables_beat_the_file() {
-        // The guarantee a deployment is owed, and the reason `merge` inserts
-        // rather than extends: an injected variable is never replaced by a file
-        // that reached the image by some route nobody predicted.
+        // Why `merge` inserts rather than extends: an injected variable is
+        // never replaced by a file that reached the image.
         let merged = merge(
             pairs(&[("API_PORT", "3000")]),
             pairs(&[("API_PORT", "9999")]).into_iter(),
@@ -131,9 +114,7 @@ mod tests {
 
     #[test]
     fn anything_else_reads_one() {
-        // Including a spelling nobody recognises, which is the safe side of
-        // that mistake: a deployment fat-fingering it has no file to find, and
-        // a developer who does keeps working.
+        // Including an unrecognised spelling, the safe side of the mistake.
         for value in [None, Some("development"), Some("prodution"), Some("")] {
             assert_eq!(Source::pick(value), Source::ProcessAndFile, "{value:?}");
         }

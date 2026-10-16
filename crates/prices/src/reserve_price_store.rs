@@ -6,22 +6,16 @@ use crate::{Error, ReserveKey, ReservePrice};
 
 /// Reads what Aave prices each reserve at.
 ///
-/// **No pagination.** A Spoke lists fourteen reserves on mainnet, the whole
-/// dimension fits in one response, and the read path wants all of it at once.
+/// No pagination: a Spoke lists fourteen reserves on mainnet.
 #[async_trait::async_trait]
 pub trait ReservePriceStore: Send + Sync {
     /// Every price on this chain, keyed by [`ReserveKey`].
     ///
-    /// **The whole dimension, deliberately not the reserves on a page.** Taking
-    /// a page's keys would make this depend on the page and force it to run
-    /// after the ClickHouse query; keyed only by chain it runs *beside* it, in
-    /// the same `join!` the labels read already uses — a third round trip that
-    /// costs no wall clock.
+    /// The whole dimension, not the reserves on a page: keyed by chain alone it
+    /// runs beside the ClickHouse query, in the same `join!` as the labels.
     ///
-    /// A reserve with no row is **absent from the map**, and the read path
-    /// serves null for it rather than a zero. A price of zero is not a price:
-    /// the oracle reverts on one (§7.4), so a zero here could only ever be our
-    /// own invention.
+    /// A reserve with no row is absent from the map and served as null rather
+    /// than a zero, which the oracle reverts on rather than answer (§7.4).
     ///
     /// # Errors
     ///

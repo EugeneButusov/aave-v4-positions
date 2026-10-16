@@ -1,13 +1,11 @@
 //! The statement one page is read with.
 //!
-//! One literal with nothing substituted. Both clauses that read like they
-//! should be optional — the Spoke filter and the resume key — have
-//! unconditional shapes that measure the same as omitting them, so there is no
-//! assembled part and no branch that only one caller takes.
+//! One literal with nothing substituted. The Spoke filter and the resume key
+//! both have unconditional shapes that measure the same as omitting them, so
+//! there is no assembled part and no branch only one caller takes.
 //!
-//! No query builder: none of them speaks ClickHouse's `{name:Type}` parameters,
-//! and this SQL has to stay diffable against `clickhouse-position-store.ts`
-//! with the `EXPLAIN` findings beside the shapes they justify.
+//! No query builder: none speaks ClickHouse's `{name:Type}` parameters, and
+//! this has to stay diffable against `clickhouse-position-store.ts`.
 
 use alloy_primitives::Address;
 
@@ -119,11 +117,8 @@ LEFT JOIN hub_assets_as_of(cut = {valuedAt:DateTime}) AS a
 -- before 3 — which then hands the next page a key from the wrong row.
 ORDER BY p.spoke, p.reserve_id";
 
-/// Above every address, so it is the open end of the range.
-///
-/// The column holds `lower(address)` — `0x` and forty hex digits — and
-/// ClickHouse compares strings bytewise, so the highest Unicode scalar sorts
-/// above all of them.
+/// Above every address, so it is the open end of the range: the column holds
+/// `lower(address)` and ClickHouse compares strings bytewise.
 const ABOVE_EVERY_SPOKE: char = '\u{10FFFF}';
 
 /// The bounds `{spokeFrom}` and `{spokeTo}` take: one Spoke twice, or the whole
@@ -138,9 +133,8 @@ pub(super) fn spoke_bounds(spoke: Option<Address>) -> (String, String) {
     )
 }
 
-/// The statement, before any server sees it. Nothing here opens a connection:
-/// this module is a constant and the bounds that go with it, and what they do
-/// to a database is [`super::position_store`]'s to prove.
+/// The statement, before any server sees it. What it does to a database is
+/// [`super::position_store`]'s to prove.
 #[cfg(test)]
 mod tests {
     use alloy_primitives::Address;
@@ -169,17 +163,14 @@ mod tests {
 
     /// One added to the SQL without a matching `param` call is a server error
     /// on the next page, so the set is spelled out rather than counted.
-    ///
-    /// Comments are stripped first: they cite `{spoke:String}` while explaining
-    /// the shape this is not, and a parameter the server never sees is not one
-    /// the store has to bind.
+    /// Comments are stripped first, because they cite a `{spoke:String}` the
+    /// server never sees.
     #[test]
     fn names_only_the_parameters_the_store_binds() {
         assert_eq!(
             parameters(STATEMENT),
             [
-                // First, because the fold is selected by it before it is
-                // filtered by anything else.
+                // First, because the fold is selected by it.
                 "valuedAt",
                 "chainId",
                 "user",
@@ -212,21 +203,15 @@ mod tests {
         );
     }
 
-    /// Shares cannot go negative on chain, so a negative fold is drift and
-    /// should surface as a wrong number rather than vanish behind the filter
-    /// that hides closed positions.
+    /// A negative fold is drift and should surface as a wrong number rather
+    /// than vanish behind the filter that hides closed positions.
     #[test]
     fn hides_a_closed_position_without_hiding_a_negative_one() {
         assert!(STATEMENT.contains("AND (supplied_shares != 0 OR drawn_shares != 0)"));
     }
 
-    /// Every `{name:Type}` in the executable half, in the order it appears.
-    /// Distinct names, in the order they first appear.
-    ///
-    /// One `param` call covers every occurrence, so a name used by more than one
-    /// view — `valuedAt` is read by all three — is one thing to bind and belongs
-    /// in the list once. The question this answers is which names exist, not how
-    /// many times the statement mentions them.
+    /// Distinct names, in the order they first appear: one `param` call covers
+    /// every occurrence, so `valuedAt` belongs in the list once.
     fn parameters(statement: &str) -> Vec<&str> {
         let mut seen = Vec::new();
         for name in statement

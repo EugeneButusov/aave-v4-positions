@@ -1,9 +1,8 @@
 //! What comes back, and what it means.
 //!
 //! One row of the join, and the walk from it to a [`Position`]. Every wide
-//! value arrives as a decimal string — `toString` in the projection and a
-//! 256-bit integer here are the two halves of keeping a balance past 2^53
-//! exact (§7.5) — so this is also where a corrupt fold would surface.
+//! value arrives as a decimal string, which with a 256-bit integer here is what
+//! keeps a balance past 2^53 exact (§7.5).
 
 use alloy_primitives::{Address, I256, U256};
 use clickhouse_client::clickhouse;
@@ -14,12 +13,9 @@ use crate::valuation::{AssetState, PositionShares, Valuation};
 
 /// One row as ClickHouse renders it.
 ///
-/// The nullability is the server's, not a guess — `DESCRIBE` over the statement
-/// reports exactly this. It matters that `asset_id` and `hub` are **not**
-/// nullable: a `LEFT JOIN` miss fills a non-nullable column with its default,
-/// so an unresolved reserve arrives as `"0"` and `""` rather than as nothing.
-/// What actually says the join missed is `underlying`, which is nullable in
-/// `hub_assets_as_of` and therefore null when there is no right-hand row.
+/// The nullability is the server's — `DESCRIBE` over the statement reports
+/// exactly this. `asset_id` and `hub` are not nullable, so a `LEFT JOIN` miss
+/// fills them with `"0"` and `""`; what says the join missed is `underlying`.
 #[derive(clickhouse::Row, Deserialize)]
 pub(super) struct Row {
     chain_id: u32,
@@ -91,11 +87,9 @@ impl Row {
 
     /// What the position is worth at `at`, or `None` if it cannot be said.
     ///
-    /// **A negative share balance is `None` rather than a refusal.** Shares
-    /// cannot go negative on chain, so one that has means the fold is wrong —
-    /// and the row still reports the signed balance that says so. Valuing it is
-    /// what cannot be done: `U256` holds no such number, and a negative debt is
-    /// not something a caller can act on either.
+    /// A negative share balance is `None` rather than a refusal: the row still
+    /// reports the signed balance that says the fold is wrong, but `U256` holds
+    /// no such number to value.
     fn to_valuation(&self, at: u64) -> Result<Option<Valuation>, Error> {
         let (Some(state), Some(shares)) = (self.to_asset_state()?, self.to_shares()?) else {
             return Ok(None);
@@ -156,11 +150,9 @@ fn non_negative(value: I256) -> Option<U256> {
     (!value.is_negative()).then(|| value.into_raw())
 }
 
-/// Not [`Address::parse_checksummed`]: the column is lower-cased by the
-/// projection, so EIP-55 validation would reject what the fold stores. The
-/// empty string a `LEFT JOIN` miss leaves in a non-nullable column does fail
-/// here, which is what keeps an unresolved reserve from reporting the zero
-/// address.
+/// Not [`Address::parse_checksummed`]: the projection lower-cases the column,
+/// so EIP-55 validation would reject what the fold stores. The empty string a
+/// `LEFT JOIN` miss leaves does fail here, which is the point.
 fn parse_address(column: &'static str, value: &str) -> Result<Address, Error> {
     value.parse::<Address>().map_err(|_| Error::Malformed {
         column,
@@ -203,13 +195,11 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
     })
 }
 
-/// The mapping, with no server in it. A `Row` is what ClickHouse sends; these
-/// build one and say what it becomes.
+/// The mapping, with no server in it.
 ///
-/// Two of these are unreachable through a query: the fold cannot produce a
-/// column that fails to parse, nor a negative share balance. What a `LEFT JOIN`
-/// miss actually fills a column with is the other way round, and stays a live
-/// case in [`super::super::position_store`].
+/// Two cases are unreachable through a query — the fold can produce neither an
+/// unparseable column nor a negative share balance. The `LEFT JOIN` miss is
+/// live, and stays a case in [`super::super::position_store`].
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -219,9 +209,8 @@ mod tests {
     use crate::store::Error;
     use crate::store::fixtures::{ALICE, CHECKPOINT_AT, HUB, HUGE, RAY, SPOKE, USDC, YEAR};
 
-    /// One RAY per share, a supply side of exactly 1e6 against 1e6, and nothing
-    /// drawn — so every amount below is the share count and the arithmetic is
-    /// not what is under test.
+    /// One RAY per share and 1e6 against 1e6, so every amount below is the
+    /// share count and the arithmetic is not under test.
     fn row() -> Row {
         Row {
             chain_id: 1,
@@ -263,9 +252,8 @@ mod tests {
 
         #[test]
         fn resolves_the_reserve_from_the_joined_columns() {
-            // reserveId is a per-Spoke index and means nothing on its own (§1).
-            // AddReserve gives it a Hub and an assetId; the Hub's AddAsset gives
-            // that an ERC-20 and its decimals. Neither contract has both halves.
+            // A per-Spoke index on its own (§1): AddReserve gives it a Hub and
+            // an assetId, the Hub's AddAsset the ERC-20 and its decimals.
             assert_eq!(
                 row().to_position(0).unwrap().asset,
                 Some(PositionAsset {
@@ -297,8 +285,7 @@ mod tests {
 
         #[test]
         fn reports_no_value_when_the_hub_has_never_checkpointed() {
-            // No UpdateAsset means no index, and without an index there is no
-            // arithmetic to do — so no number is offered.
+            // No UpdateAsset means no index, so no number is offered.
             let uncheckpointed = Row {
                 drawn_index: None,
                 checkpoint_at: None,
@@ -315,10 +302,7 @@ mod tests {
 
         #[test]
         fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
-            // A share balance arriving as a JSON number has already lost its
-            // tail by the time it reaches this process (§7.5). `toString` in the
-            // projection and a 256-bit integer here are the two halves of
-            // keeping it.
+            // As a JSON number this has already lost its tail (§7.5).
             let huge = Row {
                 supplied_shares: HUGE.to_owned(),
                 ..row()
@@ -353,9 +337,8 @@ mod tests {
             );
         }
 
-        /// Unreachable from a fold the migrations built — `toInt256` refuses on
-        /// the insert rather than storing something unparseable — so this is
-        /// the only place the refusal is exercised at all.
+        /// Unreachable from a fold the migrations built, since `toInt256`
+        /// refuses on the insert — so the only place the refusal is exercised.
         #[test]
         fn names_the_column_that_did_not_parse() {
             let corrupt = Row {
@@ -388,9 +371,7 @@ mod tests {
 
         #[test]
         fn turns_supplied_shares_into_a_token_amount() {
-            // Valued at the checkpoint itself, so the index has not moved: the
-            // asset holds 1,000,000 shares against 1,000,000 of underlying, and
-            // 1,000 shares redeem for 1,000.
+            // At the checkpoint itself, so 1,000 shares redeem for 1,000.
             let value = row().to_position(CHECKPOINT_AT).unwrap().value.unwrap();
 
             assert_eq!(value.supplied_amount, U256::from(1000));
@@ -407,8 +388,7 @@ mod tests {
                 ..row()
             };
 
-            // The whole reason a share balance is not a balance (§5): the row
-            // is the same one both times.
+            // Why a share balance is not a balance (§5): same row both times.
             let now = borrower.to_position(CHECKPOINT_AT).unwrap();
             let later = borrower.to_position(CHECKPOINT_AT + YEAR).unwrap();
 
@@ -419,9 +399,7 @@ mod tests {
 
         #[test]
         fn keeps_the_shares_and_the_flow_beside_the_amount() {
-            // Cost basis and current value answer different questions, and the
-            // difference between them is interest — so neither replaces the
-            // other.
+            // The difference between the two is interest.
             let position = row().to_position(CHECKPOINT_AT).unwrap();
 
             assert_eq!(position.supplied_shares, I256::try_from(1000).unwrap());
@@ -429,8 +407,7 @@ mod tests {
             assert!(position.value.is_some());
         }
 
-        /// Shares cannot go negative on chain, so no query can produce this —
-        /// and a fold that has means the row is worth reporting anyway.
+        /// No query can produce this, and a fold that has is worth reporting.
         #[test]
         fn refuses_to_value_a_negative_balance_but_still_reports_it() {
             let drifted = Row {

@@ -53,7 +53,7 @@ expression: document().await
             ]
           },
           "symbol": {
-            "description": "The token's own `symbol()`. **A label, not an identity** — nothing stops\ntwo tokens claiming the same one. `underlying` is the identity. Null when\nthe token has no `symbol()`, which ERC-20 permits, and also in the window\nbefore enrichment has reached a newly listed asset.",
+            "description": "The token's own `symbol()`. A label, not an identity — nothing stops two\ntokens claiming the same one, and `underlying` is the identity. Null\nwhen the token has no `symbol()`, which ERC-20 permits, and in the\nwindow before enrichment has reached a newly listed asset.",
             "type": [
               "string",
               "null"
@@ -113,14 +113,14 @@ expression: document().await
             ]
           },
           "net_supplied_amount": {
-            "description": "Net principal supplied, in asset units. A *flow*, not a balance: it sums\nwhat the events carried, and between events the interest index accrues\nwhile emitting nothing. Null on the same terms as `supplied_shares`.",
+            "description": "Net principal supplied, in asset units. A *flow*, not a balance: it sums\nwhat the events carried, and the interest index accrues between events\nwhile emitting nothing. Null on the same terms as `supplied_shares`.",
             "type": [
               "string",
               "null"
             ]
           },
           "premium_offset_ray": {
-            "description": "Premium offset, as a ray ratio. **Never null**, unlike the share fields\nbeside it: a ray's scale is the protocol's fixed 27 rather than the\nasset's, so it can be rendered whether or not the registry has resolved\nthe reserve.",
+            "description": "Premium offset, as a ray ratio. Never null, unlike the share fields: a\nray's scale is the protocol's fixed 27 rather than the asset's, so it\nrenders whether or not the registry has resolved the reserve.",
             "type": "string"
           },
           "premium_shares": {
@@ -131,7 +131,7 @@ expression: document().await
             ]
           },
           "reserve_id": {
-            "description": "The Spoke's own index for the reserve, and the only asset identity a\nposition has today. Not a protocol-wide asset id and not a token address\n— no Spoke event carries one. The same id on two Spokes means two\ndifferent things.",
+            "description": "The Spoke's own index for the reserve, and the only asset identity a\nposition has today. Not a protocol-wide asset id and not a token\naddress — no Spoke event carries one. The same id on two Spokes means\ntwo different things.",
             "type": "string"
           },
           "spoke": {
@@ -139,18 +139,18 @@ expression: document().await
             "type": "string"
           },
           "supplied_shares": {
-            "description": "Supplied balance, in shares, scaled by the asset's decimals. Not an asset\namount. **Null exactly when `asset` is**: the scale lives on the asset,\nso without it there is no honest way to render this, and an unscaled\ninteger in a field documented as decimal would be wrong by orders of\nmagnitude.",
+            "description": "Supplied balance, in shares, scaled by the asset's decimals. Not an\nasset amount. Null exactly when `asset` is, because the scale lives on\nthe asset.",
             "type": [
               "string",
               "null"
             ]
           },
           "user": {
-            "description": "The position owner, lower-cased. Never the caller that routed the action\n— position managers act on behalf of users, and crediting them would\nattribute large parts of the book to a handful of router addresses.",
+            "description": "The position owner, lower-cased. Never the caller that routed the\naction: position managers act on behalf of users.",
             "type": "string"
           },
           "using_as_collateral": {
-            "description": "The user's own collateral flag, and only that. It is not the `collateral`\nposition type, which additionally requires a non-zero collateral factor\nunder the version of the reserve config the user is pinned to — config\nevents this build does not ingest. Five of the Main Spoke's fourteen\nreserves sit at a zero factor, so this flag alone overstates collateral\nfor those.",
+            "description": "The user's own collateral flag, and only that. It is not the\n`collateral` position type, which additionally requires a non-zero\ncollateral factor under the reserve config the user is pinned to —\nconfig events this build does not ingest. Five of the Main Spoke's\nfourteen reserves sit at a zero factor, so this flag alone overstates\ncollateral for those.",
             "type": "boolean"
           },
           "value": {
@@ -160,7 +160,7 @@ expression: document().await
               },
               {
                 "$ref": "#/components/schemas/Worth",
-                "description": "The shares above, converted to whole tokens at `valued_at`. Null when\n`asset` is, and also when the Hub has listed the asset but not yet\ncheckpointed its index — a zero there could not be told apart from a real\nzero balance."
+                "description": "The shares above, converted to whole tokens at `valued_at`. Null when\n`asset` is, and also when the Hub has listed the asset but not yet\ncheckpointed its index — a zero there could not be told apart from a\nreal zero balance."
               }
             ]
           }
@@ -193,7 +193,7 @@ expression: document().await
             "type": "array"
           },
           "next_cursor": {
-            "description": "Hand back verbatim as `cursor` to fetch the next page. `null` is the last\npage. Opaque and signed: it is only valid for the listing that issued it,\nso changing the wallet, chain or Spoke filter while reusing it is refused\nrather than silently resuming somewhere else.",
+            "description": "Hand back verbatim as `cursor` to fetch the next page; `null` is the\nlast page. Opaque and signed, and only valid for the listing that issued\nit — changing the wallet, chain or Spoke filter is refused.",
             "type": [
               "string",
               "null"
@@ -206,16 +206,16 @@ expression: document().await
               },
               {
                 "$ref": "#/components/schemas/Pricing",
-                "description": "How current the prices behind this page are — **a third clock**, beside\n`sync` and `valued_at`, because prices have their own source and their\nown cadence. Null when nothing here is priced, and null whenever `as_of`\nis set: amounts are extrapolated to that instant and prices are not, so a\nvalue mixing the two would be a number that never existed."
+                "description": "How current the prices behind this page are — a third clock beside\n`sync` and `valued_at`, because prices have their own cadence. Null when\nnothing here is priced, and whenever `as_of` is set: amounts are\nextrapolated to that instant and prices are not."
               }
             ]
           },
           "sync": {
             "$ref": "#/components/schemas/Progress",
-            "description": "How current this payload is. Present on every page, because amounts are\nper-block quantities and a page whose sync differs from the previous one\nis the honest signal that the indexer advanced mid-walk."
+            "description": "How current this payload is. Present on every page: amounts are\nper-block quantities, so a sync that differs from the previous page is\nthe signal that the indexer advanced mid-walk."
           },
           "valued_at": {
-            "description": "When every amount on this page was computed — one instant for the whole\npage, so two positions in it cannot disagree about the time. Defaults to\nnow, which is the same choice the chain makes. Distinct from\n`sync.last_block`: the shares are as far as the indexer has folded, the\namounts are those shares valued at this instant.\n\nThe `as_of` **query parameter** that sets it is Unix seconds, so\nround-tripping this value means converting it.",
+            "description": "When every amount on this page was computed — one instant for the whole\npage, defaulting to now. Distinct from `sync.last_block`: the shares are\nas far as the indexer has folded, the amounts are those shares valued\nhere. The `as_of` query parameter that sets it is Unix seconds.",
             "format": "date-time",
             "type": "string"
           }
@@ -239,7 +239,7 @@ expression: document().await
             "type": "integer"
           },
           "stale": {
-            "description": "Whether that exceeds this deployment's threshold. It measures how long\nsince **we** last read the oracle, never how long since a feed last\nmoved — an hour without a Chainlink update is normal behaviour, and a\nthreshold set from feed cadence would flag healthy feeds forever.",
+            "description": "Whether that exceeds this deployment's threshold. It measures how long\nsince we last read the oracle, never since a feed last moved — an hour\nwithout a Chainlink update is normal.",
             "type": "boolean"
           },
           "updated_at": {
@@ -275,7 +275,7 @@ expression: document().await
             "type": "string"
           },
           "stale": {
-            "description": "Whether `age_seconds` has passed this deployment's freshness threshold. A\nstale response is still served — the numbers were true as of\n`last_block` — but they are behind the chain.",
+            "description": "Whether `age_seconds` has passed this deployment's threshold. A stale\nresponse is still served: the numbers were true as of `last_block`.",
             "type": "boolean"
           },
           "updated_at": {
@@ -309,7 +309,7 @@ expression: document().await
             "type": "string"
           },
           "price_usd": {
-            "description": "What Aave's own oracle prices one whole token at, in dollars. This is the\nprotocol's view rather than the market's, which is the right one for a\nposition: it is the number that drives liquidation. Null when the oracle\nhas not been read for this reserve yet, or when `as_of` is set.",
+            "description": "What Aave's own oracle prices one whole token at, in dollars — the\nprotocol's view rather than the market's, and the number that drives\nliquidation. Null when the oracle has not been read for this reserve\nyet, or when `as_of` is set.",
             "type": [
               "string",
               "null"
@@ -320,7 +320,7 @@ expression: document().await
             "type": "string"
           },
           "supplied_amount_usd": {
-            "description": "What `supplied_amount` is worth, in dollars. Every digit the protocol\ncomputed is kept — §7.1's unit puts `1e26` at one dollar, and this is\nthat number divided rather than rounded, so it still reconciles against\n`getUserAccountData` exactly. Null on the same terms as `price_usd`.",
+            "description": "What `supplied_amount` is worth, in dollars, keeping every digit the\nprotocol computed so it still reconciles against `getUserAccountData`.\nNull on the same terms as `price_usd`.",
             "type": [
               "string",
               "null"
@@ -331,7 +331,7 @@ expression: document().await
             "type": "string"
           },
           "total_debt_usd": {
-            "description": "What `total_debt` is worth, in dollars. Note this prices the **rounded**\ntoken amount, which is what is owed and what a caller should display. The\nhealth factor is computed from an unrounded ray-scaled debt instead, so\nthe two will differ in the last digits by design.",
+            "description": "What `total_debt` is worth, in dollars. This prices the **rounded**\ntoken amount, which is what is owed and what a caller should display.\nThe health factor is computed from an unrounded ray-scaled debt instead,\nso the two differ in the last digits by design.",
             "type": [
               "string",
               "null"

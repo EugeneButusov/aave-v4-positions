@@ -1,17 +1,15 @@
 //! The cursor as this API publishes it.
 //!
-//! **Signing belongs to publishing, not to paging** — `aave-positions` owns
-//! [`PositionKey`], and this is what makes one safe to hand to a stranger. Not
-//! confidentiality: position data is public on chain. It keeps the encoding
-//! opaque, and it stops a cursor being carried between listings, where a resume
-//! point from one wallet is well-formed in another's and silently skips every
-//! reserve below it. Hence the scope in the tag rather than in the cursor.
+//! Signing belongs to publishing, not to paging. Not confidentiality —
+//! position data is public on chain — but to stop a cursor being carried
+//! between listings, where a resume point from one wallet is well-formed in
+//! another's and silently skips every reserve below it. Hence the scope in the
+//! tag rather than in the cursor.
 //!
-//! HMAC rather than a JWT, which would add algorithm negotiation and `alg: none`
-//! to protect two short strings.
+//! HMAC rather than a JWT, which would add `alg: none` to protect two strings.
 //!
-//! **The key must be identical across replicas**, or a cursor from one pod is
-//! rejected by the next — pagination that fails only under load.
+//! The key must be identical across replicas, or pagination fails only under
+//! load.
 
 use std::fmt;
 
@@ -26,9 +24,8 @@ use subtle::ConstantTimeEq as _;
 
 type Keyed = Hmac<Sha256>;
 
-/// The one separator. Every field it joins is an address, a decimal id or
-/// [`ALL_SPOKES`], none of which can contain it — so the concatenation has one
-/// reading, and no tag verifies with the boundary moved.
+/// The one separator, and no field it joins can contain it — so the
+/// concatenation has one reading and no tag verifies with the boundary moved.
 const SEP: char = '|';
 
 /// Not a valid address, so it cannot collide with a Spoke genuinely filtered on.
@@ -38,14 +35,13 @@ const ALL_SPOKES: &str = "*";
 const TAG_BYTES: usize = 16;
 
 /// A key shorter than this is guessable. Enforced in `config`, where the
-/// variable is read: a value is checked once, where it enters.
+/// variable is read.
 pub(crate) const MIN_SECRET_BYTES: usize = 32;
 
 /// The listing a page belongs to.
 ///
-/// **`spoke` is the filter that was applied, not the Spoke a row came from**,
-/// and `None` spans every Spoke. An all-Spokes resume point is well-formed
-/// inside a single-Spoke listing, so the two must not sign identically.
+/// `spoke` is the filter that was applied, not the Spoke a row came from, and
+/// `None` spans every Spoke — so the two listings must not sign identically.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Scope {
     pub(crate) chain_id: u32,
@@ -55,17 +51,16 @@ pub(crate) struct Scope {
 
 /// Signs and verifies page cursors for this deployment.
 pub(crate) struct Signer {
-    /// Keyed once at boot and cloned per use. `Hmac` is `Clone`, and the key
-    /// schedule is the half worth not repeating.
+    /// Keyed once at boot and cloned per use: the key schedule is the half
+    /// worth not repeating.
     keyed: Keyed,
 }
 
 impl Signer {
     /// # Errors
     ///
-    /// [`InvalidLength`], which HMAC never produces — RFC 2104 takes a key of
-    /// any length. Propagated rather than unwrapped: an unconstructible arm is
-    /// still not ours to panic on.
+    /// [`InvalidLength`], which HMAC never produces (RFC 2104 takes any key
+    /// length), propagated rather than unwrapped.
     pub(crate) fn new(secret: &str) -> Result<Self, InvalidLength> {
         Ok(Self {
             keyed: Keyed::new_from_slice(secret.as_bytes())?,
@@ -84,8 +79,8 @@ impl Signer {
     ///
     /// # Errors
     ///
-    /// [`Invalid`], which says what was wrong with the cursor and nothing about
-    /// what a caller should be told — that belongs to whoever is speaking HTTP.
+    /// [`Invalid`], which says what was wrong and nothing about what a caller
+    /// should be told.
     pub(crate) fn decode(&self, encoded: &str, scope: &Scope) -> Result<PositionKey, Invalid> {
         let (body, tag) = encoded.split_once('.').ok_or(Invalid::Shape)?;
         if tag.contains('.') {
@@ -98,8 +93,7 @@ impl Signer {
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .ok_or(Invalid::Payload)?;
 
-        // Constant time, and `subtle` answers `false` for a length mismatch
-        // rather than panicking. `==` returns on the first differing byte.
+        // Constant time; `==` returns on the first differing byte.
         if !bool::from(self.tag(scope, &payload).as_bytes().ct_eq(tag.as_bytes())) {
             return Err(Invalid::Signature);
         }
@@ -142,9 +136,8 @@ impl Signer {
     }
 }
 
-/// The resume point: what the sorting key leaves free once the scope pins
-/// `(chain, user)`. The Spoke is signed even when the listing pinned it, which
-/// is what stops the two listings sharing a cursor.
+/// What the sorting key leaves free once the scope pins `(chain, user)`. The
+/// Spoke is signed even when the listing pinned it.
 ///
 /// Lower-case hex, because `Address`'s own `Display` is EIP-55 checksummed and
 /// would sign a different string for the same address.

@@ -1,9 +1,8 @@
 //! One variable at a time, and what is wrong with the one that is.
 //!
-//! Every reader takes `&self` and returns a `Result`, so a config assembles them
-//! with `?` — the shape
-//! [crates.io's `crates_io_env_vars`](https://github.com/rust-lang/crates.io/blob/main/crates/crates_io_env_vars/src/lib.rs)
-//! uses for forty-nine variables. Nothing accumulates.
+//! Every reader takes `&self` and returns a `Result`, so a config assembles
+//! them with `?` and nothing accumulates — the shape crates.io's
+//! `crates_io_env_vars` uses.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -42,11 +41,8 @@ impl Invalid {
     }
 }
 
-/// The seven spellings a deployment may already be setting.
-///
-/// `fatal` and `silent` have no `tracing` counterpart of their own — the first
-/// is an error, the second the absence of a level — and mapping them is cheaper
-/// than a release note nobody reads at three in the morning.
+/// The seven spellings a deployment may already be setting. `fatal` and
+/// `silent` have no `tracing` counterpart and are mapped onto the nearest.
 const LEVELS: [(&str, LevelFilter); 7] = [
     ("fatal", LevelFilter::ERROR),
     ("error", LevelFilter::ERROR),
@@ -73,10 +69,8 @@ impl<'a> Env<'a> {
         self.raw(key).unwrap_or(default).to_owned()
     }
 
-    /// No default: a key every deployment shares is not a signature.
-    ///
-    /// **The value never reaches the message**, unlike every other reader here —
-    /// that would put a signing key in a mis-set deployment's log.
+    /// No default, and the value never reaches the message — unlike every
+    /// other reader here, because this one carries a signing key.
     ///
     /// # Errors
     ///
@@ -94,9 +88,6 @@ impl<'a> Env<'a> {
         Ok(value)
     }
 
-    /// No default: the value names something outside this process, so a guess
-    /// is a plausible answer to the wrong question.
-    ///
     /// # Errors
     ///
     /// [`Invalid`] when the variable is absent or empty.
@@ -107,8 +98,7 @@ impl<'a> Env<'a> {
         }
     }
 
-    /// As lenient as WHATWG, deliberately: `clickhouse:8123` is a valid URL and
-    /// is accepted. The driver is the authority on its own.
+    /// As lenient as WHATWG: `clickhouse:8123` parses and is accepted.
     ///
     /// # Errors
     ///
@@ -136,8 +126,7 @@ impl<'a> Env<'a> {
 
     /// # Errors
     ///
-    /// [`Invalid`] outside `1..=65535`. 0 is "any port", which a service meant
-    /// to be reachable never asked for.
+    /// [`Invalid`] outside `1..=65535`. 0 is "any port".
     pub fn port(&self, key: &str, default: u16) -> Result<u16, Invalid> {
         let Some(value) = self.raw(key) else {
             return Ok(default);
@@ -208,9 +197,8 @@ impl<'a> Env<'a> {
         self.one_of(key, value, &LEVELS)
     }
 
-    /// The spellings a caller accepts. [`flag`] and [`level`] are this with the
-    /// table built in; an unshared table stays with its caller, so this crate
-    /// keeps knowing nothing about what a service is.
+    /// The spellings a caller accepts. [`flag`] and [`level`] are this with
+    /// the table built in; an unshared table stays with its caller.
     ///
     /// # Errors
     ///

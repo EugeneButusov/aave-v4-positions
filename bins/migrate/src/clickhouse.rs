@@ -1,9 +1,8 @@
 //! Teaching refinery to drive ClickHouse.
 //!
-//! refinery ships backends for Postgres, MySQL and SQLite. ClickHouse is not one
-//! of them, but the three traits below are all it takes — and thirty-five of this
-//! deployment's thirty-nine migrations are ClickHouse, so the alternative was a
-//! second hand-rolled runner beside refinery rather than none.
+//! refinery ships no ClickHouse backend, but the three traits below are all it
+//! takes — and thirty-five of this deployment's thirty-nine migrations are
+//! ClickHouse, so the alternative was a second runner beside refinery.
 
 use async_trait::async_trait;
 use clickhouse_client::clickhouse;
@@ -22,13 +21,9 @@ impl AsyncTransaction for ClickHouse {
     /// Each query is a whole migration file, sent as it stands.
     ///
     /// ClickHouse's HTTP interface refuses a body holding more than one
-    /// statement — `Multi-statements are not allowed` — so every file here holds
-    /// exactly one, and the server is what enforces that. Leading prose and the
-    /// trailing `;` it is written with are both accepted.
-    ///
-    /// There is no transaction, because ClickHouse has none for DDL. One
-    /// statement per file makes that harmless: a migration either applied or did
-    /// not, so refinery's ledger cannot disagree with the schema.
+    /// statement, so every file here holds exactly one and the server enforces
+    /// it. That is also what makes the absence of a DDL transaction harmless: a
+    /// migration either applied or did not.
     async fn execute<'a, T: Iterator<Item = &'a str> + Send>(
         &mut self,
         queries: T,
@@ -54,8 +49,8 @@ impl AsyncQuery<Vec<Migration>> for ClickHouse {
                 Migration::applied(
                     version,
                     name,
-                    // Stored as text because that is what refinery's own backends
-                    // do, and what its `applied_on` parser expects back.
+                    // Text, as refinery's own backends store it and its
+                    // `applied_on` parser expects it back.
                     OffsetDateTime::parse(&applied_on, &Rfc3339)
                         .unwrap_or(OffsetDateTime::UNIX_EPOCH),
                     checksum.parse().unwrap_or_default(),
@@ -69,9 +64,8 @@ impl AsyncQuery<Vec<Migration>> for ClickHouse {
 type Row = (i32, String, String, String);
 
 impl AsyncMigrate for ClickHouse {
-    /// refinery's default is `VARCHAR(255)` columns and an `int4 PRIMARY KEY`,
-    /// none of which ClickHouse has, and its DDL needs an engine and a sort key.
-    /// Only the shape of the table is ours; every query over it is refinery's.
+    /// refinery's default is `VARCHAR(255)` and an `int4 PRIMARY KEY`, neither
+    /// of which ClickHouse has. Only the table's shape is ours.
     fn assert_migrations_table_query(table: &str) -> String {
         format!(
             "CREATE TABLE IF NOT EXISTS {table} (\
@@ -83,9 +77,8 @@ impl AsyncMigrate for ClickHouse {
 
 #[cfg(test)]
 mod tests {
-    //! A real server, not a fake. What these assert is that the adapter drives
-    //! ClickHouse correctly — that a file goes over as written, that a re-run
-    //! applies nothing, and that a failure leaves the ledger agreeing with the
+    //! A real server, not a fake: that a file goes over as written, a re-run
+    //! applies nothing, and a failure leaves the ledger agreeing with the
     //! schema rather than ahead of it.
 
     use clickhouse_client::{Config, build_client};
@@ -155,8 +148,7 @@ mod tests {
 
         assert_eq!(run(&mut target, &[]).await.unwrap(), Vec::<String>::new());
 
-        // The table refinery records into, created by our own DDL because its
-        // default is Postgres-shaped.
+        // Created by our own DDL, refinery's default being Postgres-shaped.
         assert_eq!(tables(&target).await, ["refinery_schema_history"]);
     }
 
@@ -211,9 +203,8 @@ mod tests {
             .await
             .unwrap_err();
 
-        // No transaction — ClickHouse has none for DDL — so `widgets` stays. It
-        // is recorded too: one statement per file means a migration that ran at
-        // all ran completely, so the retry picks up at V2 rather than redoing V1.
+        // No DDL transaction, so `widgets` stays — and is recorded, because one
+        // statement per file means a migration that ran at all ran completely.
         assert_eq!(
             tables(&target).await,
             ["refinery_schema_history", "widgets"]

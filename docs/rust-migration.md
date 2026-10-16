@@ -184,7 +184,14 @@ with `ops`, and arrived there — so today it is `Config`, `build_client` and th
 check runs. `crates/postgres` needs no such dodge: the driver here is `tokio-postgres`, not
 `postgres`. It has one way in, `build_pool` and a `connection` taken from it, including for the
 one-shot migrator: a job that wants a single connection takes a single connection, and a second
-constructor handing out a bare client was a second thing to keep in step.
+constructor handing out a bare client was a second thing to keep in step — and the worse of the two.
+Measured against a server stopped and restarted underneath both, the bare client answers "connection
+closed" from the outage onward and never recovers, because the task driving its socket has ended and
+nothing redials; the pool's `recycle` drops a closed connection on checkout and dials a new one. For
+the same reason a read takes its connection per query rather than holding one: `deadpool` acquisition
+is 1.4 µs against 552 µs for `SELECT 1`, so caching one buys 0.25% of a query and costs a replica
+that fails every request after a server restart while readiness, asking for a fresh one, keeps
+passing.
 
 **Each binary is a boundary, not just an entry point.** In Node the image is the artifact and
 `migrate.js` ships beside `main.js` in a tree where viem is one `require` away, so "the migration tool

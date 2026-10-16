@@ -1378,6 +1378,63 @@ spec and each mutation-tested:
   branch. (The plan for this increment had it down as a rounding trap; reading
   `Premium.sol` showed it is not reachable.)
 
+### Arithmetic widths
+
+Each transcribed function overflows where its own contract overflows, and the three
+contracts disagree — so this is not one rule applied uniformly.
+
+`WadRayMath.rayMulUp` and `PercentageMath.percentMulDown` multiply in `uint256`
+and revert when the **product** does not fit, guard first:
+
+```
+if iszero(or(iszero(b), iszero(gt(a, div(not(0), b))))) { revert }
+```
+
+They revert even where `a · b / RAY` would have fit, so widening them would answer
+where the chain refuses to. `SharesMath.toAssetsDown` goes through OpenZeppelin's
+`Math.mulDiv`, which takes the full 512-bit product and only gives out when the
+**quotient** would not fit — so `mul_div_down` is the one that widens, and doing it
+in `uint256` would refuse inputs the chain accepts.
+
+Not `(a / denominator) · b`, either: integer division truncates the fractional part,
+and in fixed-point the fractional part *is* the value. Measured on a real
+`drawn_index_at` — `a` = 1008055395294113139752655573, `b` ≈ RAY — that form comes out
+**0.7991% low**, which would report near-zero interest on every position.
+
+The headroom, measured rather than argued, and pinned by
+`the_three_intermediates_are_the_widths_the_port_notes_record`:
+
+| intermediate | where | bits | clear of 256 |
+| --- | --- | --- | --- |
+| RAY | — | 90 | — |
+| ray × ray | `drawn_index_at` | 180 | 76 |
+| uint120 × ray | `aggregated_owed_ray` | 210 | 46 |
+| uint120 × (totalAssets + VIRTUAL) | `supplied_assets` | 249 | **7** |
+| uint96 × uint40 | `linear_interest` | 192 | 64 |
+
+The Port notes' 248 for the supply side counts `totalAssets` alone; the multiply is
+against `totalAssets + VIRTUAL`, because the ERC-4626 padding is inside the division
+rather than applied after it, so the intermediate is one bit wider. Seven bits is the
+narrowest margin in the crate, and past it `mul_div_down`'s 512-bit intermediate is
+what carries the supply side — the quotient still fits.
+
+`linear_interest` is the one with no guard in its own assembly, and the contract's
+types say why: it takes `(uint96 rate, uint40 lastUpdateTimestamp)`, and 96 bits times
+40 cannot fill 256. `u128` is the narrowest Rust integer holding a `uint96`, and even
+a full `u128` against a full `u64` stays at 192 bits.
+
+`#![deny(clippy::arithmetic_side_effects)]` on `aave-positions` is what keeps all of
+this deliberate rather than a matter of discipline.
+
+### Whose decimals
+
+`decimals` throughout the valuation and the view is the **Hub's**, from `AddAsset`,
+and never the token's own `decimals()`. The two can disagree — which is a listing
+audit signal, not a correctness problem — and where they do, the Hub's is what the
+Hub's arithmetic uses and therefore what the position is worth to Aave. The
+cross-check that reports a disagreement is described under "The decimals cross-check"
+below.
+
 ### Reading it
 
 `PositionStore.list` answers one question: **one wallet's positions**, on one Spoke or on all of them.

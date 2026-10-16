@@ -1,18 +1,12 @@
 //! What an ERC-20 calls itself.
 //!
-//! **Enrichment, not fold.** No Aave event carries a symbol (§12.5), so this is
-//! read from the token contract and kept beside the event log rather than
-//! derived from it. That is why it lives in Postgres and why the row is written
-//! rather than projected — `010_token_metadata.sql` has the measurements.
+//! Enrichment, not fold: no Aave event carries a symbol (§12.5), so this is
+//! read from the token contract and kept beside the event log. Why it lives in
+//! Postgres is measured in `010_token_metadata.sql`.
 //!
-//! **The read half only.** `put` and the sweep that calls it belong to the
-//! enrichment processor, which is Phase 3's; nothing in this workspace writes a
-//! label yet, and a method with no caller is a surface with no test behind it.
-//! The trait gains it when the processor arrives.
+//! The read half only — `put` and the sweep that calls it are Phase 3's.
 //!
-//! **The port is this level; the adapter is a directory down.** `postgres` is
-//! the one implementation, and the harness that stands a scenario up for it
-//! lives with it rather than beside the port it is proving.
+//! The port is this level; the adapter and its harness are a directory down.
 
 mod error;
 mod label;

@@ -3,16 +3,12 @@
 //! Not fixtures — those are [`crate::store::fixtures`], and they are data. This
 //! is what stands a scenario up.
 //!
-//! **Seeded through the fold, not around it.** These append decoded events and
-//! let the materialized views do the work, which is what makes the specs store
-//! specs rather than assertions about a hand-written table. Writing into
-//! `user_positions` directly would prove the SQL in this module and nothing
-//! about the SQL it reads.
+//! Seeded through the fold, not around it: these append decoded events and let
+//! the materialized views do the work, so the specs are store specs rather
+//! than assertions about a hand-written table.
 //!
-//! The write path is reproduced here rather than imported: the event ledgers
-//! belong to a crate that does not exist yet. It is two statements — an insert,
-//! and a sign-flipped copy — and both are what the ledger's own migration
-//! documents.
+//! The write path is reproduced rather than imported, because the event ledgers
+//! belong to a crate that does not exist yet.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,8 +22,7 @@ use crate::store::fixtures::{CHAIN_ID, Event};
 
 // --- the write path ---------------------------------------------------------
 
-/// One row of either ledger. Both have the same shape, which is why the
-/// TypeScript shares one write path between them.
+/// One row of either ledger; both have the same shape.
 #[derive(clickhouse::Row, Serialize)]
 struct LedgerRow<'a> {
     chain_id: u32,
@@ -48,7 +43,7 @@ struct LedgerRow<'a> {
     sign: i8,
 }
 
-/// One stamp per batch. Half of the ledger's pairing key, so a row needs one
+/// One stamp per batch — half of the ledger's pairing key, so a row needs one
 /// even where nothing here writes the other half.
 fn next_version() -> u64 {
     static VERSION: AtomicU64 = AtomicU64::new(0);
@@ -85,8 +80,7 @@ pub(super) async fn append(client: &Client, table: &str, events: &[Event]) {
                 tx_hash: "0xbbbb",
                 tx_index: 0,
                 event_name: event.name,
-                // The projections read every field out of `body`; the topics
-                // are the indexed copies and nothing here needs them.
+                // The projections read every field out of `body`.
                 topic1: None,
                 topic2: None,
                 topic3: None,
@@ -113,23 +107,15 @@ fn config(database: &str) -> Config {
 
 /// A migrated database of the caller's own.
 ///
-/// **One per test, not one per file.** `cargo` runs these concurrently against
-/// one server, and every one of them writes the same table names — a shared
-/// database has them folding each other's events into the page under
-/// assertion. It also removes the `TRUNCATE` between tests, and with it the
-/// question of whether the list of tables to truncate is complete.
+/// One per test, not one per file: `cargo` runs these concurrently against one
+/// server and they all write the same table names.
 ///
-/// **Dropped first, not `IF NOT EXISTS`.** Every migration is written
-/// `IF NOT EXISTS`, so against a database left behind by an earlier run the
-/// whole set is a no-op — it keeps whatever schema it was first created with,
-/// editing a migration has no effect locally, and the suite goes on testing a
-/// table that no longer matches the file.
+/// Dropped first rather than `IF NOT EXISTS`, which every migration is written
+/// with — so against a database an earlier run left behind the whole set is a
+/// no-op and editing a migration has no local effect.
 ///
-/// **`SYNC`, because the default defers.** An Atomic database's drop renames
-/// its metadata aside and reclaims it `database_atomic_delay_before_drop_table_sec`
-/// later — 480 seconds. One test per database and a suite re-run every few
-/// minutes then accumulates faster than the server clears, and the server that
-/// runs out of room is the developer's rather than CI's.
+/// `SYNC`, because an Atomic database's drop otherwise reclaims its metadata
+/// 480 seconds later, which a suite re-run every few minutes outpaces.
 pub(super) async fn migrated_database(name: &str) -> Client {
     let bootstrap = build_client(config("default"));
     bootstrap
@@ -143,10 +129,8 @@ pub(super) async fn migrated_database(name: &str) -> Client {
         .await
         .unwrap();
 
-    // The corpus `bins/migrate` applies, in its order — not a second reading of
-    // the directories, which could agree with the deployment today and not
-    // tomorrow. No runner: the database was created empty a line ago, so there
-    // is nothing to skip and nothing to record.
+    // The corpus `bins/migrate` applies, in its order, rather than a second
+    // reading of the directories. No runner: the database is empty.
     let client = build_client(config(name));
     for embedded in migrations::CLICKHOUSE
         .iter()
@@ -163,13 +147,8 @@ pub(super) async fn store(test: &str) -> (ClickHousePositionStore, Client) {
     (ClickHousePositionStore::new(client.clone()), client)
 }
 
-/// A dispatched range, as the processor leaves it.
-///
-/// Append only. The TypeScript's `index` reverts the range first, because a
-/// re-dispatch has to cancel what the last one wrote — and here every test
-/// reads a database created empty a moment earlier, so a retraction has
-/// nothing to cancel and the ledger's other half stays with the crate that
-/// will own it.
+/// A dispatched range, as the processor leaves it. Append only: every test
+/// reads a database created empty, so a retraction has nothing to cancel.
 pub(super) async fn index(client: &Client, batch: &[Event]) {
     append(client, "spoke_events", batch).await;
 }

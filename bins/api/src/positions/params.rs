@@ -1,15 +1,12 @@
 //! What a caller may ask for, and what happens when they ask for something else.
 //!
-//! **Every fault at once, not the first**, which is what `env` already does for
-//! configuration here. The service this replaces reports one — its path and
-//! query run through separate pipes — so the behaviour is kept and the wording
-//! is not.
+//! Every fault at once, not the first. The service this replaces reports one,
+//! so the behaviour is kept and the wording is not.
 //!
-//! **Unrecognised query parameters are refused.** `?limt=200` is a 400, because
-//! the cost of being lenient is a caller who believes a parameter took effect.
+//! Unrecognised query parameters are refused: `?limt=200` is a 400, because the
+//! cost of being lenient is a caller who believes it took effect.
 //!
-//! The bounds are constants: the Main Spoke lists fourteen reserves, so paging
-//! is a contract formality and a knob nobody turns only ever goes wrong.
+//! The bounds are constants — the Main Spoke lists fourteen reserves.
 
 use std::collections::HashMap;
 
@@ -24,14 +21,12 @@ pub(crate) const MAX_LIMIT: u32 = 200;
 /// any position can be valued at.
 pub(crate) const GENESIS: u64 = 1_774_277_159;
 
-/// 2100-01-01: a **units check rather than a policy** on how far ahead a caller
-/// may value. `as_of` in milliseconds is past the floor above, so unbounded it
-/// would extrapolate the index tens of thousands of years and answer a page of
-/// enormous numbers with nothing to say they are wrong.
+/// 2100-01-01: a units check rather than a policy. `as_of` in milliseconds is
+/// past the floor above, so unbounded it would extrapolate the index tens of
+/// thousands of years and answer numbers with nothing to say they are wrong.
 pub(crate) const MAX_AS_OF: u64 = 4_102_444_800;
 
-/// The four this endpoint answers to. Anything else is a refusal rather than a
-/// value nobody reads.
+/// The four this endpoint answers to; anything else is a refusal.
 const KNOWN: [&str; 4] = ["spoke", "limit", "cursor", "as_of"];
 
 /// One request, parsed.
@@ -41,8 +36,8 @@ pub(crate) struct Listing {
     /// `None` lists every Spoke this wallet has touched.
     pub(crate) spoke: Option<Address>,
     pub(crate) limit: u32,
-    /// Still opaque here. Verifying it needs the scope, which needs the three
-    /// fields above, so the codec is handed it once they exist.
+    /// Still opaque: verifying it needs the scope, which needs the three
+    /// fields above.
     pub(crate) cursor: Option<String>,
     /// Unix seconds to read and value the page at. `None` is now.
     pub(crate) as_of: Option<u64>,
@@ -76,9 +71,8 @@ struct Reading {
 }
 
 impl Reading {
-    /// Reads the query string, refusing a key this endpoint does not answer to
-    /// and a key given twice — `?limit=1&limit=2` is a caller who does not know
-    /// what they asked for, and either resolution is a guess.
+    /// Refuses a key this endpoint does not answer to, and a key given twice:
+    /// either resolution of `?limit=1&limit=2` is a guess.
     fn new(query: &str) -> Self {
         let mut reading = Self {
             query: HashMap::new(),
@@ -107,9 +101,8 @@ impl Reading {
         if self.faults.is_empty() {
             Ok(())
         } else {
-            // One line rather than the `\n` its predecessor emits: this goes
-            // into a JSON string, where a newline is an escape a terminal shows
-            // literally.
+            // One line rather than the `\n` its predecessor emits, which in a
+            // JSON string is an escape a terminal shows literally.
             Err(errors::bad_request(self.faults.join("; ")))
         }
     }
@@ -124,8 +117,8 @@ impl Reading {
         }
     }
 
-    /// The value that is discarded on a fault is [`Address::ZERO`], which never
-    /// reaches a query: [`Reading::finish`] refuses before the listing is used.
+    /// [`Address::ZERO`] on a fault, which never reaches a query because
+    /// [`Reading::finish`] refuses first.
     fn address(&mut self, name: &str, value: &str) -> Address {
         value.parse().unwrap_or_else(|_| {
             self.reject(format!(
@@ -135,8 +128,8 @@ impl Reading {
         })
     }
 
-    /// Checksummed or lower-case, either matches: `Address` is the check and is
-    /// case-insensitive, and the adapter lower-cases into the query anyway.
+    /// Checksummed or lower-case: `Address` is the check and is
+    /// case-insensitive.
     fn optional_address(&mut self, name: &str) -> Option<Address> {
         let value = self.query.get(name)?.clone();
 
@@ -169,9 +162,8 @@ impl Reading {
         }
     }
 
-    /// Empty is refused rather than read as absent: a caller sending `?cursor=`
-    /// meant to send one, and serving the first page instead would answer a
-    /// question they did not ask.
+    /// Empty is refused rather than read as absent: a caller sending
+    /// `?cursor=` meant to send one.
     fn cursor(&mut self) -> Option<String> {
         let value = self.query.get("cursor")?.clone();
 
@@ -213,8 +205,8 @@ mod tests {
 
     #[test]
     fn needs_nothing_but_the_path() {
-        // The Spoke is genuinely optional: a caller asking what a wallet holds
-        // should not have to know which Spokes exist.
+        // A caller asking what a wallet holds need not know which Spokes
+        // exist.
         let listing = parse("").expect("a bare listing");
 
         assert_eq!(listing.chain_id, 1);
@@ -226,9 +218,8 @@ mod tests {
 
     #[test]
     fn reads_a_checksummed_address_off_a_block_explorer() {
-        // Both halves, because the type is what makes the case go away: the
-        // fold stores one spelling and `Address` holds the twenty bytes, so the
-        // lower-casing its predecessor did at the edge has nothing left to do.
+        // Both halves: `Address` holds twenty bytes, so the lower-casing its
+        // predecessor did at the edge has nothing left to do.
         let listing = parse(&format!("spoke={SPOKE}")).expect("checksummed is an address");
 
         assert_eq!(
@@ -240,9 +231,8 @@ mod tests {
 
     #[test]
     fn refuses_a_chain_id_that_is_not_one() {
-        // Coercing failing open is the danger: `Number('abc')` is NaN and
-        // `Number('')` is 0, so without the bounds `/chains/abc/…` would be a
-        // query for a chain that does not exist rather than an error.
+        // `Number('abc')` is NaN and `Number('')` is 0, so without the bounds
+        // `/chains/abc/…` would query a chain that does not exist.
         for chain_id in ["abc", "", "-1", "1.5", "0"] {
             assert!(
                 refused(chain_id, ALICE, "").contains("chain_id must be a positive integer"),
@@ -266,8 +256,7 @@ mod tests {
     #[test]
     fn takes_twenty_bytes_of_hex_without_the_prefix() {
         // Measured, not intended: `Address::from_str` strips an optional `0x`,
-        // so a spelling the anchored regex refused now resolves. Twenty bytes
-        // are twenty bytes, so it is pinned rather than guarded against.
+        // so a spelling the anchored regex refused now resolves.
         let bare = ALICE.trim_start_matches("0x");
         let listing = Listing::parse("1", bare, "").expect("twenty bytes of hex");
 
@@ -297,8 +286,7 @@ mod tests {
             Some(Some(1_785_000_000))
         );
 
-        // The likeliest wrong value by far. Unbounded it would value every
-        // position tens of thousands of years out — which is not an error, just
+        // The likeliest wrong value, and unbounded it is not an error — just
         // a page of numbers nobody can tell is wrong.
         for as_of in ["1785000000000", "1", "0"] {
             assert!(
@@ -323,9 +311,7 @@ mod tests {
 
     #[test]
     fn refuses_a_parameter_it_does_not_recognise() {
-        // `?limt=200` would otherwise strip silently and serve the default, so
-        // the caller reads a page size they never asked for and believes they
-        // set one.
+        // Otherwise `?limt=200` strips silently and serves the default.
         assert_eq!(
             refused("1", ALICE, "limt=200"),
             r#"unrecognized query parameter "limt""#
@@ -334,9 +320,8 @@ mod tests {
 
     #[test]
     fn refuses_the_spelling_its_predecessor_answered_to() {
-        // `asOf` is the one parameter this port renames, so the URL that works
-        // against the service beside it is a refusal here rather than an
-        // instant silently ignored.
+        // The one parameter this port renames, so the URL that works against
+        // the service beside it refuses rather than ignoring the instant.
         assert!(
             refused("1", ALICE, "asOf=1785000000")
                 .contains(r#"unrecognized query parameter "asOf""#)
@@ -359,9 +344,7 @@ mod tests {
 
     #[test]
     fn names_every_fault_rather_than_the_first() {
-        // The behaviour kept from the service this replaces, which reports one:
-        // its path and query run through separate pipes and the first to throw
-        // wins. Four here, in the order the parameters are read.
+        // The service this replaces reports one; four here, in reading order.
         let message = refused("0", "0xnope", "limt=1&limit=999");
 
         assert_eq!(

@@ -1,13 +1,12 @@
 //! One `App` from the environment's defaults, so a case says what it is testing.
 //!
-//! The cases below drive the real router rather than reassembling one, so a
-//! wiring mistake fails them rather than hiding behind a parallel definition.
+//! The cases drive the real router rather than reassembling one, so a wiring
+//! mistake fails them rather than hiding behind a parallel definition.
 //!
-//! **The four read ports are doubles and no database is reached.** What a store
-//! does with a query is its own crate's conformance suite to prove against a
-//! real server; what this binary adds is the join, the wire shape and the
-//! refusals. The two connections stay real for the readiness probe, which pings
-//! them.
+//! The four read ports are doubles: what a store does with a query is its own
+//! crate's conformance suite to prove, and what this binary adds is the join,
+//! the wire shape and the refusals. The two connections stay real for the
+//! readiness probe.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -79,9 +78,8 @@ pub(crate) fn handler(postgres: Pool) -> Router {
     app::handler(state(postgres))
 }
 
-/// What the four ports answer, before a case changes its mind about any of them.
-/// Plain fields rather than a builder: a `with_` method per field would be six
-/// methods that each assign one field.
+/// What the four ports answer, before a case changes its mind. Plain fields
+/// rather than six `with_` methods that each assign one.
 pub(crate) struct Stores {
     /// `None` is a chain this deployment has never indexed.
     pub(crate) sync: Option<SyncStatus>,
@@ -90,8 +88,8 @@ pub(crate) struct Stores {
     pub(crate) prices: HashMap<ReserveKey, ReservePrice>,
     pub(crate) staleness: Staleness,
 
-    /// How many times the price store was asked. The point of it is the answer
-    /// `0`: an explicit `as_of` skips the read rather than discarding it.
+    /// How many times the price store was asked; the point is the answer `0`,
+    /// because an explicit `as_of` skips the read rather than discarding it.
     pub(crate) price_reads: Arc<AtomicUsize>,
 }
 
@@ -232,8 +230,7 @@ pub(crate) async fn answered(error: BoxedAppError) -> (StatusCode, String) {
     (status, String::from_utf8(body.to_vec()).unwrap())
 }
 
-/// Everything one request produced, through a subscriber of the case's own, so
-/// cases run in parallel without reading each other's telemetry.
+/// Everything one request produced, through a subscriber of the case's own.
 pub(crate) struct Observed {
     pub(crate) request_id: Option<String>,
     pub(crate) spans: Vec<SpanData>,
@@ -244,9 +241,9 @@ pub(crate) struct Observed {
 
 /// Makes every callsite in this binary interesting, once.
 ///
-/// `tracing` caches callsite interest from the *global* subscriber, which is
-/// `NoSubscriber` here and answers "never". Without this, a case reads an empty
-/// log and a correct response — a harness failure wearing the code's clothes.
+/// `tracing` caches callsite interest from the global subscriber, which is
+/// `NoSubscriber` here and answers "never" — so without this a case reads an
+/// empty log and a correct response.
 pub(crate) fn interesting() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
@@ -300,8 +297,7 @@ pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     }
 }
 
-/// What a subscriber wrote, held where a case can read it back. One of these,
-/// for both suites here.
+/// What a subscriber wrote, held where a case can read it back.
 #[derive(Clone, Default)]
 pub(crate) struct Written(Arc<std::sync::Mutex<Vec<u8>>>);
 

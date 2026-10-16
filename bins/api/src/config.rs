@@ -1,22 +1,11 @@
 //! What this process is set up to be, parsed once, before anything else.
 //!
-//! The list below is the whole of it: every variable this service honours, the
-//! reader it goes through and the default it falls back to. Reading and
-//! validating are [`env`](mod@env)'s job — a port's range and a level's spelling mean
-//! nothing here. This is the mapping from a container's
-//! environment to a running service, and it is the only place that mapping
-//! exists.
+//! The only mapping from a container's environment to a running service.
+//! Reading and validating are [`env`](mod@env)'s job.
 //!
-//! **Every variable here has a reader**, because a field nobody uses is
-//! `dead_code` and the workspace denies it. So the list grows with the code that
-//! needs it — `API_GLOBAL_PREFIX` and the cursor secret arrived with the route,
-//! the `OTEL_*` group arrives with `telemetry` — and it cannot drift from what
-//! the process honours.
-//!
-//! **Two variables have no default**, and both refuse rather than fall back: a
-//! shared `POSITIONS_CURSOR_SECRET` is not a signature, and an unset
-//! `OTEL_SERVICE_NAME` is telemetry nothing can be attributed to.
-//! `OTEL_SDK_DISABLED=true` is how a process says it wants none of it.
+//! `POSITIONS_CURSOR_SECRET` and `OTEL_SERVICE_NAME` have no default and
+//! refuse rather than fall back; `OTEL_SDK_DISABLED=true` asks for no
+//! telemetry at all.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -27,12 +16,8 @@ use telemetry::Sampling;
 
 use crate::positions::MIN_SECRET_BYTES;
 
-/// A threshold past a day never fires on a chain with twelve-second blocks, so
-/// an unbounded one is a number with no wrong value.
-///
-/// **A bound, not a units check.** It catches `300000` — the price default in
-/// milliseconds — and not `60000`, the sync default in milliseconds, under a day
-/// and just as wrong. The name carries the unit; this only stops the absurd.
+/// A bound, not a units check: it catches `300000` and not `60000`, which is
+/// just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
 /// The six the specification spells, and no name of our own.
@@ -58,12 +43,11 @@ pub(crate) struct Config {
     /// every compose healthcheck already asks for `/health/ready`.
     pub(crate) prefix: String,
 
-    /// Outside the prefix, for the reason above. **Always served**: a contract
-    /// absent from the environment people call is not much of a contract.
+    /// Outside the prefix, and always served.
     pub(crate) docs_path: String,
 
     /// On disk, copied in by the image. Absent is the document with no viewer
-    /// in front of it, which is what a `cargo run` outside the image gets.
+    /// in front of it, which is what a `cargo run` gets.
     pub(crate) docs_assets: String,
     pub(crate) cursor_secret: String,
     pub(crate) staleness: Staleness,
@@ -73,24 +57,20 @@ pub(crate) struct Config {
 
 /// How old a number may be before a page says so.
 ///
-/// **Two rather than one**, because the clocks run at different rates: the
-/// indexer advances every block, the oracle is read every minute. Neither is the
-/// indexer's `INDEXER_STALL_THRESHOLD_MS`, which decides whether to drain a pod.
-/// Zero is a choice, and it means every page says so.
+/// Two rather than one, because the indexer advances every block and the oracle
+/// is read every minute. Neither is the indexer's `INDEXER_STALL_THRESHOLD_MS`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Staleness {
     pub(crate) sync: u64,
 
-    /// **How long since we last read the oracle, never since a feed moved** —
-    /// §7.5's trap. An hour without an `AnswerUpdated` is ordinary Chainlink
-    /// behaviour, so a threshold from feed cadence flags healthy feeds forever.
+    /// How long since we last read the oracle, never since a feed moved
+    /// (§7.5): an hour without an `AnswerUpdated` is ordinary Chainlink.
     pub(crate) price: u64,
 }
 
 impl Config {
-    /// Where the variables come from is [`Source`]'s to decide, and it decides
-    /// from the environment it is about to read — so a deployment changes it by
-    /// setting `APP_ENV` rather than by the binary being built differently.
+    /// Which files [`Source`] reads is decided by `APP_ENV`, not by how the
+    /// binary was built.
     ///
     /// # Errors
     ///
@@ -99,9 +79,7 @@ impl Config {
         Self::parse(&Source::from_env().read())
     }
 
-    /// Takes the environment as a map rather than reading it, so a case can
-    /// name three bad variables without touching global state the other tests
-    /// are running against.
+    /// Takes the environment as a map, so a case touches no global state.
     fn parse(vars: &HashMap<String, String>) -> Result<Self, Invalid> {
         let env = Env::new(vars);
 
@@ -122,9 +100,8 @@ impl Config {
                 url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
                 database: env.text("CLICKHOUSE_DATABASE", "default"),
                 user: env.text("CLICKHOUSE_USER", "default"),
-                // Empty is legitimate: a container started with
-                // `CLICKHOUSE_SKIP_USER_SETUP` has no password, which is how the
-                // test and CI instances run.
+                // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no
+                // password, which is how the test and CI instances run.
                 password: env.text("CLICKHOUSE_PASSWORD", ""),
             },
             postgres_url: env.url(
@@ -161,8 +138,7 @@ fn telemetry(env: &Env<'_>) -> Result<telemetry::Settings, Invalid> {
 #[cfg(test)]
 mod tests {
     //! The mapping, not the readers: which variable reaches which field, and
-    //! what a deployment that sets none of them gets. [`env`](mod@env) proves that a
-    //! port is a port.
+    //! what a deployment that sets none of them gets.
 
     use tracing::level_filters::LevelFilter;
 
@@ -183,8 +159,7 @@ mod tests {
         Config::parse(&vars)
     }
 
-    /// Every case that is not about them still has to set the two variables
-    /// with no default, because without either nothing else parses.
+    /// The two variables with no default, which every other case needs set.
     fn configured(pairs: &[(&str, &str)]) -> Result<Config, Invalid> {
         let mut all = pairs.to_vec();
         all.push(SECRET);
@@ -223,9 +198,8 @@ mod tests {
 
     #[test]
     fn refuses_to_boot_without_a_cursor_secret() {
-        // A default here would be a key every deployment shares, and a shared
-        // key is not a signature. The alternative to this refusal is a process
-        // that runs and serves forgeable cursors.
+        // A shared default key is not a signature: the alternative to this
+        // refusal is a process serving forgeable cursors.
         // The service name is set because telemetry is read first.
         let refusal = parse(&[("OTEL_SERVICE_NAME", "api-rust")])
             .err()
@@ -253,10 +227,8 @@ mod tests {
 
     #[test]
     fn bounds_a_staleness_threshold_without_pretending_to_check_its_units() {
-        // Both halves, because the bound only looks like a units check. The
-        // price default in milliseconds is past a day and refused; the sync
-        // default in milliseconds is under one and taken, which is why the name
-        // carries the unit rather than the ceiling.
+        // Both halves: the price default in milliseconds is refused, the sync
+        // default in milliseconds is taken and just as wrong.
         let refusal = configured(&[("API_PRICE_STALE_AFTER_SECONDS", "300000")])
             .err()
             .expect("expected a refusal")

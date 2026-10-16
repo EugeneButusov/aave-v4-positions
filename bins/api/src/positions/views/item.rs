@@ -15,9 +15,8 @@ use super::{Error, Labels, Prices, price_for};
 pub(crate) struct Item {
     chain_id: u32,
 
-    /// The position owner, lower-cased. Never the caller that routed the action
-    /// — position managers act on behalf of users, and crediting them would
-    /// attribute large parts of the book to a handful of router addresses.
+    /// The position owner, lower-cased. Never the caller that routed the
+    /// action: position managers act on behalf of users.
     user: String,
 
     /// The Spoke this position lives on. Always present, including when the
@@ -27,16 +26,14 @@ pub(crate) struct Item {
     spoke: String,
 
     /// The Spoke's own index for the reserve, and the only asset identity a
-    /// position has today. Not a protocol-wide asset id and not a token address
-    /// — no Spoke event carries one. The same id on two Spokes means two
-    /// different things.
+    /// position has today. Not a protocol-wide asset id and not a token
+    /// address — no Spoke event carries one. The same id on two Spokes means
+    /// two different things.
     reserve_id: String,
 
-    /// Supplied balance, in shares, scaled by the asset's decimals. Not an asset
-    /// amount. **Null exactly when `asset` is**: the scale lives on the asset,
-    /// so without it there is no honest way to render this, and an unscaled
-    /// integer in a field documented as decimal would be wrong by orders of
-    /// magnitude.
+    /// Supplied balance, in shares, scaled by the asset's decimals. Not an
+    /// asset amount. Null exactly when `asset` is, because the scale lives on
+    /// the asset.
     #[schema(required = true)]
     supplied_shares: Option<String>,
 
@@ -48,14 +45,13 @@ pub(crate) struct Item {
     #[schema(required = true)]
     premium_shares: Option<String>,
 
-    /// Premium offset, as a ray ratio. **Never null**, unlike the share fields
-    /// beside it: a ray's scale is the protocol's fixed 27 rather than the
-    /// asset's, so it can be rendered whether or not the registry has resolved
-    /// the reserve.
+    /// Premium offset, as a ray ratio. Never null, unlike the share fields: a
+    /// ray's scale is the protocol's fixed 27 rather than the asset's, so it
+    /// renders whether or not the registry has resolved the reserve.
     premium_offset_ray: String,
 
     /// Net principal supplied, in asset units. A *flow*, not a balance: it sums
-    /// what the events carried, and between events the interest index accrues
+    /// what the events carried, and the interest index accrues between events
     /// while emitting nothing. Null on the same terms as `supplied_shares`.
     #[schema(required = true)]
     net_supplied_amount: Option<String>,
@@ -64,12 +60,12 @@ pub(crate) struct Item {
     #[schema(required = true)]
     net_borrowed_amount: Option<String>,
 
-    /// The user's own collateral flag, and only that. It is not the `collateral`
-    /// position type, which additionally requires a non-zero collateral factor
-    /// under the version of the reserve config the user is pinned to — config
-    /// events this build does not ingest. Five of the Main Spoke's fourteen
-    /// reserves sit at a zero factor, so this flag alone overstates collateral
-    /// for those.
+    /// The user's own collateral flag, and only that. It is not the
+    /// `collateral` position type, which additionally requires a non-zero
+    /// collateral factor under the reserve config the user is pinned to —
+    /// config events this build does not ingest. Five of the Main Spoke's
+    /// fourteen reserves sit at a zero factor, so this flag alone overstates
+    /// collateral for those.
     using_as_collateral: bool,
 
     /// Ledger rows folded into this position. Never zero for a returned one.
@@ -82,8 +78,8 @@ pub(crate) struct Item {
 
     /// The shares above, converted to whole tokens at `valued_at`. Null when
     /// `asset` is, and also when the Hub has listed the asset but not yet
-    /// checkpointed its index — a zero there could not be told apart from a real
-    /// zero balance.
+    /// checkpointed its index — a zero there could not be told apart from a
+    /// real zero balance.
     #[schema(required = true)]
     value: Option<Worth>,
 }
@@ -97,7 +93,7 @@ impl Item {
         labels: &Labels,
         prices: &Prices,
     ) -> Result<Self, Error> {
-        // **The asset carries the scale.** An unscaled integer in a field the
+        // The asset carries the scale, and an unscaled integer in a field the
         // contract calls decimal is wrong by up to eighteen orders of magnitude.
         let decimals = position.asset.as_ref().map(|asset| asset.decimals);
         let scaled = |amount: I256| decimals.map(|decimals| scale::signed(amount, decimals));
@@ -118,8 +114,8 @@ impl Item {
             supplied_shares: scaled(position.supplied_shares),
             drawn_shares: scaled(position.drawn_shares),
             premium_shares: scaled(position.premium_shares),
-            // A ray is a ratio, so its scale is the protocol's fixed 27 and not
-            // the asset's — which is why this one survives an unresolved reserve.
+            // A ray is a ratio, so its scale is the protocol's fixed 27 — which
+            // is why this one survives an unresolved reserve.
             premium_offset_ray: scale::signed(position.premium_offset_ray, RAY_DECIMALS),
             net_supplied_amount: scaled(position.net_supplied_amount),
             net_borrowed_amount: scaled(position.net_borrowed_amount),
@@ -155,10 +151,10 @@ struct Asset {
     /// Token decimals, as the Hub listed them.
     decimals: u8,
 
-    /// The token's own `symbol()`. **A label, not an identity** — nothing stops
-    /// two tokens claiming the same one. `underlying` is the identity. Null when
-    /// the token has no `symbol()`, which ERC-20 permits, and also in the window
-    /// before enrichment has reached a newly listed asset.
+    /// The token's own `symbol()`. A label, not an identity — nothing stops two
+    /// tokens claiming the same one, and `underlying` is the identity. Null
+    /// when the token has no `symbol()`, which ERC-20 permits, and in the
+    /// window before enrichment has reached a newly listed asset.
     #[schema(required = true)]
     symbol: Option<String>,
 
@@ -170,8 +166,7 @@ struct Asset {
 impl Asset {
     fn new(asset: &PositionAsset, labels: &Labels) -> Self {
         // Absent means enrichment has not reached the token; present with a
-        // null symbol means it was asked and has none. Both serve null — the
-        // store keeps them apart so the sweep knows what to do.
+        // null symbol means it was asked and has none. Both serve null.
         let label = labels.get(&asset.underlying);
 
         Self {
@@ -208,24 +203,23 @@ struct Worth {
     /// caller can reproduce the arithmetic rather than trust it.
     drawn_index: String,
 
-    /// What Aave's own oracle prices one whole token at, in dollars. This is the
-    /// protocol's view rather than the market's, which is the right one for a
-    /// position: it is the number that drives liquidation. Null when the oracle
-    /// has not been read for this reserve yet, or when `as_of` is set.
+    /// What Aave's own oracle prices one whole token at, in dollars — the
+    /// protocol's view rather than the market's, and the number that drives
+    /// liquidation. Null when the oracle has not been read for this reserve
+    /// yet, or when `as_of` is set.
     #[schema(required = true)]
     price_usd: Option<String>,
 
-    /// What `supplied_amount` is worth, in dollars. Every digit the protocol
-    /// computed is kept — §7.1's unit puts `1e26` at one dollar, and this is
-    /// that number divided rather than rounded, so it still reconciles against
-    /// `getUserAccountData` exactly. Null on the same terms as `price_usd`.
+    /// What `supplied_amount` is worth, in dollars, keeping every digit the
+    /// protocol computed so it still reconciles against `getUserAccountData`.
+    /// Null on the same terms as `price_usd`.
     #[schema(required = true)]
     supplied_amount_usd: Option<String>,
 
-    /// What `total_debt` is worth, in dollars. Note this prices the **rounded**
-    /// token amount, which is what is owed and what a caller should display. The
-    /// health factor is computed from an unrounded ray-scaled debt instead, so
-    /// the two will differ in the last digits by design.
+    /// What `total_debt` is worth, in dollars. This prices the **rounded**
+    /// token amount, which is what is owed and what a caller should display.
+    /// The health factor is computed from an unrounded ray-scaled debt instead,
+    /// so the two differ in the last digits by design.
     #[schema(required = true)]
     total_debt_usd: Option<String>,
 }
@@ -253,12 +247,9 @@ struct Usd {
 }
 
 impl Usd {
-    /// Computed in the protocol's unit and divided only on the way out: scaling
-    /// the inputs first rounds twice, and §7.1's reconciliation is exact or
-    /// nothing.
-    ///
-    /// `decimals` is the **Hub's**, from `AddAsset`, never the token's own.
-    /// Where they disagree, the Hub's is what the position is worth to Aave.
+    /// Computed in the protocol's unit and divided only on the way out:
+    /// scaling the inputs first rounds twice, and §7.1's reconciliation is
+    /// exact or nothing.
     fn new(asset: &PositionAsset, value: &Valuation, price: &ReservePrice) -> Result<Self, Error> {
         Ok(Self {
             price: scale::unsigned(price.price, ORACLE_DECIMALS),
@@ -267,9 +258,7 @@ impl Usd {
                 VALUE_DECIMALS,
             ),
             // Rounded up into token units, as the Spoke rounds a repayment:
-            // right to display, wrong for a health factor, which divides an
-            // unrounded ray-scaled debt. The two are meant to differ in the
-            // last digits.
+            // right to display, wrong for a health factor.
             total_debt: scale::unsigned(
                 to_value(value.total_debt, asset.decimals, price.price)?,
                 VALUE_DECIMALS,

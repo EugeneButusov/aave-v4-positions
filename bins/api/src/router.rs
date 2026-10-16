@@ -1,10 +1,8 @@
 //! How a path this service does not serve is refused, and where the versioned
 //! ones hang.
 //!
-//! **Nothing this service does is named here** — that is [`crate::app`]'s, which
-//! already holds the stores behind it. What is left is the mechanism: prefix
-//! arithmetic and two fallbacks, neither of which moves when an endpoint is
-//! added.
+//! Nothing this service does is named here — that is [`crate::app`]'s. What is
+//! left is prefix arithmetic and two fallbacks.
 
 use axum::Router;
 use axum::http::{Method, Uri};
@@ -22,12 +20,9 @@ pub(crate) fn mount(prefix: &str) -> String {
 }
 
 /// Where the document hangs, given whatever a deployment wrote in
-/// `API_DOCS_PATH`. Trimmed as in [`mount`], and an empty value asks for no
-/// segment at all — so `/openapi.json` rather than `//openapi.json`.
+/// `API_DOCS_PATH`. Trimmed as in [`mount`].
 ///
-/// Outside the prefix and unversioned, like the probes: a document whose own
-/// address moved with the API version is the one thing a caller cannot look
-/// up.
+/// Outside the prefix and unversioned, like the probes.
 pub(crate) fn docs(path: &str) -> String {
     match path.trim_matches('/') {
         "" => String::new(),
@@ -37,25 +32,20 @@ pub(crate) fn docs(path: &str) -> String {
 
 /// Both fallbacks, over a router that is already finished.
 ///
-/// **It takes the router rather than being called on one**, which makes the
-/// ordering unwrongable: `method_not_allowed_fallback` sets a fallback on every
-/// `MethodRouter` already registered, so a route added afterwards answers axum's
-/// 405 where the contract says 404. As an argument, there is nothing to add.
+/// Takes the router rather than being called on one, because
+/// `method_not_allowed_fallback` only covers the `MethodRouter`s already
+/// registered — a route added afterwards would answer axum's 405.
 pub(crate) fn refuse_unmatched(router: Router) -> Router {
     router
         .fallback(not_found)
         .method_not_allowed_fallback(not_found)
 }
 
-/// What both fallbacks answer, and the reason there are two of them.
+/// What both fallbacks answer. The contract does not distinguish an unmatched
+/// path from an unmatched method: `POST /health/live` is
+/// `404 Cannot POST /health/live`, where axum's default is a 405.
 ///
-/// The contract does not distinguish an unmatched path from an unmatched
-/// *method*: `POST /health/live` is `404 Cannot POST /health/live`, not a 405.
-/// axum's default is a 405 with an `allow` header and an empty body, so both
-/// fallbacks are set to this.
-///
-/// **The whole request target, not just the path**: `GET /nope?a=1&b=2` comes
-/// back verbatim, which `uri.path()` would not give.
+/// The whole request target, not just the path, which `uri.path()` would drop.
 async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
     let target = uri
         .path_and_query()
@@ -67,7 +57,7 @@ async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
 #[cfg(test)]
 mod tests {
     //! Driven through `app::handler`, so a route moved out from under the
-    //! fallbacks fails here rather than in review.
+    //! fallbacks fails here.
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -103,9 +93,8 @@ mod tests {
 
     #[tokio::test]
     async fn the_method_fallback_reaches_a_nested_route_too() {
-        // The property `refuse_unmatched` exists to keep: it is applied to a
-        // finished router, so the versioned routes nested inside it are covered
-        // as well. Applied before the nesting, this answers axum's 405.
+        // Applied to a finished router, so the versioned routes nested inside
+        // are covered too. Applied before the nesting, this is a 405.
         let (status, body) = refused(
             "POST",
             "/api/v1/chains/1/users/0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8/positions",
@@ -147,8 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_wrong_method_on_a_real_path_is_a_404_and_not_a_405() {
-        // The one place the port talks axum out of being more correct than the
-        // thing it replaces: its default here is a 405 with an `allow` header.
+        // Where the port talks axum out of its own 405.
         let (status, body) = refused("POST", "/health/live").await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);

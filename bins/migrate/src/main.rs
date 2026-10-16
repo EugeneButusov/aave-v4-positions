@@ -1,13 +1,10 @@
 //! Applies both schemas, then exits.
 //!
 //! Its own binary rather than something the services do at boot: two replicas
-//! starting together would race each other through the same DDL. Compose runs it
-//! as a one-shot service the indexer waits on; a deployment runs it before
-//! rolling pods.
+//! starting together would race each other through the same DDL.
 //!
-//! The mechanism is refinery, not a hand-rolled runner. It drives Postgres
-//! natively; ClickHouse it drives through the adapter in [`clickhouse`], which is
-//! the only part that had to be written.
+//! refinery drives Postgres natively; ClickHouse it drives through the adapter
+//! in [`clickhouse`], which is the only part that had to be written.
 
 mod clickhouse;
 
@@ -16,15 +13,9 @@ use std::process::ExitCode;
 use migrations::Source;
 use refinery_core::{AsyncMigrate, Error, Migration, Report, Runner};
 
-/// Which database a failure was against.
-///
-/// **Said here rather than inherited from whatever failed underneath.** Before
-/// this, the Postgres stage looked like it named itself and only did so because
-/// `postgres::Error` happens to spell "Postgres" in its message, and the
-/// ClickHouse stage did not name itself at all — a missing database came back as
-/// refinery quoting the server and nothing else. A dependency's wording is the
-/// dependency's to change; which of two databases a deploy died on is ours to
-/// state.
+/// Which database a failure was against, said here rather than inherited from
+/// whatever failed underneath: a dependency's wording is the dependency's to
+/// change, and refinery names neither database.
 #[derive(Debug, thiserror::Error)]
 #[error("the {database} migrations could not be applied")]
 struct Failed {
@@ -47,8 +38,8 @@ impl Failed {
 
 /// Flattens the groups into the migration set refinery is handed.
 ///
-/// The one thing here that has to know what a migration *means*, which is why
-/// it did not go to `migrations` with the files.
+/// The one thing that has to know what a migration means, which is why it did
+/// not go to `migrations` with the files.
 ///
 /// # Errors
 ///
@@ -62,23 +53,17 @@ fn union(sources: &[Source]) -> Result<Vec<Migration>, Error> {
         .collect()
 }
 
-/// `current_thread`, because there is no concurrency here to serve: one
-/// connection per database and a strictly sequential walk through the statements.
-/// A worker pool would be startup cost for a process that exits in under a second.
+/// `current_thread`: one connection per database and a sequential walk, so a
+/// worker pool would be startup cost for a process that exits in a second.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            // The chain, not just the head: the top line says which stage failed
-            // and the cause underneath is the one naming the table or the syntax.
-            //
-            // A cause already quoted by the line above it is skipped, because
-            // the two error conventions in this tree disagree — ours name their
-            // own stage and leave the rest to `source()`, `deadpool`'s
-            // interpolate theirs — and a naive walk prints the bottom half
-            // twice. `ops::check` reconciles them the same way, for the same
-            // reason, into a single line rather than these.
+            // The chain, not just the head: the top line says which stage
+            // failed and the cause underneath names the table or the syntax. A
+            // cause already quoted above it is skipped, as
+            // `ops::error_message_with_causes` does and for the same reason.
             let mut said = error.to_string();
             eprintln!("migrate: {said}");
 
@@ -103,10 +88,8 @@ async fn run() -> Result<(), Failed> {
     let mut target = clickhouse::ClickHouse(clickhouse_client::build_client(clickhouse_config()));
     apply("clickhouse", migrations::CLICKHOUSE, &mut target).await?;
 
-    // One connection out of the pool, which is the only way this workspace
-    // connects to Postgres. A job that runs to completion wants exactly one and
-    // then exits; that it comes from a pool costs nothing and means there is not
-    // a second constructor to keep in step.
+    // The pool is the only way this workspace connects to Postgres; one
+    // connection out of it costs nothing and leaves no second constructor.
     let url = env("POSTGRES_URL", POSTGRES_URL);
     let pool = postgres::build_pool(&url).map_err(|error| Failed::at("postgres", error))?;
     let mut target = postgres::connection(&pool)
@@ -150,18 +133,15 @@ fn report(database: &str, applied: &Report) {
 
 const POSTGRES_URL: &str = "postgres://postgres@localhost:5432/postgres";
 
-/// The environment is read here and nowhere else.
-///
-/// The database crates take their configuration as parameters, so they can be
-/// used twice in one process against two servers and can be tested without
-/// setting global state. The binary is the one place that has an environment.
+/// The environment is read here and nowhere else: the database crates take
+/// their configuration as parameters, so a case needs no global state.
 fn clickhouse_config() -> clickhouse_client::Config {
     clickhouse_client::Config {
         url: env("CLICKHOUSE_URL", "http://localhost:8123"),
         database: env("CLICKHOUSE_DATABASE", "default"),
         user: env("CLICKHOUSE_USER", "default"),
-        // Empty is legitimate: a container started with CLICKHOUSE_SKIP_USER_SETUP
-        // has no password, which is how the test and CI instances run.
+        // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no
+        // password, which is how the test and CI instances run.
         password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
     }
 }
@@ -183,9 +163,8 @@ mod tests {
         assert_eq!(union(POSTGRES).unwrap().len(), 4);
     }
 
-    /// Versions ascend within each database, which is the order refinery applies
-    /// in. Per union, never across both: `001_spoke_events` and
-    /// `001_indexer_cursor` both exist, so the two together genuinely collide.
+    /// Versions ascend within each database, which is the order refinery
+    /// applies in. Per union, never across both, which genuinely collides.
     #[test]
     fn each_union_ascends() {
         for sources in [CLICKHOUSE, POSTGRES] {
