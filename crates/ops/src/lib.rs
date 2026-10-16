@@ -12,13 +12,17 @@
 //! report survives the port, because `checks[]` is a wire contract callers
 //! read, and the resolution does not: a caller passes one closure listing its
 //! dependencies, and [`check`] turns each answer into a row.
+//!
+//! [`error_message_with_causes`] sits beside them because both sides need it:
+//! it renders the `error` on a failed check, and the line `bins/api` logs when
+//! a request fails.
 
+mod cause;
 mod health;
 mod probe;
 mod shutdown;
 
-pub use health::{
-    Alive, CheckResult, CheckStatus, Liveness, Readiness, Report, check, error_message_with_causes,
-};
+pub use cause::error_message_with_causes;
+pub use health::{Alive, CheckResult, CheckStatus, Liveness, Readiness, Report, check};
 pub use probe::{HEALTH_PREFIX, Uptime, probe_router};
 pub use shutdown::ShutdownFlag;
