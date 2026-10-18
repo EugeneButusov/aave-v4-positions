@@ -33,7 +33,7 @@ use tracing_subscriber::layer::SubscriberExt as _;
 
 use crate::app::{self as app, App};
 use crate::config::Staleness;
-use crate::errors::BoxedAppError;
+use crate::errors::ApiError;
 use crate::positions::Signer;
 
 /// Thirty-two bytes, which is the minimum `config` enforces.
@@ -221,7 +221,7 @@ pub(crate) async fn get(
 }
 
 /// Status and body of a failure, which is the pair an error case reads.
-pub(crate) async fn answered(error: BoxedAppError) -> (StatusCode, String) {
+pub(crate) async fn answered(error: ApiError) -> (StatusCode, String) {
     let response = error.into_response();
 
     let status = response.status();

@@ -7,7 +7,7 @@
 use axum::Router;
 use axum::http::{Method, Uri};
 
-use crate::errors::{self, BoxedAppError};
+use crate::errors::{self, ApiError};
 
 /// Where the versioned routes hang, given whatever a deployment wrote in
 /// `API_GLOBAL_PREFIX`. Slashes are trimmed, and an empty prefix is one asking
@@ -46,7 +46,7 @@ pub(crate) fn refuse_unmatched(router: Router) -> Router {
 /// `404 Cannot POST /health/live`, where axum's default is a 405.
 ///
 /// The whole request target, not just the path, which `uri.path()` would drop.
-async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
+async fn not_found(method: Method, uri: Uri) -> ApiError {
     let target = uri
         .path_and_query()
         .map_or_else(|| uri.path(), axum::http::uri::PathAndQuery::as_str);

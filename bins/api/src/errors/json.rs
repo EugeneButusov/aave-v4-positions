@@ -17,52 +17,48 @@ use axum::response::{IntoResponse, Response};
 use serde::{Serialize, Serializer};
 use utoipa::ToSchema;
 
-use super::{AppError, BoxedAppError};
+use super::ApiError;
 
 /// A failure the caller caused, carrying the status it deserves.
-///
-/// `String` rather than `Cow`: six of the route's refusals quote what was
-/// sent, and the two constants allocate once on a path answering an error.
-pub(crate) fn custom(status: StatusCode, message: String) -> BoxedAppError {
-    Box::new(CustomApiError { status, message })
+pub(crate) fn refused(status: StatusCode, message: String) -> ApiError {
+    ApiError::Refused(Box::new(ApiErrorResponse::new(status, message)))
 }
 
-/// Deliberately not a `std::error::Error`, hence the hand-written `Display`:
-/// it would overlap the blanket impl in the parent.
-#[derive(Debug)]
-struct CustomApiError {
-    status: StatusCode,
-    message: String,
-}
-
-impl fmt::Display for CustomApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message.fmt(f)
-    }
-}
-
-impl AppError for CustomApiError {
-    fn response(&self) -> Response {
-        let body = ApiErrorResponse {
-            message: &self.message,
-            // Derived rather than passed: the `error` key is the status's
-            // reason phrase, and every status reaching here is registered.
-            error: self.status.canonical_reason().unwrap_or("Error"),
-            status_code: self.status,
-        };
-
-        (self.status, Json(body)).into_response()
-    }
-}
-
+// Deliberately not a `std::error::Error`: it would overlap the blanket impl in
+// the parent. The `///` below is the published schema description, so nothing
+// about this file's internals belongs in it.
 /// The JSON body returned for API errors.
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct ApiErrorResponse<'a> {
-    message: &'a str,
+pub(crate) struct ApiErrorResponse {
+    message: String,
     error: &'static str,
     #[serde(serialize_with = "code")]
     #[schema(value_type = u16, example = 404)]
     status_code: StatusCode,
+}
+
+impl ApiErrorResponse {
+    fn new(status: StatusCode, message: String) -> Self {
+        Self {
+            message,
+            // Derived rather than passed: the `error` key is the status's
+            // reason phrase, and every status reaching here is registered.
+            error: status.canonical_reason().unwrap_or("Error"),
+            status_code: status,
+        }
+    }
+}
+
+impl fmt::Display for ApiErrorResponse {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.message.fmt(out)
+    }
+}
+
+impl IntoResponse for ApiErrorResponse {
+    fn into_response(self) -> Response {
+        (self.status_code, Json(self)).into_response()
+    }
 }
 
 fn code<S: Serializer>(status: &StatusCode, out: S) -> Result<S::Ok, S::Error> {
@@ -90,7 +86,7 @@ mod tests {
     #[tokio::test]
     async fn the_reason_phrase_is_the_status_and_is_not_passed_in() {
         // A 400 built here has never had "Bad Request" written next to it.
-        let (status, body) = answered(custom(
+        let (status, body) = answered(refused(
             StatusCode::BAD_REQUEST,
             "asOf is in the future".to_owned(),
         ))
