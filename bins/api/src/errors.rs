@@ -5,19 +5,17 @@
 //! which answers the envelope naming it. Any `std` error becomes the first by
 //! `?`, so a handler needs no conversion to return a store read.
 //!
-//! The envelope lives in [`json`] — this module is the vocabulary of failures,
-//! that one is the wire contract. A 5xx answers fixed text rather than the
-//! envelope; `docs/rust-migration.md` records the difference.
-
-mod json;
-
-pub(crate) use json::ErrorEnvelope;
+//! A 5xx answers fixed text rather than the envelope;
+//! `docs/rust-migration.md` records the difference.
 
 use std::error::Error;
 use std::fmt;
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use serde::{Serialize, Serializer};
+use utoipa::ToSchema;
 
 /// Everything a request can fail with.
 #[derive(Debug)]
@@ -28,15 +26,50 @@ pub(crate) enum ApiError {
     Internal(Box<dyn Error + Send>),
 
     /// The caller's, said back to them. Boxed so a `Result` carrying this
-    /// stays two words rather than six.
+    /// stays two words rather than seven.
     Refused(Box<ErrorEnvelope>),
+}
+
+// One envelope for every refusal, including the ones the framework raises for
+// an unknown route. Field order is part of the contract — `message`, then
+// `error`, then the status — as is the spelling of the third key, which
+// `docs/rust-migration.md` covers. This moves when the contract moves, which
+// is a release note; the enum above moves when this service grows a new way to
+// fail, which nobody outside can see.
+//
+// The `///` below is the published schema description, so nothing about this
+// file's internals belongs in it.
+/// The JSON body returned for API errors.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct ErrorEnvelope {
+    message: String,
+    error: &'static str,
+    #[serde(serialize_with = "code")]
+    #[schema(value_type = u16, example = 404)]
+    status_code: StatusCode,
+}
+
+impl ErrorEnvelope {
+    fn new(status: StatusCode, message: String) -> Self {
+        Self {
+            message,
+            // Derived rather than passed: the `error` key is the status's
+            // reason phrase, and every status reaching here is registered.
+            error: status.canonical_reason().unwrap_or("Error"),
+            status_code: status,
+        }
+    }
+}
+
+fn code<S: Serializer>(status: &StatusCode, out: S) -> Result<S::Ok, S::Error> {
+    out.serialize_u16(status.as_u16())
 }
 
 impl fmt::Display for ApiError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Internal(error) => error.fmt(out),
-            Self::Refused(refusal) => refusal.fmt(out),
+            Self::Refused(refusal) => refusal.message.fmt(out),
         }
     }
 }
@@ -64,7 +97,7 @@ impl IntoResponse for ApiError {
 
                 (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
             }
-            Self::Refused(refusal) => refusal.into_response(),
+            Self::Refused(refusal) => (refusal.status_code, Json(refusal)).into_response(),
         }
     }
 }
@@ -74,13 +107,16 @@ impl IntoResponse for ApiError {
 /// The message is echoed from the request line, so it reaches a log and a
 /// browser. Nothing else of ours goes into it.
 pub(crate) fn not_found(message: String) -> ApiError {
-    json::refused(StatusCode::NOT_FOUND, message)
+    ApiError::Refused(Box::new(ErrorEnvelope::new(StatusCode::NOT_FOUND, message)))
 }
 
 /// What the caller got wrong, said back to them. Without it a malformed
 /// address answers a 500, telling a caller their mistake is the server's.
 pub(crate) fn bad_request(message: String) -> ApiError {
-    json::refused(StatusCode::BAD_REQUEST, message)
+    ApiError::Refused(Box::new(ErrorEnvelope::new(
+        StatusCode::BAD_REQUEST,
+        message,
+    )))
 }
 
 #[cfg(test)]
@@ -131,5 +167,29 @@ mod tests {
         assert!(logged.contains("the sync status read failed"), "{logged}");
         assert!(logged.contains("Connection refused"), "{logged}");
         assert_eq!(body, "Internal Server Error");
+    }
+
+    #[tokio::test]
+    async fn serialises_in_the_order_the_contract_fixes() {
+        // The order is load-bearing: a comparator reads it.
+        let (status, body) = answered(not_found("Cannot GET /nope".to_owned())).await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body,
+            r#"{"message":"Cannot GET /nope","error":"Not Found","status_code":404}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn the_reason_phrase_is_the_status_and_is_not_passed_in() {
+        // A 400 built here has never had "Bad Request" written next to it.
+        let (status, body) = answered(bad_request("asOf is in the future".to_owned())).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body,
+            r#"{"message":"asOf is in the future","error":"Bad Request","status_code":400}"#
+        );
     }
 }
