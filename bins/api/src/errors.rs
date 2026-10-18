@@ -11,7 +11,7 @@
 
 mod json;
 
-pub(crate) use json::ApiErrorResponse;
+pub(crate) use json::Envelope;
 
 use std::error::Error;
 use std::fmt;
@@ -29,7 +29,7 @@ pub(crate) enum ApiError {
 
     /// The caller's, said back to them. Boxed so a `Result` carrying this
     /// stays two words rather than six.
-    Refused(Box<ApiErrorResponse>),
+    Refused(Box<Envelope>),
 }
 
 impl fmt::Display for ApiError {
