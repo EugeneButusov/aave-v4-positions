@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use alloy_primitives::Address;
 
-use crate::errors::{self, BoxedAppError};
+use crate::errors::{self, ApiError};
 
 pub(crate) const DEFAULT_LIMIT: u32 = 50;
 pub(crate) const MAX_LIMIT: u32 = 200;
@@ -52,7 +52,7 @@ impl Listing {
     /// # Errors
     ///
     /// A 400 naming every parameter that was wrong.
-    pub(crate) fn parse(chain_id: &str, user: &str, query: &str) -> Result<Self, BoxedAppError> {
+    pub(crate) fn parse(chain_id: &str, user: &str, query: &str) -> Result<Self, ApiError> {
         let mut reading = Reading::new(query);
 
         let listing = Self {
@@ -103,7 +103,7 @@ impl Reading {
     /// # Errors
     ///
     /// A 400 listing every fault, in the order the parameters are read.
-    fn finish(self) -> Result<(), BoxedAppError> {
+    fn finish(self) -> Result<(), ApiError> {
         if self.faults.is_empty() {
             Ok(())
         } else {
@@ -199,7 +199,7 @@ mod tests {
     const ALICE: &str = "0x82D16fF1C724ab72F218A3f7f6DD3E5385ee87E8";
     const SPOKE: &str = "0x94e7A5dCbE816e498b89aB752661904E2F56c485";
 
-    fn parse(query: &str) -> Result<Listing, BoxedAppError> {
+    fn parse(query: &str) -> Result<Listing, ApiError> {
         Listing::parse("1", ALICE, query)
     }
 

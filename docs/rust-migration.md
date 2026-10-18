@@ -832,14 +832,37 @@ named beside the code it shaped:
 | [crates.io `crates_io_env_vars`](https://github.com/rust-lang/crates.io/blob/main/crates/crates_io_env_vars/src/lib.rs) | hand-rolled env reading over a config crate, and `dotenvy` beside it |
 | [crates.io `src/middleware.rs`](https://github.com/rust-lang/crates.io/blob/main/src/middleware.rs) | `CatchPanicLayer`, so a panicking handler answers rather than dropping the socket |
 | [meilisearch `src/option.rs`](https://github.com/meilisearch/meilisearch/blob/main/crates/meilisearch/src/option.rs) | the `clap(env)` shape, measured and then declined — it reports one bad variable, not all of them |
+| [Zed collab `src/lib.rs`](https://github.com/zed-industries/zed/blob/main/crates/collab/src/lib.rs) | one enum for every failure, with `IntoResponse` on the enum itself |
+| [crates.io `util/errors.rs`](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs) | the boxed-trait-object alternative, ported and then replaced — see below |
 | [`clickhouse` 0.15.1](https://github.com/ClickHouse/clickhouse-rs) · [`deadpool` 0.12.3](https://github.com/bikeshedder/deadpool) | what `Clone` does to a client and a pool: transport shared, config copied |
 
-Still to be spent, on the route: [crates.io `util/errors.rs`](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs) and
-[Zed collab](https://github.com/zed-industries/zed/blob/main/crates/collab/src/lib.rs) converge on one error type with an
-`IntoResponse`; [crates.io `openapi.rs`](https://github.com/rust-lang/crates.io/blob/main/src/openapi.rs) registers routes with
-their documentation so neither can drift, and snapshots the document with `insta`; its
-[pagination](https://github.com/rust-lang/crates.io/blob/main/src/controllers/helpers/pagination.rs) leaves the cursor
-unsigned, which is the one place we diverge and say why.
+**Spent on the route.** [crates.io `openapi.rs`](https://github.com/rust-lang/crates.io/blob/main/src/openapi.rs)
+registers routes with their documentation so neither can drift, and snapshots the document with
+`insta` — taken whole, and `publishes_the_contract_this_build_serves` is that snapshot. Its
+[pagination](https://github.com/rust-lang/crates.io/blob/main/src/controllers/helpers/pagination.rs)
+leaves the cursor unsigned, where `positions/cursor.rs` signs it and says why.
+
+**The error type went to Zed's shape, not crates.io's, and that is a reversal.**
+[crates.io `util/errors.rs`](https://github.com/rust-lang/crates.io/blob/main/src/util/errors.rs) is a
+boxed trait object — `trait AppError` with `fn response(&self) -> Response`, `type BoxedAppError =
+Box<dyn AppError>`, a blanket `impl<E: Error + Send + 'static> AppError for E`, and a
+`custom(status, detail)` helper over a `CustomApiError { status, detail }` — and this route was a
+faithful port of it, down to the names.
+[Zed collab](https://github.com/zed-industries/zed/blob/main/crates/collab/src/lib.rs) is the other
+shape: one enum, `Error { Http, Database, Internal }`, with `IntoResponse` on the enum itself.
+
+Held against each other here the trait bought nothing. It had exactly one hand-written implementor,
+and the trait, its box alias, the two impls on that alias and the blanket impl came to **14
+top-level items against the enum's 12**, at the same **16 bytes** once the refused variant is boxed
+(inline it is 48, and every handler's `Result` doubles). The trait's one method also had to take
+`&self` rather than consume, so an error could be logged and answered from the same value; the enum
+logs inside `into_response` and that constraint goes with it.
+
+So `errors.rs` is Zed's enum carrying crates.io's blanket conversion, which Zed does not have:
+`impl<E: Error + Send + 'static> From<E> for ApiError` is what lets a handler `?` a store read, where
+Zed routes everything through `anyhow`. The envelope is ours either way — crates.io publishes
+`{"errors":[{"detail":…}]}` and this contract is `{message, error, status_code}`, measured against
+Nest.
 
 **What none of them could settle** is the wire contract. The probe payloads, their status codes and
 the drain's ordering came from measuring the running TypeScript service and reading
