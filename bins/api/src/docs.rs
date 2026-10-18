@@ -390,7 +390,7 @@ mod tests {
             assert_eq!(
                 positions(&document)["responses"][status]["content"]["application/json"]["schema"]
                     ["$ref"],
-                "#/components/schemas/ApiErrorResponse",
+                "#/components/schemas/ErrorEnvelope",
                 "{status}"
             );
         }

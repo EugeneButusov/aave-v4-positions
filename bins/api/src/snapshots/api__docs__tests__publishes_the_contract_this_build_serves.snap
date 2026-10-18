@@ -5,29 +5,6 @@ expression: document().await
 {
   "components": {
     "schemas": {
-      "ApiErrorResponse": {
-        "description": "The JSON body returned for API errors.",
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "status_code": {
-            "example": 404,
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "message",
-          "error",
-          "status_code"
-        ],
-        "type": "object"
-      },
       "Asset": {
         "description": "What a reserve refers to, once the registry and the Hub have both been read.",
         "properties": {
@@ -71,6 +48,29 @@ expression: document().await
           "decimals",
           "symbol",
           "name"
+        ],
+        "type": "object"
+      },
+      "ErrorEnvelope": {
+        "description": "The JSON body returned for API errors.",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "status_code": {
+            "example": 404,
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "message",
+          "error",
+          "status_code"
         ],
         "type": "object"
       },
@@ -448,7 +448,7 @@ expression: document().await
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },
@@ -458,7 +458,7 @@ expression: document().await
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             },

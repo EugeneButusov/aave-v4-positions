@@ -21,19 +21,15 @@ use super::ApiError;
 
 /// A failure the caller caused, carrying the status it deserves.
 pub(crate) fn refused(status: StatusCode, message: String) -> ApiError {
-    ApiError::Refused(Box::new(Envelope::new(status, message)))
+    ApiError::Refused(Box::new(ErrorEnvelope::new(status, message)))
 }
 
 // Deliberately not a `std::error::Error`: it would overlap the blanket impl in
 // the parent. The `///` below is the published schema description, so nothing
 // about this file's internals belongs in it.
-//
-// `ApiErrorResponse` is the published component name and is contractual; the
-// type is not a response, it is the body of one.
 /// The JSON body returned for API errors.
 #[derive(Debug, Serialize, ToSchema)]
-#[schema(as = ApiErrorResponse)]
-pub(crate) struct Envelope {
+pub(crate) struct ErrorEnvelope {
     message: String,
     error: &'static str,
     #[serde(serialize_with = "code")]
@@ -41,7 +37,7 @@ pub(crate) struct Envelope {
     status_code: StatusCode,
 }
 
-impl Envelope {
+impl ErrorEnvelope {
     fn new(status: StatusCode, message: String) -> Self {
         Self {
             message,
@@ -53,13 +49,13 @@ impl Envelope {
     }
 }
 
-impl fmt::Display for Envelope {
+impl fmt::Display for ErrorEnvelope {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.message.fmt(out)
     }
 }
 
-impl IntoResponse for Envelope {
+impl IntoResponse for ErrorEnvelope {
     fn into_response(self) -> Response {
         (self.status_code, Json(self)).into_response()
     }
