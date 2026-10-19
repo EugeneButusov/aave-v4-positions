@@ -102,21 +102,24 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// What this deployment has never heard of.
-///
-/// The message is echoed from the request line, so it reaches a log and a
-/// browser. Nothing else of ours goes into it.
-pub(crate) fn not_found(message: String) -> ApiError {
-    ApiError::Refused(Box::new(ErrorEnvelope::new(StatusCode::NOT_FOUND, message)))
-}
+impl ApiError {
+    /// What this deployment has never heard of.
+    ///
+    /// The message is echoed from the request line, so it reaches a log and a
+    /// browser. Nothing else of ours goes into it.
+    pub(crate) fn not_found(message: String) -> Self {
+        Self::refused(StatusCode::NOT_FOUND, message)
+    }
 
-/// What the caller got wrong, said back to them. Without it a malformed
-/// address answers a 500, telling a caller their mistake is the server's.
-pub(crate) fn bad_request(message: String) -> ApiError {
-    ApiError::Refused(Box::new(ErrorEnvelope::new(
-        StatusCode::BAD_REQUEST,
-        message,
-    )))
+    /// What the caller got wrong, said back to them. Without it a malformed
+    /// address answers a 500, telling a caller their mistake is the server's.
+    pub(crate) fn bad_request(message: String) -> Self {
+        Self::refused(StatusCode::BAD_REQUEST, message)
+    }
+
+    fn refused(status: StatusCode, message: String) -> Self {
+        Self::Refused(Box::new(ErrorEnvelope::new(status, message)))
+    }
 }
 
 #[cfg(test)]
@@ -172,7 +175,7 @@ mod tests {
     #[tokio::test]
     async fn serialises_in_the_order_the_contract_fixes() {
         // The order is load-bearing: a comparator reads it.
-        let (status, body) = answered(not_found("Cannot GET /nope".to_owned())).await;
+        let (status, body) = answered(ApiError::not_found("Cannot GET /nope".to_owned())).await;
 
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(
@@ -184,7 +187,8 @@ mod tests {
     #[tokio::test]
     async fn the_reason_phrase_is_the_status_and_is_not_passed_in() {
         // A 400 built here has never had "Bad Request" written next to it.
-        let (status, body) = answered(bad_request("asOf is in the future".to_owned())).await;
+        let (status, body) =
+            answered(ApiError::bad_request("asOf is in the future".to_owned())).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(

@@ -9,7 +9,7 @@
 use axum::Router;
 use axum::http::{Method, Uri};
 
-use crate::errors::{self, ApiError};
+use crate::errors::ApiError;
 
 /// Where the versioned routes hang, given whatever a deployment wrote in
 /// `API_GLOBAL_PREFIX`. Slashes are trimmed, and an empty prefix is one asking
@@ -61,7 +61,7 @@ async fn not_found(method: Method, uri: Uri) -> ApiError {
         .path_and_query()
         .map_or_else(|| uri.path(), axum::http::uri::PathAndQuery::as_str);
 
-    errors::not_found(format!("Cannot {method} {target}"))
+    ApiError::not_found(format!("Cannot {method} {target}"))
 }
 
 #[cfg(test)]

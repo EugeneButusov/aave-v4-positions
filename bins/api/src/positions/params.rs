@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use alloy_primitives::Address;
 
-use crate::errors::{self, ApiError};
+use crate::errors::ApiError;
 
 pub(crate) const DEFAULT_LIMIT: u32 = 50;
 pub(crate) const MAX_LIMIT: u32 = 200;
@@ -110,7 +110,7 @@ impl Reading {
             // One line rather than the `\n` its predecessor emits: this goes
             // into a JSON string, where a newline is an escape a terminal shows
             // literally.
-            Err(errors::bad_request(self.faults.join("; ")))
+            Err(ApiError::bad_request(self.faults.join("; ")))
         }
     }
 

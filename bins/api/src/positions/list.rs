@@ -18,7 +18,7 @@ use super::cursor::Scope;
 use super::params::Listing;
 use super::views::{self, Prices};
 use crate::app::AppState;
-use crate::errors::{self, ApiError, ErrorEnvelope};
+use crate::errors::{ApiError, ErrorEnvelope};
 
 pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list))
@@ -138,7 +138,7 @@ async fn list(
     // Read first, and fail here rather than after a query that would answer "no
     // positions" for a chain this deployment does not follow.
     let Some(sync) = app.sync.get(listing.chain_id).await? else {
-        return Err(errors::not_found(format!(
+        return Err(ApiError::not_found(format!(
             "chain {} has not been indexed by this deployment",
             listing.chain_id
         )));
@@ -163,7 +163,7 @@ async fn list(
             // where the answer is already an HTTP one.
             .map(|cursor| {
                 app.signer.decode(cursor, &scope).map_err(|invalid| {
-                    errors::bad_request(format!("invalid page cursor: {invalid}"))
+                    ApiError::bad_request(format!("invalid page cursor: {invalid}"))
                 })
             })
             .transpose()?,
