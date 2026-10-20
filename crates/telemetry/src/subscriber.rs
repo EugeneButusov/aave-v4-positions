@@ -116,12 +116,16 @@ mod tests {
     use tracing::level_filters::LevelFilter;
 
     use super::*;
-    use crate::settings::Sampling;
+    use crate::settings::{Endpoints, Sampling};
 
     fn settings(disabled: bool) -> Settings {
         Settings {
             service: "api".to_owned(),
-            endpoint: "http://localhost:4318".to_owned(),
+            endpoints: Endpoints {
+                traces: "http://localhost:4318/v1/traces".to_owned(),
+                metrics: "http://localhost:4318/v1/metrics".to_owned(),
+                logs: "http://localhost:4318/v1/logs".to_owned(),
+            },
             sampler: Sampling::ParentBasedAlwaysOn,
             ratio: 1.0,
             level: LevelFilter::INFO,

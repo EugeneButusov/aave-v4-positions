@@ -53,12 +53,6 @@ impl HttpClient for Client {
     }
 }
 
-/// `with_endpoint` is taken verbatim, so the signal path is ours to add: given
-/// the base address alone, every batch posts to `/` and is 404ed in silence.
-fn address(endpoint: &str, signal: &str) -> String {
-    format!("{}/v1/{signal}", endpoint.trim_end_matches('/'))
-}
-
 /// What every signal is grouped by.
 fn resource(service: &str) -> Resource {
     Resource::builder()
@@ -98,7 +92,7 @@ pub(crate) fn build(
 
     let spans = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
-        .with_endpoint(address(&settings.endpoint, "traces"))
+        .with_endpoint(settings.endpoints.traces.clone())
         .with_http_client(Client::new(runtime.clone()))
         .build()?;
     let traces = SdkTracerProvider::builder()
@@ -109,7 +103,7 @@ pub(crate) fn build(
 
     let measurements = opentelemetry_otlp::MetricExporter::builder()
         .with_http()
-        .with_endpoint(address(&settings.endpoint, "metrics"))
+        .with_endpoint(settings.endpoints.metrics.clone())
         .with_http_client(Client::new(runtime.clone()))
         .build()?;
     let meters = SdkMeterProvider::builder()
@@ -123,7 +117,7 @@ pub(crate) fn build(
 
     let records = opentelemetry_otlp::LogExporter::builder()
         .with_http()
-        .with_endpoint(address(&settings.endpoint, "logs"))
+        .with_endpoint(settings.endpoints.logs.clone())
         .with_http_client(Client::new(runtime))
         .build()?;
     let loggers = SdkLoggerProvider::builder()
@@ -141,28 +135,17 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn names_the_signal_the_collector_is_listening_for() {
-        assert_eq!(
-            address("http://telemetry:4318", "traces"),
-            "http://telemetry:4318/v1/traces"
-        );
-    }
-
-    #[test]
-    fn a_trailing_slash_does_not_become_a_second_one() {
-        assert_eq!(
-            address("http://telemetry:4318/", "logs"),
-            "http://telemetry:4318/v1/logs"
-        );
-    }
+    use crate::settings::Endpoints;
 
     #[test]
     fn a_ratio_only_reaches_the_samplers_that_take_one() {
         let settings = |sampler| Settings {
             service: "api".to_owned(),
-            endpoint: "http://localhost:4318".to_owned(),
+            endpoints: Endpoints {
+                traces: "http://localhost:4318/v1/traces".to_owned(),
+                metrics: "http://localhost:4318/v1/metrics".to_owned(),
+                logs: "http://localhost:4318/v1/logs".to_owned(),
+            },
             sampler,
             ratio: 0.25,
             level: tracing::level_filters::LevelFilter::INFO,

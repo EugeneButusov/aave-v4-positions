@@ -23,7 +23,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use env::{Env, Invalid, Source};
-use telemetry::Sampling;
+use telemetry::{Endpoints, Sampling};
 
 use crate::positions::MIN_SECRET_BYTES;
 
@@ -135,6 +135,24 @@ impl Config {
     }
 }
 
+/// OTLP/HTTP's own paths, over the base address the specification says
+/// `OTEL_EXPORTER_OTLP_ENDPOINT` carries.
+///
+/// The same composition the SDK performs when it reads that variable itself,
+/// done here because `telemetry` configures the exporters programmatically and
+/// `with_endpoint` is then taken verbatim — given the base alone every batch
+/// posts to `/` and is 404ed in silence. It lives in this file because mapping
+/// an environment onto a running service is what this file is.
+fn endpoints(base: &str) -> Endpoints {
+    let base = base.trim_end_matches('/');
+
+    Endpoints {
+        traces: format!("{base}/v1/traces"),
+        metrics: format!("{base}/v1/metrics"),
+        logs: format!("{base}/v1/logs"),
+    }
+}
+
 /// Everything the exporters and the formatter are set up from.
 fn telemetry(env: &Env<'_>) -> Result<telemetry::Settings, Invalid> {
     let disabled = env.flag("OTEL_SDK_DISABLED", false)?;
@@ -145,7 +163,7 @@ fn telemetry(env: &Env<'_>) -> Result<telemetry::Settings, Invalid> {
         } else {
             env.required("OTEL_SERVICE_NAME")?
         },
-        endpoint: env.url("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")?,
+        endpoints: endpoints(&env.url("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")?),
         sampler: env.choice(
             "OTEL_TRACES_SAMPLER",
             &SAMPLERS,
@@ -200,7 +218,10 @@ mod tests {
         assert_eq!(config.telemetry.level, LevelFilter::INFO);
         assert!(!config.telemetry.pretty);
         assert!(!config.telemetry.disabled);
-        assert_eq!(config.telemetry.endpoint, "http://localhost:4318");
+        assert_eq!(
+            config.telemetry.endpoints.traces,
+            "http://localhost:4318/v1/traces"
+        );
         assert_eq!(config.telemetry.sampler, Sampling::ParentBasedAlwaysOn);
         assert!((config.telemetry.ratio - 1.0).abs() < f64::EPSILON);
         assert_eq!(config.host, IpAddr::from([0, 0, 0, 0]));
@@ -234,6 +255,23 @@ mod tests {
 
         assert!(refusal.contains("POSITIONS_CURSOR_SECRET"), "{refusal}");
         assert!(!refusal.contains("a-test-key"), "the key reached the log");
+    }
+
+    #[test]
+    fn each_signal_gets_the_path_the_collector_is_listening_for() {
+        let posted = endpoints("http://telemetry:4318");
+
+        assert_eq!(posted.traces, "http://telemetry:4318/v1/traces");
+        assert_eq!(posted.metrics, "http://telemetry:4318/v1/metrics");
+        assert_eq!(posted.logs, "http://telemetry:4318/v1/logs");
+    }
+
+    #[test]
+    fn a_trailing_slash_does_not_become_a_second_one() {
+        assert_eq!(
+            endpoints("http://telemetry:4318/").logs,
+            "http://telemetry:4318/v1/logs"
+        );
     }
 
     #[test]
@@ -296,7 +334,10 @@ mod tests {
         assert_eq!(config.telemetry.level, LevelFilter::DEBUG);
         assert!(config.telemetry.pretty);
         assert_eq!(config.telemetry.service, "api-rust");
-        assert_eq!(config.telemetry.endpoint, "http://telemetry:4318");
+        assert_eq!(
+            config.telemetry.endpoints.metrics,
+            "http://telemetry:4318/v1/metrics"
+        );
         assert_eq!(config.telemetry.sampler, Sampling::ParentBasedTraceIdRatio);
         assert!((config.telemetry.ratio - 0.25).abs() < f64::EPSILON);
         assert!(!config.telemetry.disabled);

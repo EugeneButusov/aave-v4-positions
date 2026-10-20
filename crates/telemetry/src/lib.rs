@@ -9,5 +9,5 @@ mod settings;
 mod subscriber;
 
 pub use context::{continue_from, trace_id};
-pub use settings::{Sampling, Settings};
+pub use settings::{Endpoints, Sampling, Settings};
 pub use subscriber::{Error, SCOPE, Telemetry, init};
