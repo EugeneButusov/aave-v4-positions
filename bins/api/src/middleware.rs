@@ -22,7 +22,7 @@ use tower_http::request_id::{
     MakeRequestId, MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
 };
 
-use crate::requests::{self, Instruments};
+use crate::requests::Instruments;
 
 pub(crate) fn apply(router: Router) -> Router {
     let instruments = Instruments::new();
@@ -35,9 +35,10 @@ pub(crate) fn apply(router: Router) -> Router {
         // travels out through all three. Reversed, every response carries a
         // fresh id unrelated to the one the caller sent.
         ServiceBuilder::new()
-            .layer(axum::middleware::from_fn(move |request, next| {
-                requests::observe(instruments.clone(), request, next)
-            }))
+            .layer(axum::middleware::from_fn_with_state(
+                instruments,
+                Instruments::observe,
+            ))
             .layer(SetRequestIdLayer::x_request_id(Traced))
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(CatchPanicLayer::custom(panicked)),

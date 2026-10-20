@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use axum::extract::{MatchedPath, Request};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -35,6 +35,93 @@ impl Instruments {
         Self::from(global::meter(telemetry::SCOPE))
     }
 
+    /// Everything one request is observed as.
+    pub(crate) async fn observe(
+        State(instruments): State<Self>,
+        request: Request,
+        next: Next,
+    ) -> Response {
+        let (method, path) = (request.method().clone(), request.uri().path().to_owned());
+
+        if path.starts_with(ops::HEALTH_PREFIX) {
+            return next.run(request).await;
+        }
+
+        // The template, never the path: a path is whatever a stranger sent, so
+        // anyone could mint unbounded metric series by varying a 404.
+        let route = request
+            .extensions()
+            .get::<MatchedPath>()
+            .map(|matched| matched.as_str().to_owned());
+        let scheme = request.uri().scheme_str().unwrap_or("http").to_owned();
+
+        let span = tracing::info_span!(
+            "request",
+            // Method and route, so an unmatched request is the method alone
+            // rather than a name carrying somebody's URL.
+            otel.name = route.as_ref().map_or_else(
+                || method.to_string(),
+                |route| format!("{method} {route}"),
+            ),
+            otel.kind = "server",
+            otel.status_code = Empty,
+            http.request.method = %method,
+            http.route = Empty,
+            url.path = %path,
+            url.scheme = %scheme,
+            http.response.status_code = Empty,
+            request_id = Empty,
+            trace_id = Empty,
+        );
+        if let Some(route) = route.as_deref() {
+            span.record("http.route", route);
+        }
+        telemetry::continue_from(&span, request.headers());
+        if let Some(id) = telemetry::trace_id(&span) {
+            span.record("trace_id", id);
+        }
+
+        let started = Instant::now();
+        let response = next.run(request).instrument(span.clone()).await;
+        let elapsed = started.elapsed();
+        let status = response.status();
+
+        span.record("http.response.status_code", status.as_u16());
+        // Off the response, because `SetRequestId` calls its maker only when the
+        // caller sent no header: this is the one place both branches pass through.
+        if let Some(id) = response
+            .headers()
+            .get("x-request-id")
+            .and_then(|id| id.to_str().ok())
+        {
+            span.record("request_id", id);
+        }
+        if status.is_server_error() {
+            // 5xx only: a refusal is a correct answer, and marking those failed
+            // would leave no signal for the faults that are ours.
+            span.record("otel.status_code", "Error");
+        }
+
+        let mut attributes = vec![
+            KeyValue::new("http.request.method", method.to_string()),
+            KeyValue::new("url.scheme", scheme),
+            KeyValue::new("http.response.status_code", i64::from(status.as_u16())),
+        ];
+        if let Some(route) = route {
+            attributes.push(KeyValue::new("http.route", route));
+        }
+        instruments
+            .duration
+            .record(elapsed.as_secs_f64(), &attributes);
+
+        line(
+            &span,
+            status,
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        );
+        response
+    }
+
     /// The whole inventory: everything this binary records is made here.
     fn from(meter: Meter) -> Self {
         Self {
@@ -46,89 +133,6 @@ impl Instruments {
                 .build(),
         }
     }
-}
-
-/// Everything one request is observed as.
-pub(crate) async fn observe(instruments: Instruments, request: Request, next: Next) -> Response {
-    let (method, path) = (request.method().clone(), request.uri().path().to_owned());
-
-    if path.starts_with(ops::HEALTH_PREFIX) {
-        return next.run(request).await;
-    }
-
-    // The template, never the path: a path is whatever a stranger sent, so
-    // anyone could mint unbounded metric series by varying a 404.
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(|matched| matched.as_str().to_owned());
-    let scheme = request.uri().scheme_str().unwrap_or("http").to_owned();
-
-    let span = tracing::info_span!(
-        "request",
-        // Method and route, so an unmatched request is the method alone
-        // rather than a name carrying somebody's URL.
-        otel.name = route.as_ref().map_or_else(
-            || method.to_string(),
-            |route| format!("{method} {route}"),
-        ),
-        otel.kind = "server",
-        otel.status_code = Empty,
-        http.request.method = %method,
-        http.route = Empty,
-        url.path = %path,
-        url.scheme = %scheme,
-        http.response.status_code = Empty,
-        request_id = Empty,
-        trace_id = Empty,
-    );
-    if let Some(route) = route.as_deref() {
-        span.record("http.route", route);
-    }
-    telemetry::continue_from(&span, request.headers());
-    if let Some(id) = telemetry::trace_id(&span) {
-        span.record("trace_id", id);
-    }
-
-    let started = Instant::now();
-    let response = next.run(request).instrument(span.clone()).await;
-    let elapsed = started.elapsed();
-    let status = response.status();
-
-    span.record("http.response.status_code", status.as_u16());
-    // Off the response, because `SetRequestId` calls its maker only when the
-    // caller sent no header: this is the one place both branches pass through.
-    if let Some(id) = response
-        .headers()
-        .get("x-request-id")
-        .and_then(|id| id.to_str().ok())
-    {
-        span.record("request_id", id);
-    }
-    if status.is_server_error() {
-        // 5xx only: a refusal is a correct answer, and marking those failed
-        // would leave no signal for the faults that are ours.
-        span.record("otel.status_code", "Error");
-    }
-
-    let mut attributes = vec![
-        KeyValue::new("http.request.method", method.to_string()),
-        KeyValue::new("url.scheme", scheme),
-        KeyValue::new("http.response.status_code", i64::from(status.as_u16())),
-    ];
-    if let Some(route) = route {
-        attributes.push(KeyValue::new("http.route", route));
-    }
-    instruments
-        .duration
-        .record(elapsed.as_secs_f64(), &attributes);
-
-    line(
-        &span,
-        status,
-        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-    );
-    response
 }
 
 /// One line per answered request, at the level the status earns. No header is
@@ -174,9 +178,10 @@ mod tests {
             .route("/v1/positions/{user}", get(async || "[]"))
             .route("/health/live", get(async || "{}"))
             .route("/boom", get(async || StatusCode::INTERNAL_SERVER_ERROR))
-            .layer(axum::middleware::from_fn(move |request, next| {
-                observe(instruments.clone(), request, next)
-            }))
+            .layer(axum::middleware::from_fn_with_state(
+                instruments,
+                Instruments::observe,
+            ))
     }
 
     fn request(path: &str) -> Incoming<Body> {
