@@ -165,6 +165,72 @@ jobs:
       - name: Build
         run: cargo build --workspace --release
 
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services: *databases
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+
+      - name: Measure and enforce coverage
+        run: >-
+          cargo llvm-cov
+          --workspace
+          --all-features
+          --locked
+          --no-fail-fast
+          --html
+          --fail-under-lines 93
+          --fail-under-regions 92
+
+      - name: Add coverage to the job summary
+        run: |
+          cargo llvm-cov report \
+            --workspace \
+            --summary-only \
+            --json \
+            --output-path target/llvm-cov-summary.json
+
+          {
+            echo '## Rust coverage'
+            echo
+            echo '| Metric | Covered | Total | Coverage | Required |'
+            echo '| --- | ---: | ---: | ---: | ---: |'
+            jq -r '
+              def row($label; $key; $required):
+                .data[0].totals[$key] as $metric
+                | "| \($label) | \($metric.covered) | \($metric.count) | \(($metric.percent * 100 | round) / 100)% | \($required) |";
+              row("Lines"; "lines"; "93%"),
+              row("Regions"; "regions"; "92%"),
+              row("Functions"; "functions"; "—")
+            ' target/llvm-cov-summary.json
+            echo
+            echo 'Download the `rust-coverage` artifact for the per-file HTML report.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the HTML report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-coverage
+          path: target/llvm-cov/html
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Its own job for the reason `rust` is one: a failure names itself. It also
   # needs none of what that job does — no databases, no toolchain warm-up, no
   # compilation — so living there would hang a thirty-second check on a
