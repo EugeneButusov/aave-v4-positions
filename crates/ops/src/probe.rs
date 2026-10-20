@@ -1,16 +1,11 @@
 //! The two probe routes, and the paths they are pinned to.
 //!
-//! **The paths live here rather than at each call site.** They are what a
-//! compose healthcheck, a Kubernetes manifest and a load balancer are all
-//! written against, so a second service spelling them differently is a
-//! deployment that fails in a way no test would see.
+//! The paths live here rather than at each call site: a compose healthcheck, a
+//! Kubernetes manifest and a load balancer are all written against them, so a
+//! second spelling is a deployment that fails where no test would see it.
 //!
-//! What to check is the caller's, passed as one closure that names its
-//! dependencies in a literal list. That is the shape
-//! [Quickwit uses](https://github.com/quickwit-oss/quickwit/blob/main/quickwit/quickwit-serve/src/health_check_api/handler.rs) —
-//! the real collaborators handed to the handler, no registry and no indirection
-//! — with the aggregation and the status mapping factored out to here so two
-//! binaries cannot disagree about them.
+//! What to check is the caller's, passed as one closure naming its dependencies
+//! — Quickwit's shape, with the aggregation and status mapping factored here.
 
 use std::time::Instant;
 
@@ -20,17 +15,12 @@ use axum::{Json, Router, http::StatusCode};
 use crate::health::{Alive, CheckResult, Liveness, Readiness, Report};
 use crate::shutdown::ShutdownFlag;
 
-/// What both probe paths begin with.
-///
-/// Published because the request log and the tracing layer both drop traffic
-/// under it, and a second spelling of `/health` stops excluding anything.
+/// What both probe paths begin with. Published because the request log and the
+/// tracing layer both drop traffic under it.
 pub const HEALTH_PREFIX: &str = "/health";
 
-/// When the process started, taken as early as `main` can take it.
-///
-/// A type rather than a bare `Instant` parameter, because the value only means
-/// anything if it was read at the top of `main` — building the router is
-/// already several connections too late to start counting.
+/// When the process started. A type rather than a bare `Instant`, because
+/// building the router is already too late to start counting.
 #[derive(Clone, Copy, Debug)]
 pub struct Uptime(Instant);
 
@@ -47,9 +37,8 @@ impl Uptime {
 
 /// `/health/live` and `/health/ready`, ready to merge into a service's router.
 ///
-/// Unversioned and outside any API prefix, deliberately: probe paths are
-/// infrastructure, and pinning them keeps deployment manifests independent of
-/// how the API is versioned.
+/// Unversioned and outside any API prefix, so deployment manifests do not
+/// depend on how the API is versioned.
 pub fn probe_router<F, Fut>(uptime: Uptime, shutdown: ShutdownFlag, checks: F) -> Router
 where
     F: Fn() -> Fut + Clone + Send + Sync + 'static,
@@ -87,14 +76,9 @@ fn code(status: Readiness) -> StatusCode {
 
 #[cfg(test)]
 mod tests {
-    //! Against the bytes, and the bytes were measured.
-    //!
-    //! Every expectation below was captured by curling the TypeScript service
-    //! this replaces — running against a real Postgres, once with ClickHouse
-    //! reachable and once pointed at a closed port, and once after a SIGTERM.
-    //! Reading them off its DTO classes would have missed the one thing no
-    //! TypeScript test pins: the 503 body is the report itself, with no
-    //! framework envelope around it.
+    //! Against the bytes, and the bytes were measured: every expectation was
+    //! captured by curling the TypeScript service — with ClickHouse reachable,
+    //! pointed at a closed port, and after a SIGTERM.
 
     use axum::body::{Body, to_bytes};
     use axum::http::Request;
@@ -160,9 +144,8 @@ mod tests {
 
     #[tokio::test]
     async fn liveness_answers_while_draining() {
-        // Measured: the TypeScript keeps answering 200 here through the whole
-        // grace window. Failing it would have kubelet restart a pod that is
-        // deliberately shutting down.
+        // Measured: the TypeScript answers 200 through the whole grace window.
+        // Failing it would have kubelet restart a pod that is draining.
         let shutdown = ShutdownFlag::new();
         shutdown.begin();
 
@@ -194,9 +177,8 @@ mod tests {
         let (status, body) = request(router(ShutdownFlag::new(), checks), "/health/ready").await;
 
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        // The 503 body is the report and nothing else — no `status_code`, no
-        // `message`, no `error` wrapper. Measured, because the TypeScript
-        // raises a framework exception here and no spec of its own covers it.
+        // The report and nothing else — no `status_code`, `message` or `error`
+        // wrapper. Measured, because no TypeScript spec covers it.
         assert_eq!(
             body,
             r#"{"status":"degraded","checks":[{"name":"clickhouse","status":"down","error":"connect ECONNREFUSED 127.0.0.1:9"},{"name":"postgres","status":"up"}]}"#
@@ -220,8 +202,7 @@ mod tests {
 
     #[tokio::test]
     async fn readiness_still_reports_the_checks_while_draining() {
-        // Measured against the TypeScript: the checks keep running through the
-        // shutdown and a failing one is still named. Only the top line changes.
+        // Measured: the checks keep running and a failing one is still named.
         let shutdown = ShutdownFlag::new();
         shutdown.begin();
         let checks = vec![down("clickhouse", "connection refused"), up("postgres")];

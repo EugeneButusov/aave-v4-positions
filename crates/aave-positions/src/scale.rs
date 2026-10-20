@@ -1,27 +1,20 @@
 //! Base units to a decimal string, exactly.
 //!
-//! The protocol's units, and the one way to render a quantity in them.
+//! The protocol's units, and the one way to render a quantity in them. Four
+//! scales meet on one page — the asset's own decimals and the three below — and
+//! the wrong pairing is out by ten orders of magnitude.
 //!
-//! [`store`](crate::store) hands back `U256` and `I256` — the fold's columns are
-//! 256-bit and a JSON number has lost its tail before a process sees it (§7.5) —
-//! so anything showing one to a person converts here. Four scales meet on one
-//! page and none is the same twice: the asset's own decimals, and the three
-//! below. The wrong pairing is out by ten orders of magnitude with nothing to
-//! notice.
+//! Digits are sliced, never divided: `value as f64 / 10f64.powi(n)` loses
+//! everything past 2^53, and a real `Repay` in the fixtures carries
+//! 422,166,581,625,087,607,993 (§7.5).
 //!
-//! **Digits are sliced, never divided.** `value as f64 / 10f64.powi(n)` loses
-//! everything past 2^53, and share balances pass that routinely — a real `Repay`
-//! in the fixtures carries 422,166,581,625,087,607,993.
-//!
-//! **Trailing zeros are trimmed**, as `numeric` trims them on the way out of
-//! Postgres: `"112"` rather than `"112.00000000"`, and `"0"` for zero.
+//! Trailing zeros are trimmed, as `numeric` trims them on the way out of
+//! Postgres: `"112"` rather than `"112.00000000"`.
 
 use alloy_primitives::{I256, U256};
 
-/// How many of a ray's digits are fractional: the protocol's unit as an
-/// exponent, which is the form a caller rendering one needs.
-/// `valuation`'s `ray_is_ten_to_its_decimals` holds it to the value that module
-/// divides by.
+/// How many of a ray's digits are fractional. `valuation`'s
+/// `ray_is_ten_to_its_decimals` holds it to the value that module divides by.
 pub const RAY_DECIMALS: u8 = 27;
 
 /// `WadRayMath.WAD_DECIMALS`, which [`valuation::to_value`](crate::valuation::to_value)
@@ -35,23 +28,20 @@ pub const ORACLE_DECIMALS: u8 = 8;
 /// How many digits of a [`valuation::to_value`](crate::valuation::to_value)
 /// result are fractional.
 ///
-/// Derived rather than written: it is an amount at [`WAD_DECIMALS`] times a
-/// price at [`ORACLE_DECIMALS`], which is what makes `1e26` one dollar (§7.1).
+/// Derived rather than written: an amount at [`WAD_DECIMALS`] times a price at
+/// [`ORACLE_DECIMALS`], which is what makes `1e26` one dollar (§7.1).
 pub const VALUE_DECIMALS: u8 = WAD_DECIMALS + ORACLE_DECIMALS;
 
-/// An unsigned quantity, with `decimals` of its digits fractional.
 pub fn unsigned(value: U256, decimals: u8) -> String {
     place(value.to_string(), decimals)
 }
 
 /// A signed quantity, with the sign kept outside the digits.
 ///
-/// A share column cannot go negative on chain, so a negative one is drift and
-/// §9 catches it by seeing it. Padding the signed string rather than its
-/// magnitude renders `-42` at eight decimals as `-0.0000-42`.
+/// The sign is kept outside because padding the signed string would render
+/// `-42` at eight decimals as `-0.0000-42`.
 pub fn signed(value: I256, decimals: u8) -> String {
-    // `unsigned_abs` rather than negating: `I256::MIN` has no positive twin,
-    // and this is the only reachable value where that matters.
+    // `unsigned_abs`, because `I256::MIN` has no positive twin.
     let digits = place(value.unsigned_abs().to_string(), decimals);
 
     if value.is_negative() {
@@ -66,8 +56,7 @@ pub fn signed(value: I256, decimals: u8) -> String {
 fn place(mut digits: String, decimals: u8) -> String {
     let decimals = usize::from(decimals);
     if decimals == 0 {
-        // A zero-decimal asset must not acquire a point, and every slice below
-        // would be taken from the wrong end.
+        // A zero-decimal asset must not acquire a point.
         return digits;
     }
 
@@ -103,8 +92,6 @@ mod tests {
 
     #[test]
     fn pads_a_value_shorter_than_its_own_scale() {
-        // An 8-decimal price of a dollar stablecoin: every digit is fractional,
-        // and the integer part has to be produced rather than sliced.
         assert_eq!(at(99_988_821, ORACLE_DECIMALS), "0.99988821");
     }
 
@@ -134,8 +121,7 @@ mod tests {
         let rendered = unsigned(shares, 18);
 
         assert_eq!(rendered, "422.166581625087607993");
-        // The tail really is what a float drops: a numeric literal here would
-        // have been the rounded double too, and caught nothing.
+        // A numeric literal here would have been the rounded double too.
         assert_eq!(
             rendered.parse::<f64>().unwrap_or_default().to_string(),
             "422.1665816250876"
@@ -169,16 +155,14 @@ mod tests {
 
     #[test]
     fn keeps_the_sign_outside_the_digits() {
-        // Padding the signed string rather than its magnitude gives
-        // `-0.0000-42`. No negative reaches the wire today; drift (§9) would.
+        // Padding the signed string would give `-0.0000-42`.
         assert_eq!(signed(I256::unchecked_from(-4_200_000_000_i64), 8), "-42");
         assert_eq!(signed(I256::MINUS_ONE, 8), "-0.00000001");
     }
 
     #[test]
     fn renders_the_one_value_that_cannot_be_negated() {
-        // `-I256::MIN` overflows, so the magnitude is taken. The only input
-        // here that could panic, and unreachable from the fold.
+        // `-I256::MIN` overflows, so the magnitude is taken.
         assert_eq!(
             signed(I256::MIN, 0),
             "-57896044618658097711785492504343953926634992332820282019728792003956564819968"

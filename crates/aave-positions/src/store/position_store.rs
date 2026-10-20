@@ -1,18 +1,9 @@
 //! The port: what a read asks for, what it gets back, and the one method
 //! between them.
 //!
-//! `bins/api` holds this as a `Box<dyn PositionStore>` rather than a generic, so
-//! the composition root reads like the module graph it replaces — which is why
-//! it carries `#[async_trait]`. `async fn` in a trait is stable and still
-//! not dyn compatible: measured on 1.96, `dyn PositionStore` over a plain
-//! `async fn list` is E0038 whatever pointer holds it, and the compiler's own
-//! advice is to use the concrete type instead. A boxed future per page is the
-//! price of the seam.
-//!
-//! `Send + Sync`, because `bins/api` now does hold one: axum's state is cloned
-//! into every request and moved across worker threads, so a store that is not
-//! both cannot be reached from a handler. The three Postgres ports have carried
-//! them since they were written; this one waited for a caller, and has one.
+//! `#[async_trait]` because `bins/api` holds this as a `Box<dyn PositionStore>`
+//! and a plain `async fn` in a trait is still not dyn compatible (E0038 on
+//! 1.96). `Send + Sync` because axum clones its state across worker threads.
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
@@ -22,11 +13,8 @@ use super::{Error, Position};
 /// Where a page stopped: the sorting key below `(chain_id, user)`, and nothing
 /// else.
 ///
-/// A plain key rather than an opaque token. Signing one so a caller cannot
-/// forge or carry it between listings is a property of *publishing* it, not of
-/// paging, and it lives with whoever publishes it — for the HTTP API, in
-/// `bins/api`. Nothing in this crate holds a signing key or knows what a cursor
-/// looks like.
+/// A plain key rather than an opaque token: signing one belongs to whoever
+/// publishes it. Nothing in this crate holds a signing key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PositionKey {
     pub spoke: Address,
@@ -35,20 +23,12 @@ pub struct PositionKey {
 
 /// One wallet's positions, on one Spoke or on all of them.
 ///
-/// **`user` is required**, which makes this a lookup rather than a scan: with
-/// `chain_id` it is the leading pair of the sorting key, so pinning it turns
-/// every page into a seek into contiguous rows.
+/// `user` is required, which makes this a lookup rather than a scan: with
+/// `chain_id` it is the leading pair of the sorting key.
 ///
-/// **`spoke` is optional, and what it narrows is the listing, never the
-/// arithmetic.** A Spoke is an isolated margin account with its own collateral
-/// factors, oracle and health factor (§12.3), so *summing* across two of them
-/// is wrong in the one direction that matters — it hides an imminent
-/// liquidation behind unrelated collateral. Listing them together is fine,
-/// because every row names the Spoke it came from. Nothing here is aggregated,
-/// and anything that ever aggregates must do it per Spoke.
-///
-/// Cross-wallet questions ("largest open positions") are analytics over the
-/// same view, not a mode of this port.
+/// `spoke` narrows the listing, never the arithmetic. A Spoke is an isolated
+/// margin account (§12.3), so summing across two hides an imminent liquidation
+/// behind unrelated collateral; anything that aggregates must do it per Spoke.
 #[derive(Debug, Clone)]
 pub struct PositionQuery {
     pub chain_id: u32,
@@ -60,16 +40,10 @@ pub struct PositionQuery {
     pub after: Option<PositionKey>,
     /// Unix seconds to value the page at. `None` is now.
     ///
-    /// Amounts are a per-second quantity — the Hub's index accrues continuously
-    /// and emits nothing (§5) — so "now" is a real choice rather than an
-    /// absence of one, and it is the same choice the chain makes:
-    /// `getUserDebt` at `latest` is stored shares times an index extrapolated
-    /// to the head block. Naming it explicitly is what makes a response
-    /// reproducible, and what lets reconciliation pin both sides to one block.
-    ///
-    /// The shares are as of whatever the indexer has folded, which is not the
-    /// same clock. [`PositionPage::valued_at`] reports this one so the two are
-    /// not silently conflated.
+    /// Amounts are a per-second quantity (§5), so naming the instant is what
+    /// makes a response reproducible. The shares are as of whatever the indexer
+    /// has folded, which is a different clock — [`PositionPage::valued_at`]
+    /// reports this one so the two are not conflated.
     pub as_of: Option<u64>,
 }
 
@@ -85,14 +59,11 @@ pub struct PositionPage {
 
 /// Reads the folded positions.
 ///
-/// **Read-only by construction.** The fold is materialized views over the
-/// event ledger, so positions advance because the indexer appended events —
-/// there is no ingestion path here to keep in step with one, and a reorg
-/// repairs the projection without an implementation of this learning of it.
+/// Read-only by construction: the fold is materialized views over the event
+/// ledger, so a reorg repairs the projection without this learning of it.
 ///
-/// **Only open positions.** §12.1: a position exists while its shares are
-/// non-zero. A closed one keeps its row and its event count, and is filtered
-/// out by the implementation rather than deleted anywhere.
+/// Open positions only (§12.1). A closed one keeps its row and its event count
+/// and is filtered out rather than deleted.
 #[async_trait]
 pub trait PositionStore: Send + Sync {
     /// One wallet's open positions, valued at one instant.

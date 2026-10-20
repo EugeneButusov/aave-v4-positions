@@ -4,23 +4,16 @@
 //! themselves — it is read-only by construction — so an implementation also
 //! supplies a [`Harness`] saying how state gets in front of it.
 //!
-//! **Four of this module's neighbours could not come here**, and they are not
-//! an oversight. `matches_a_checksummed_address_against_the_lower_cased_fold`,
-//! `credits_the_user_never_the_caller_that_routed_for_them`,
-//! `hides_a_position_whose_shares_have_netted_to_zero` and
-//! `reports_none_rather_than_zero_for_a_reserve_it_has_never_seen` each observe
-//! the *fold* through the store, and a [`Held`] has already lost what they
-//! test: it carries a canonical `Address` rather than the checksummed one the
-//! projection lower-cases, no `caller` for the projection to ignore, a share
-//! balance rather than the deltas that summed to it, and nothing that can say
-//! what a `LEFT JOIN` miss fills a column with. They stay with the adapter.
+//! Four neighbouring cases stay with the adapter rather than coming here: each
+//! observes the fold through the store, and a [`Held`] has already lost what
+//! they test — the checksummed spelling, the `caller`, the deltas behind a
+//! balance, and what a `LEFT JOIN` miss fills a column with.
 
 use alloy_primitives::{Address, I256, U256};
 
 use super::fixtures::{ALICE, BOB, FIVE_PERCENT, RAY, SECOND_SPOKE, SPOKE, USDC, ask, reserve_ids};
 use super::{PositionKey, PositionPage, PositionQuery, PositionStore};
 
-/// One position a wallet holds, before anything values it.
 pub(crate) struct Held {
     pub user: Address,
     pub spoke: Address,
@@ -51,9 +44,8 @@ impl Held {
 
 /// A reserve resolved all the way to a token, with a checkpoint to value at.
 ///
-/// The supply side is 1e6 shares against 1e6 of underlying and the rate is 5%
-/// a year, so an amount is its share count at the checkpoint and 5% more a year
-/// later — the arithmetic is `valuation`'s to prove, not this module's.
+/// 1e6 shares against 1e6 of underlying at 5% a year, so an amount is its
+/// share count at the checkpoint — the arithmetic is `valuation`'s to prove.
 pub(crate) struct Listed {
     pub spoke: Address,
     pub reserve_id: &'static str,
@@ -63,11 +55,9 @@ pub(crate) struct Listed {
     pub checkpoint_at: u64,
 }
 
-/// What an implementation supplies so the cases below have something to read.
 pub(crate) trait Harness {
     type Store: PositionStore;
 
-    /// A store holding nothing, of this case's own.
     async fn fresh(case: &str) -> Self;
 
     fn store(&self) -> &Self::Store;
@@ -84,16 +74,14 @@ pub(crate) trait Harness {
 
     async fn given_reserve(&self, listed: &Listed);
 
-    /// A second `UpdateAsset` on a reserve already listed, so a case can ask
-    /// *which* checkpoint a valuation started from rather than only whether it
-    /// found one.
+    /// A second `UpdateAsset` on a listed reserve, so a case can ask which
+    /// checkpoint a valuation started from.
     async fn given_checkpoint(&self, asset_id: &str, at: u64, drawn_index: &str);
 }
 
 /// Deliberately out of numeric order as text: 13 sorts before 3.
 const RESERVES: [&str; 5] = ["3", "7", "13", "21", "34"];
 
-/// The block every harness checkpoints at, and the instant it lands on.
 pub(crate) const CHECKPOINT_BLOCK: u64 = 100;
 pub(crate) const CHECKPOINT_AT: u64 = 1_785_000_100;
 pub(crate) const YEAR: u64 = 365 * 24 * 3600;
@@ -109,8 +97,6 @@ fn listed(reserve_id: &'static str, asset_id: &'static str) -> Listed {
     }
 }
 
-// --- which rows come back ---------------------------------------------------
-
 pub(crate) async fn returns_one_wallet_on_one_spoke_and_nobody_else<H: Harness>() {
     let harness = H::fresh("one_wallet").await;
     harness
@@ -123,9 +109,8 @@ pub(crate) async fn returns_one_wallet_on_one_spoke_and_nobody_else<H: Harness>(
         ])
         .await;
 
-    // `user` is required rather than an optional filter: with `chain_id` it is
-    // the leading pair of the sorting key, so a page is a seek into contiguous
-    // rows rather than a scan.
+    // Required rather than optional: with `chain_id` it is the leading pair of
+    // the sorting key, so a page is a seek rather than a scan.
     let page = harness.store().list(&ask()).await.unwrap();
     assert_eq!(page.items.len(), 1);
     assert_eq!(page.items[0].user, ALICE);
@@ -169,8 +154,6 @@ pub(crate) async fn keeps_a_debt_only_position_with_no_supply_behind_it<H: Harne
     assert_eq!(page.items[0].drawn_shares.to_string(), "400");
 }
 
-// --- across Spokes ----------------------------------------------------------
-
 async fn both_spokes<H: Harness>(case: &str) -> H {
     let harness = H::fresh(case).await;
     harness
@@ -189,9 +172,8 @@ async fn both_spokes<H: Harness>(case: &str) -> H {
 pub(crate) async fn lists_every_spoke_when_none_is_named_each_row_saying_which<H: Harness>() {
     let harness = both_spokes::<H>("every_spoke").await;
 
-    // The same `reserveId` on two Spokes is two positions, not one — reserve
-    // ids are Spoke-scoped, so nothing here may be merged on them. Every row
-    // carries its own Spoke precisely so a caller can group rather than guess.
+    // Reserve ids are Spoke-scoped, so nothing may be merged on them. Every
+    // row carries its own Spoke so a caller can group rather than guess.
     let page = harness
         .store()
         .list(&PositionQuery {
@@ -232,9 +214,8 @@ pub(crate) async fn narrows_to_one_when_it_is_named<H: Harness>() {
 pub(crate) async fn walks_a_page_boundary_that_falls_between_two_spokes<H: Harness>() {
     let harness = both_spokes::<H>("spoke_boundary").await;
 
-    // The half of the resume point that only exists once `spoke` is unpinned. A
-    // `reserve_id`-only key would resume at "> 7" and lose the second Spoke's
-    // reserve 7 entirely, because it sorts after the first Spoke's.
+    // A `reserve_id`-only key would resume at "> 7" and lose the second
+    // Spoke's reserve 7, which sorts after the first Spoke's.
     let first = harness
         .store()
         .list(&PositionQuery {
@@ -266,8 +247,6 @@ pub(crate) async fn walks_a_page_boundary_that_falls_between_two_spokes<H: Harne
     assert_eq!(second.items[0].spoke, SECOND_SPOKE);
     assert_eq!(second.next, None);
 }
-
-// --- order, and where a page stops ------------------------------------------
 
 async fn five_reserves<H: Harness>(case: &str) -> H {
     let harness = H::fresh(case).await;
@@ -301,9 +280,8 @@ pub(crate) async fn walks_every_position_exactly_once_in_numeric_order<H: Harnes
         }
     }
 
-    // Keyset, so the boundary is a key rather than a row count: nothing is
-    // returned twice or skipped even though the indexer is free to write
-    // between pages. Ordered as UInt256, so 13 precedes 21 rather than 3.
+    // Keyset, so nothing is returned twice or skipped even though the indexer
+    // writes between pages. Ordered as UInt256, so 13 precedes 21, not 3.
     assert_eq!(seen, RESERVES);
 }
 
@@ -353,8 +331,6 @@ pub(crate) async fn reports_no_next_key_when_the_page_is_not_full<H: Harness>() 
     );
 }
 
-// --- the instant ------------------------------------------------------------
-
 pub(crate) async fn values_every_position_on_a_page_at_one_instant<H: Harness>() {
     let harness = H::fresh("one_instant").await;
     harness.given_reserve(&listed("7", "7")).await;
@@ -372,9 +348,8 @@ pub(crate) async fn values_every_position_on_a_page_at_one_instant<H: Harness>()
         .await
         .unwrap();
 
-    // Two positions, so the set below is evidence rather than a tautology: one
-    // instant for the whole page, reported back, because an amount without the
-    // moment it was computed at is not reproducible (§12.6).
+    // Two positions, so one instant for the whole page is evidence rather than
+    // a tautology (§12.6).
     assert_eq!(page.items.len(), 2);
     assert_eq!(page.valued_at, CHECKPOINT_AT + YEAR);
     let indexes: std::collections::BTreeSet<_> = page
@@ -397,8 +372,7 @@ pub(crate) async fn defaults_to_now_when_no_instant_is_named<H: Harness>() {
         .map_or(0, |since| since.as_secs());
     let page = harness.store().list(&ask()).await.unwrap();
 
-    // Which is what the chain does — getUserDebt at `latest` extrapolates to
-    // the head block rather than to the last event.
+    // As the chain does: getUserDebt at `latest` extrapolates to the head.
     assert!(page.valued_at >= before);
     assert_ne!(
         page.items[0]
@@ -413,13 +387,10 @@ pub(crate) async fn defaults_to_now_when_no_instant_is_named<H: Harness>() {
 
 /// Every case above, as one `#[tokio::test]` each against one implementation.
 ///
-/// One test per case rather than one per suite, so a failure names the case and
-/// `cargo` runs them concurrently. A case left out of the list below is a build
-/// error rather than a silent gap: nothing else calls these, so it trips
-/// `dead_code`, which the workspace denies.
-/// A checkpoint and a supply *after* the instant these cases ask for, which is
-/// what makes them evidence: with one checkpoint and one supply, a store that
-/// ignored the instant entirely would pass every case above.
+/// One test per case rather than one per suite, so a failure names the case. A
+/// case left out of the list trips `dead_code` rather than going silent.
+/// A checkpoint and a supply after the instant these cases ask for: with only
+/// one of each, a store ignoring the instant would pass every case above.
 const LATER_BLOCK: u64 = CHECKPOINT_BLOCK + 200;
 const LATER_AT: u64 = CHECKPOINT_AT + 200;
 /// An index no extrapolation from the first checkpoint could reach.
@@ -444,8 +415,8 @@ async fn two_checkpoints<H: Harness>(case: &str) -> H {
     let harness = H::fresh(case).await;
     harness.given_reserve(&listed("7", "7")).await;
     harness.given_checkpoint("7", LATER_AT, DOUBLED).await;
-    // Opened before the first checkpoint, so a case can value at an instant
-    // earlier than any checkpoint and still have a position to look at.
+    // Opened before the first checkpoint, so a case can value earlier than
+    // any checkpoint and still have a position.
     harness
         .given_positions_at(CHECKPOINT_BLOCK - 50, &[Held::supplying("7", "1000")])
         .await;
@@ -457,9 +428,8 @@ pub(crate) async fn takes_the_checkpoint_in_force_not_the_newest_there_is<H: Har
 
     let page = valued_at(&harness, CHECKPOINT_AT).await;
 
-    // The newest checkpoint is 200s after this instant, and reaching it from
-    // here is linear interest over a negative elapsed — which the arithmetic
-    // refuses, so the whole page fails rather than values.
+    // The newest checkpoint is 200s ahead, so reaching it is interest over a
+    // negative elapsed — which the arithmetic refuses.
     assert_eq!(
         page.items[0].value.as_ref().unwrap().drawn_index,
         decimal(RAY)
@@ -471,8 +441,7 @@ pub(crate) async fn carries_that_checkpoint_forward_rather_than_snapping_to_it<H
 
     let page = valued_at(&harness, CHECKPOINT_AT + 100).await;
 
-    // The earlier checkpoint plus 100s of interest: the cut selects a base, it
-    // does not replace the extrapolation.
+    // The cut selects a base; it does not replace the extrapolation.
     let interest = decimal(FIVE_PERCENT)
         .checked_mul(U256::from(100))
         .and_then(|accrued| accrued.checked_div(U256::from(YEAR)))
@@ -486,8 +455,7 @@ pub(crate) async fn reports_no_value_when_no_checkpoint_precedes_the_instant<H: 
 
     let page = valued_at(&harness, CHECKPOINT_AT - 1).await;
 
-    // Nothing to carry forward, so no number is offered — the same answer as an
-    // asset the Hub has listed and never checkpointed. The listing itself is not
+    // Nothing to carry forward, so no number is offered. The listing is not
     // cut away, so the asset still resolves.
     assert!(page.items[0].value.is_none());
     assert!(page.items[0].asset.is_some());
@@ -503,8 +471,7 @@ pub(crate) async fn returns_the_shares_held_then_not_the_ones_held_since<H: Harn
         .given_positions_at(LATER_BLOCK, &[Held::supplying("7", "500")])
         .await;
 
-    // A balance is the sum of the deltas up to an instant. Reading the fold at
-    // now would report 1500 at both.
+    // Reading the fold at now would report 1500 at both.
     assert_eq!(
         valued_at(&harness, CHECKPOINT_AT + 100).await.items[0].supplied_shares,
         I256::try_from(1000).unwrap()
@@ -522,9 +489,8 @@ pub(crate) async fn leaves_out_a_position_that_did_not_exist_yet<H: Harness>() {
         .given_positions_at(LATER_BLOCK, &[Held::supplying("7", "1000")])
         .await;
 
-    // Its shares sum to nothing before its first event, and a position with no
-    // shares is one the listing filter drops — the same rule that hides a closed
-    // one.
+    // Its shares sum to nothing before its first event, which the listing
+    // filter drops — the rule that hides a closed position.
     assert!(
         valued_at(&harness, CHECKPOINT_AT + 100)
             .await

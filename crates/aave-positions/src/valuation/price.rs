@@ -1,8 +1,4 @@
 //! `SpokeUtils.toValue` — an amount in token units, priced.
-//!
-//! Its own file because it shares no input with the rest of the valuation: it
-//! takes an amount, the Hub's decimals and an oracle price, and never sees an
-//! `AssetState`. It is also the one function `bins/api` calls directly.
 
 use alloy_primitives::{U256, U512};
 
@@ -12,38 +8,18 @@ use crate::scale::WAD_DECIMALS;
 
 /// `SpokeUtils.toValue` — an amount in token units, priced.
 ///
-/// **The unit is the protocol's own and is not dollars, and its twenty-six
-/// decimal places are two conventions multiplied rather than a number anyone
-/// chose.** The amount is normalised to `WadRayMath.WAD_DECIMALS = 18` and
-/// multiplied by a price the oracle reports at `SpokeUtils.ORACLE_DECIMALS = 8`
-/// (`SpokeUtils.sol:13`, and `Spoke`'s constructor rejects an oracle answering
-/// with any other), so 18 + 8 = 26 and one dollar of Value is `1e18 × 1e8`. The
-/// contract states the result itself above `toValue`: "1e26 represents 1 USD"
-/// (§7.1, `SpokeUtils.toValue:28-40`).
+/// The result is the protocol's own Value unit, not dollars: 26 decimal places,
+/// where `1e26` is one dollar (§7.1, `SpokeUtils.toValue:28-40`). Served in
+/// that unit because it is the only form that reconciles against
+/// `getUserAccountData`; a caller slices 26 digits rather than dividing (§7.5).
 ///
-/// Served in that unit rather than converted, because it is what the contract
-/// computes in and therefore the only form that reconciles against
-/// `getUserAccountData`. A caller rendering it slices twenty-six digits off the
-/// integer rather than dividing, since a division loses the tail past 2^53 and
-/// share-scale amounts pass that routinely (§7.5).
-///
-/// `decimals` is the **Hub's**, from `AddAsset`, and never the token's own
-/// `decimals()`. The two can disagree — which is a listing audit signal, not a
-/// correctness problem — and when they do, the Hub's is what the Hub's
-/// arithmetic uses and so what the position is worth to Aave.
+/// `decimals` is the Hub's, from `AddAsset`, never the token's own `decimals()`.
 pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> {
-    // `SpokeUtils.toValue` is `amount * price * 10 ** (18 - dec)` in plain
-    // checked Solidity, so it reverts on the first multiply. Widening changes
-    // no answer on that path — the scale is at least 1, so a product past
-    // `uint256` makes the result past it too, and both refuse the same inputs.
-    // It is the `else` branch that needs the room, where a division follows and
-    // an intermediate over `uint256` can still come back under it.
     let product: U512 = amount.widening_mul(price);
 
-    // The contract writes `10 ** (18 - dec)` and would revert on a token with
-    // more than eighteen decimals, which no listed asset has. Continuing the
-    // same arithmetic by dividing is not a different rule, and it keeps a
-    // hypothetical listing from taking a whole page down with it.
+    // The contract writes `10 ** (18 - dec)` and would revert past eighteen
+    // decimals, which no listed asset has. Dividing continues the same
+    // arithmetic rather than taking a page down with a hypothetical listing.
     let scaled = if decimals <= WAD_DECIMALS {
         let exponent = U512::from(u32::from(WAD_DECIMALS).saturating_sub(u32::from(decimals)));
         let scale = U512::from(10)
@@ -55,7 +31,7 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
         match U512::from(10).checked_pow(exponent) {
             Some(scale) => product.wrapping_div(scale),
             // A divisor past `U512::MAX` exceeds any dividend this can hold, so
-            // the floor is zero. Exact, not a fallback.
+            // the floor is exactly zero.
             None => U512::ZERO,
         }
     };
@@ -63,9 +39,6 @@ pub fn to_value(amount: U256, decimals: u8, price: U256) -> Result<U256, Error> 
     narrow(scaled)
 }
 
-// Same reason as `math`'s: the arithmetic in a vector is the vector, and ruint
-// panics on overflow in every profile, so a fixture that does not fit fails the
-// test.
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -81,24 +54,17 @@ mod tests {
         /// USDC/USD as §7.4.3 records it.
         const USDC_USD: U256 = uint!(99_971_505_U256);
 
-        /// One dollar of Value — `1e26`, for the reason [`to_value`] gives.
+        /// One dollar of Value — `1e26`.
         const ONE_DOLLAR: U256 = uint!(100_000_000_000_000_000_000_000_000_U256);
 
         /// An oracle answer of exactly $1.00, at `ORACLE_DECIMALS = 8`.
         ///
-        /// Named for the price it is, not the value it produces:
-        /// [`ONE_DOLLAR`] is also "one dollar" and is 1e26. Both appear in the
-        /// assertion below, which is the point of it — a dollar going in does
-        /// not look like a dollar coming out.
+        /// Named for the price it is rather than the value it produces:
+        /// [`ONE_DOLLAR`] is also "one dollar" and is 1e26.
         const A_DOLLAR_PER_TOKEN: U256 = uint!(100_000_000_U256);
 
         #[test]
         fn puts_one_dollar_at_1e26() {
-            // `SpokeUtils.toValue` documents the unit outright: an 18-decimal
-            // amount times an 8-decimal price. One whole USDC genuinely worth
-            // one dollar is what pins the unit to 1e26 rather than leaving it
-            // a number someone chose:
-            //
             //   1e6 (one USDC, 6 dp) × 1e8 ($1.00, 8 dp) × 1e12 (6 dp → 18 dp)
             assert_eq!(
                 to_value(U256::from(1_000_000), 6, A_DOLLAR_PER_TOKEN),
@@ -108,9 +74,7 @@ mod tests {
 
         #[test]
         fn normalises_the_amount_to_eighteen_decimals_not_the_price() {
-            // The same dollar value from two tokens with different decimals. If
-            // the exponent were taken from the wrong side these would differ by
-            // 1e12.
+            // Taken from the wrong side, these would differ by 1e12.
             let one_usdc_worth = to_value(U256::from(1_000_000), 6, A_DOLLAR_PER_TOKEN);
             let one_dai_worth = to_value(
                 uint!(1_000_000_000_000_000_000_U256),
@@ -131,9 +95,8 @@ mod tests {
 
         #[test]
         fn keeps_the_digits_a_division_would_lose() {
-            // 1000 USDC at $0.99971505 is $999.71505, which is not
-            // representable as an integer number of dollars — the point of
-            // publishing the raw Value.
+            // 1000 USDC at $0.99971505 is $999.71505, not an integer number of
+            // dollars — the point of publishing the raw Value.
             let value = to_value(U256::from(1_000_000_000), 6, USDC_USD).unwrap();
 
             assert_eq!(value, USDC_USD * uint!(1_000_000_000_000_000_000_000_U256));
@@ -142,8 +105,7 @@ mod tests {
 
         #[test]
         fn is_exact_past_2_53() {
-            // A realistic share-scale amount priced. float64 would round the
-            // tail off both operands long before the product mattered (§7.5).
+            // float64 would round the tail off both operands (§7.5).
             let amount = uint!(422166581625087607993_U256);
 
             assert_eq!(to_value(amount, 18, ETH_USD), Ok(amount * ETH_USD));
@@ -151,10 +113,6 @@ mod tests {
 
         #[test]
         fn divides_rather_than_reverting_past_eighteen_decimals() {
-            // The contract writes `10 ** (18 - dec)` and would revert here. No
-            // listed asset has more than eighteen, so this is about not taking
-            // a whole page down with a hypothetical listing — the arithmetic
-            // continued, not a different rule.
             assert_eq!(
                 to_value(
                     uint!(100_000_000_000_000_000_000_U256),
@@ -173,10 +131,8 @@ mod tests {
 
         #[test]
         fn floors_to_zero_rather_than_refusing_an_absurd_decimals() {
-            // 10^237 is past `U512::MAX`, so there is no divisor to build — but
-            // it also exceeds any dividend this can hold, which makes the floor
-            // exactly zero. Reachable only from a `u8` the chain would have to
-            // have emitted.
+            // 10^237 is past `U512::MAX`, and also past any dividend this can
+            // hold, so the floor is exact.
             assert_eq!(to_value(U256::MAX, 255, U256::MAX), Ok(U256::ZERO));
         }
     }

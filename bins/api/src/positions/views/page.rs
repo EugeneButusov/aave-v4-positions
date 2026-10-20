@@ -12,36 +12,30 @@ use crate::config::Staleness;
 /// One wallet's positions, valued at one instant.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct Page {
-    /// How current this payload is. Present on every page, because amounts are
-    /// per-block quantities and a page whose sync differs from the previous one
-    /// is the honest signal that the indexer advanced mid-walk.
+    /// How current this payload is. Present on every page: amounts are
+    /// per-block quantities, so a sync that differs from the previous page is
+    /// the signal that the indexer advanced mid-walk.
     sync: Progress,
 
     /// When every amount on this page was computed — one instant for the whole
-    /// page, so two positions in it cannot disagree about the time. Defaults to
-    /// now, which is the same choice the chain makes. Distinct from
-    /// `sync.last_block`: the shares are as far as the indexer has folded, the
-    /// amounts are those shares valued at this instant.
-    ///
-    /// The `as_of` **query parameter** that sets it is Unix seconds, so
-    /// round-tripping this value means converting it.
+    /// page, defaulting to now. Distinct from `sync.last_block`: the shares are
+    /// as far as the indexer has folded, the amounts are those shares valued
+    /// here. The `as_of` query parameter that sets it is Unix seconds.
     #[serde(with = "time::serde::rfc3339")]
     valued_at: OffsetDateTime,
 
-    /// How current the prices behind this page are — **a third clock**, beside
-    /// `sync` and `valued_at`, because prices have their own source and their
-    /// own cadence. Null when nothing here is priced, and null whenever `as_of`
-    /// is set: amounts are extrapolated to that instant and prices are not, so a
-    /// value mixing the two would be a number that never existed.
+    /// How current the prices behind this page are — a third clock beside
+    /// `sync` and `valued_at`, because prices have their own cadence. Null when
+    /// nothing here is priced, and whenever `as_of` is set: amounts are
+    /// extrapolated to that instant and prices are not.
     #[schema(required = true)]
     pricing: Option<Pricing>,
 
     items: Vec<Item>,
 
-    /// Hand back verbatim as `cursor` to fetch the next page. `null` is the last
-    /// page. Opaque and signed: it is only valid for the listing that issued it,
-    /// so changing the wallet, chain or Spoke filter while reusing it is refused
-    /// rather than silently resuming somewhere else.
+    /// Hand back verbatim as `cursor` to fetch the next page; `null` is the
+    /// last page. Opaque and signed, and only valid for the listing that issued
+    /// it — changing the wallet, chain or Spoke filter is refused.
     #[schema(required = true)]
     next_cursor: Option<String>,
 }
@@ -95,9 +89,8 @@ pub(crate) struct Progress {
     /// wrote the timestamp, so it is not affected by clock skew between hosts.
     age_seconds: u64,
 
-    /// Whether `age_seconds` has passed this deployment's freshness threshold. A
-    /// stale response is still served — the numbers were true as of
-    /// `last_block` — but they are behind the chain.
+    /// Whether `age_seconds` has passed this deployment's threshold. A stale
+    /// response is still served: the numbers were true as of `last_block`.
     stale: bool,
 }
 
@@ -125,22 +118,17 @@ struct Pricing {
     age_seconds: u64,
 
     /// Whether that exceeds this deployment's threshold. It measures how long
-    /// since **we** last read the oracle, never how long since a feed last
-    /// moved — an hour without a Chainlink update is normal behaviour, and a
-    /// threshold set from feed cadence would flag healthy feeds forever.
+    /// since we last read the oracle, never since a feed last moved — an hour
+    /// without a Chainlink update is normal.
     stale: bool,
 }
 
 impl Pricing {
-    /// The page's price clock, taken from the **oldest** price behind it.
-    ///
-    /// Not the newest and not an average: what a caller needs is how far to
-    /// trust the worst number in front of them. It only diverges when the
-    /// oracle refused a reserve and its last good price was left to age.
-    ///
-    /// Ties keep the earlier position, which is deterministic because the page
-    /// is ordered — `age_seconds` is floored, so two prices can tie and still
-    /// differ in `updated_at`.
+    /// The page's price clock, from the oldest price behind it — what a caller
+    /// needs is how far to trust the worst number in front of them. It diverges
+    /// only when the oracle refused a reserve and its last price was left to
+    /// age. Ties keep the earlier position, which the page's order makes
+    /// deterministic.
     fn new(positions: &[Position], prices: &Prices, stale_after: u64) -> Option<Self> {
         positions
             .iter()

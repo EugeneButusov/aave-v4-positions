@@ -12,17 +12,12 @@ use crate::{Error, ReserveKey, ReservePrice, ReservePriceStore};
 /// Keyed by chain and nothing else, so it does not depend on the page and can
 /// be issued beside the ClickHouse query rather than after it.
 ///
-/// **`age_seconds` is computed here, not by the reader**, for the reason
-/// `indexer_cursor` gives: `priced_at` is this server's own `now()`, so a
-/// reader subtracting it from its own clock reports skew as staleness — and a
-/// fast reader would mark a fresh price stale, which flags every USD value on
-/// the page as suspect. Floored to whole seconds: six decimal places on a
-/// figure compared against a threshold in minutes is precision nobody can use.
+/// `age_seconds` is computed here rather than by the reader: `priced_at` is
+/// this server's own `now()`, so a reader subtracting it from its own clock
+/// would report skew as staleness. Floored to whole seconds.
 ///
-/// **The two wide columns come back as text.** `numeric(78,0)` holds values a
-/// `f64` has already rounded the tail off, and the driver has no lossless
-/// integer of that width — the same reason the ClickHouse store keeps its
-/// `toString(...)` casts (§7.5).
+/// The two wide columns come back as text, because the driver has no lossless
+/// integer of that width (§7.5).
 const LATEST: &str = "\
     SELECT \
         spoke, \
@@ -79,9 +74,8 @@ fn priced(row: &Row) -> Result<(ReserveKey, ReservePrice), Error> {
         ReservePrice {
             price: unsigned("price", price)?,
             priced_at,
-            // Clamped rather than refused: negative means the row was
-            // written by a clock ahead of the one reading it, and "not stale"
-            // is the honest answer to that.
+            // Clamped rather than refused: negative means a clock ahead of
+            // the one reading it, and "not stale" is the honest answer.
             age_seconds: age_seconds.try_into().unwrap_or(0),
         },
     ))

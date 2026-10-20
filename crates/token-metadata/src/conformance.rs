@@ -20,7 +20,6 @@ pub(crate) const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756
 /// Listed by the Hub, never enriched — the token that has no row at all.
 pub(crate) const UNASKED: Address = address!("6b175474e89094c44da98b954eedeac495271d0f");
 
-/// One row of `token_metadata`, as a case wants to describe it.
 pub(crate) struct Stored {
     pub chain_id: u32,
     pub token: Address,
@@ -29,7 +28,6 @@ pub(crate) struct Stored {
 }
 
 impl Stored {
-    /// Every field, named once.
     fn row(
         chain_id: u32,
         token: Address,

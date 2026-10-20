@@ -20,7 +20,6 @@ pub(crate) const SECOND_SPOKE: Address = address!("11111111111111111111111111111
 /// `$1.00`, at §7.4's eight decimals.
 pub(crate) const ONE_DOLLAR: &str = "100000000";
 
-/// One row of `reserve_prices`, as a case wants to describe it.
 pub(crate) struct Quoted {
     pub chain_id: u32,
     pub spoke: Address,
@@ -32,7 +31,6 @@ pub(crate) struct Quoted {
 }
 
 impl Quoted {
-    /// Every field, named once.
     fn row(
         chain_id: u32,
         spoke: Address,

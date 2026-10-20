@@ -1,39 +1,28 @@
 //! What a run against Postgres actually does.
 //!
 //! refinery drives Postgres natively, so none of our code sits in the path —
-//! which is the reason to pin this rather than a reason not to. The behaviour is
-//! what the deployment depends on, `packages/postgres` used to assert it from
-//! the TypeScript side, and it was deleted along with that runner. Until this
-//! file nothing in the workspace covered Postgres at all, while ClickHouse had
-//! five cases.
+//! which is the reason to pin this rather than a reason not to. The behaviour
+//! is what the deployment depends on, and `packages/postgres` asserted it until
+//! that runner was deleted.
 //!
-//! An integration test rather than a module beside the adapter, because there is
-//! no adapter: everything here is public — `postgres::build_pool`, refinery, and
-//! the driver a checked-out connection derefs to.
+//! An integration test rather than a module beside the adapter, because there
+//! is no adapter: everything here is public.
 //!
-//! `clippy.toml` sets `allow-unwrap-in-tests`, and it does not reach here: that
-//! relaxation applies to `#[cfg(test)]` items, and an integration test is an
-//! ordinary crate that happens to live under `tests/`. Allowed once, at the top,
-//! rather than by threading `?` through setup code whose failure means the
-//! server is not running.
+//! `allow-unwrap-in-tests` does not reach an integration test, which is an
+//! ordinary crate under `tests/` — hence the allow at the top.
 #![allow(clippy::unwrap_used)]
 
 use refinery_core::{Migration, Runner};
 
-/// A schema per test, not per file. `cargo` runs these concurrently and they
-/// assert on the exact set of tables that exists, so a shared one has them
-/// creating and dropping each other's fixtures — which is precisely how the
-/// first version of this file failed.
+/// A schema per test, not per file: `cargo` runs these concurrently and they
+/// assert on the exact set of tables, which is how the first version failed.
 fn schema(test: &str) -> String {
     format!("rust_migrate_{test}")
 }
 
-/// Dropped and recreated, so each test starts from nothing. The ledger is what
-/// would otherwise carry state between runs and make these assertions depend on
-/// whatever the last one left behind.
-/// The pool is returned alongside the connection so the caller keeps it alive
-/// for the length of the test; a connection outliving its pool is a shape worth
-/// not depending on.
+/// Dropped and recreated, so each test starts from nothing — the ledger would
+/// otherwise carry state between runs. The pool comes back with the connection
+/// so the caller keeps it alive for the length of the test.
 async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
     let schema = schema(test);
     let base = std::env::var("POSTGRES_URL")
@@ -49,9 +38,8 @@ async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
         .await
         .unwrap();
 
-    // `options` is libpq's, and tokio-postgres parses it out of the URL — which
-    // is what lets a schema be chosen without `crates/postgres` growing a
-    // parameter only a test would ever pass.
+    // `options` is libpq's and tokio-postgres parses it out of the URL, so no
+    // parameter only a test would pass has to reach `crates/postgres`.
     let separator = if base.contains('?') { '&' } else { '?' };
     let pool = postgres::build_pool(&format!(
         "{base}{separator}options=-c%20search_path%3D{schema}"
@@ -76,8 +64,8 @@ async fn tables(client: &postgres::Client, schema: &str) -> Vec<String> {
 
 async fn run(client: &mut postgres::Connection, set: &[Migration]) -> Result<Vec<String>, String> {
     Runner::new(set)
-        // Three derefs: the reference, the pooled object, and the wrapper it
-        // holds. refinery implements its traits for the driver's own client.
+        // Three derefs, because refinery implements its traits for the
+        // driver's own client.
         .run_async(&mut ***client)
         .await
         .map(|report| {
@@ -103,8 +91,7 @@ async fn creates_the_ledger_even_when_there_is_nothing_to_apply() {
 
     assert_eq!(run(&mut client, &[]).await.unwrap(), Vec::<String>::new());
 
-    // refinery's own DDL, unlike ClickHouse where the default is unusable and
-    // `AsyncMigrate` has to supply ours.
+    // refinery's own DDL, unlike ClickHouse where ours has to be supplied.
     assert_eq!(tables(&client, &schema).await, ["refinery_schema_history"]);
 }
 
@@ -133,14 +120,9 @@ async fn applies_nothing_on_a_second_run() {
     assert_eq!(run(&mut client, &set).await.unwrap(), Vec::<String>::new());
 }
 
-/// The case `packages/postgres/src/migrate.spec.ts` covered, and the one whose
-/// answer changed with the port.
-///
-/// The TypeScript runner wrapped an entire run in one transaction, so a set that
-/// failed partway left nothing at all. refinery commits each migration with its
-/// own ledger row, so what precedes the failure stays and is recorded — the
-/// ClickHouse behaviour, now on both — and the retry resumes at the one that
-/// failed rather than redoing the ones that worked.
+/// The one case whose answer changed with the port: the TypeScript wrapped an
+/// entire run in one transaction, where refinery commits each migration with
+/// its own ledger row — so a retry resumes at the one that failed.
 #[tokio::test]
 async fn resumes_at_the_migration_that_failed() {
     let (_pool, mut client, schema) = target("partial").await;
@@ -165,12 +147,9 @@ async fn resumes_at_the_migration_that_failed() {
     );
 }
 
-/// The one thing Postgres does that ClickHouse cannot: a migration is atomic in
-/// itself, so a file failing on its second statement leaves neither.
-///
-/// Every migration in this repository is a single statement, which is what makes
-/// the difference stop mattering in practice — but it is what the design notes
-/// claim separates the two databases, so it is asserted rather than assumed.
+/// The one thing Postgres does that ClickHouse cannot: a migration is atomic
+/// in itself, so a file failing on its second statement leaves neither. Every
+/// migration here is a single statement, so this is asserted, not relied on.
 #[tokio::test]
 async fn rolls_back_within_a_migration_that_fails_partway() {
     let (_pool, mut client, schema) = target("rollback").await;
@@ -187,13 +166,8 @@ async fn rolls_back_within_a_migration_that_fails_partway() {
 }
 
 /// The one piece of Postgres code that is ours, and the message an operator
-/// actually reads. `main` prints the chain, so the cause underneath matters as
-/// much as the head — it is the half that names the port.
-///
-/// **The two failure paths separated when the pool became the only way in**, and
-/// that is an improvement rather than a regression: a URL that will not parse is
-/// now caught before anything dials, so it says so instead of being reported as
-/// a connection that could not be made.
+/// reads. The two failure paths separated when the pool became the only way
+/// in: a URL that will not parse is caught before anything dials.
 #[test]
 fn refuses_a_url_that_will_not_parse_before_it_dials() {
     let error = postgres::build_pool("not-a-url").unwrap_err();

@@ -42,7 +42,6 @@ const STALENESS: Staleness = Staleness {
     price: 300,
 };
 
-/// The same defaults every other suite in this workspace reads.
 fn clickhouse() -> Client {
     clickhouse_client::build_client(clickhouse_client::Config {
         url: std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_owned()),
@@ -69,14 +68,12 @@ pub(crate) fn state(postgres: Pool) -> App {
     Stores::default().app(postgres)
 }
 
-/// The router this binary actually serves, over the given Postgres.
 pub(crate) fn handler(postgres: Pool) -> Router {
     app::handler(state(postgres))
 }
 
-/// What the four ports answer, before a case changes its mind about any of them.
-/// Plain fields rather than a builder: a `with_` method per field would be six
-/// methods that each assign one field.
+/// What the four ports answer, before a case changes its mind. Plain fields
+/// rather than six `with_` methods that each assign one.
 pub(crate) struct Stores {
     /// `None` is a chain this deployment has never indexed.
     pub(crate) sync: Option<SyncStatus>,
@@ -85,8 +82,8 @@ pub(crate) struct Stores {
     pub(crate) prices: HashMap<ReserveKey, ReservePrice>,
     pub(crate) staleness: Staleness,
 
-    /// How many times the price store was asked. The point of it is the answer
-    /// `0`: an explicit `as_of` skips the read rather than discarding it.
+    /// How many times the price store was asked; the point is the answer `0`,
+    /// because an explicit `as_of` skips the read rather than discarding it.
     pub(crate) price_reads: Arc<AtomicUsize>,
 }
 
@@ -146,7 +143,6 @@ impl Stores {
         }
     }
 
-    /// The real router, with these four in front of it.
     pub(crate) fn handler(self) -> Router {
         app::handler(self.app(postgres()))
     }
@@ -196,7 +192,6 @@ impl SyncStatusStore for Synced {
     }
 }
 
-/// Status, body and the echoed request id — the three things every case reads.
 pub(crate) async fn get(
     router: Router,
     request: Request<Body>,
@@ -217,7 +212,6 @@ pub(crate) async fn get(
     )
 }
 
-/// Status and body of a failure, which is the pair an error case reads.
 pub(crate) async fn answered(error: ApiError) -> (StatusCode, String) {
     let response = error.into_response();
 

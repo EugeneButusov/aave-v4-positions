@@ -35,7 +35,6 @@ impl Instruments {
         Self::from(global::meter(telemetry::SCOPE))
     }
 
-    /// Everything one request is observed as.
     pub(crate) async fn observe(
         State(instruments): State<Self>,
         request: Request,
@@ -47,8 +46,8 @@ impl Instruments {
             return next.run(request).await;
         }
 
-        // The template, never the path: a path is whatever a stranger sent, so
-        // anyone could mint unbounded metric series by varying a 404.
+        // The template, never the path: anyone could otherwise mint unbounded
+        // metric series by varying a 404.
         let route = request
             .extensions()
             .get::<MatchedPath>()
@@ -57,8 +56,7 @@ impl Instruments {
 
         let span = tracing::info_span!(
             "request",
-            // Method and route, so an unmatched request is the method alone
-            // rather than a name carrying somebody's URL.
+            // Method and route, so an unmatched request is the method alone.
             otel.name = route.as_ref().map_or_else(
                 || method.to_string(),
                 |route| format!("{method} {route}"),
@@ -87,8 +85,8 @@ impl Instruments {
         let status = response.status();
 
         span.record("http.response.status_code", status.as_u16());
-        // Off the response, because `SetRequestId` calls its maker only when the
-        // caller sent no header: this is the one place both branches pass through.
+        // Off the response: `SetRequestId` calls its maker only when the caller
+        // sent no header, so this is where both branches meet.
         if let Some(id) = response
             .headers()
             .get("x-request-id")
@@ -97,8 +95,7 @@ impl Instruments {
             span.record("request_id", id);
         }
         if status.is_server_error() {
-            // 5xx only: a refusal is a correct answer, and marking those failed
-            // would leave no signal for the faults that are ours.
+            // 5xx only: a refusal is a correct answer.
             span.record("otel.status_code", "Error");
         }
 
@@ -172,7 +169,6 @@ mod tests {
     const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
     const CALLERS_TRACE: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
 
-    /// Shaped like the router this binary serves.
     fn router(instruments: Instruments) -> Router {
         Router::new()
             .route("/v1/positions/{user}", get(async || "[]"))
@@ -188,7 +184,6 @@ mod tests {
         Incoming::builder().uri(path).body(Body::empty()).unwrap()
     }
 
-    /// Drives the given paths and hands back every measurement they produced.
     async fn measured(paths: &[&str]) -> (InMemoryMetricExporter, SdkMeterProvider) {
         let exporter = InMemoryMetricExporter::default();
         let provider = SdkMeterProvider::builder()
@@ -207,7 +202,6 @@ mod tests {
         (exporter, provider)
     }
 
-    /// Every instrument name that reached the exporter.
     fn instrument_names(exporter: &InMemoryMetricExporter) -> BTreeSet<String> {
         exporter
             .get_finished_metrics()
@@ -249,8 +243,8 @@ mod tests {
 
     #[tokio::test]
     async fn names_every_instrument_this_binary_records() {
-        // The whole set, not a lookup: an instrument arriving without a panel,
-        // or leaving with one pointed at it, fails here.
+        // The whole set, not a lookup, so an instrument arriving without a
+        // panel or leaving with one pointed at it fails here.
         let (exporter, _provider) = measured(&["/v1/positions/0xabc", "/boom"]).await;
 
         assert_eq!(
@@ -261,8 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_route_is_the_template_and_never_the_path() {
-        // The cardinality rule: recording the path would let anyone mint
-        // unbounded series by varying a URL.
+        // Recording the path would let anyone mint unbounded series.
         let (exporter, _provider) = measured(&["/v1/positions/0xdeadbeef"]).await;
         let points = points(&exporter);
 
@@ -281,7 +274,6 @@ mod tests {
 
     #[tokio::test]
     async fn an_unmatched_path_reports_no_route_at_all() {
-        // The same rule from the other side.
         let (exporter, _provider) = measured(&["/not-a-route"]).await;
         let points = points(&exporter);
 
@@ -310,7 +302,6 @@ mod tests {
         );
     }
 
-    /// One attribute of a span, as the string it was recorded as.
     fn attribute(span: &SpanData, key: &str) -> Option<String> {
         span.attributes
             .iter()
@@ -414,8 +405,8 @@ mod tests {
 
     #[test]
     fn continues_the_trace_the_caller_sent() {
-        // Without this the service starts a trace of its own and the caller's
-        // span tree stops at the edge of this process.
+        // Or the service starts a trace of its own and the caller's span tree
+        // stops at the edge of this process.
         let carried = Incoming::builder()
             .uri("/v1/positions/0xabc")
             .header("traceparent", TRACEPARENT)
