@@ -273,7 +273,7 @@ paragraph's first guess in both directions:
   layers. That histogram is the one the dashboard's three API panels are written against, and the
   service this replaces publishes it without writing a line.
 - **Postgres is hand-written too**, which the line below this section got wrong: `tokio-postgres`
-  depends on `log`, not `tracing`, and opens no span at all. `postgres::Traced` is a pool whose
+  depends on `log`, not `tracing`, and opens no span at all. `postgres::TracedPool` is a pool whose
   `query` and `query_opt` carry it, held by a store from its constructor, so there is no `instrument`
   for a store to leave off and no untraced read reachable through it.
 - **ClickHouse is not hand-written after all.** The `clickhouse` crate already opens
@@ -410,7 +410,7 @@ holds, and the only unbound string remains the DDL in the migration runner, whic
 [`traced-sql.ts`](../packages/postgres/src/traced-sql.ts) — the `Proxy` over `Sql` with the shadowed
 `then` — is **deleted rather than ported**, but not for the reason first written here: the driver
 emits nothing, because `tokio-postgres` speaks `log` rather than `tracing`. What goes instead is
-`postgres::Traced`'s two reads, which is a dozen lines rather than a hundred and publishes
+`postgres::TracedPool`'s two reads, which is a dozen lines rather than a hundred and publishes
 `db.query.text` safely — the statement is taken as `&'static str`, so a `format!` cannot be passed
 and every value travels as a bind parameter, where the TypeScript needed `strings.raw` to keep
 interpolated values off a span. The span's name is given rather than derived for the same reason

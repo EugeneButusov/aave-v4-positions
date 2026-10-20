@@ -12,9 +12,9 @@ use crate::pool::{Pool, connection};
 /// **The connection is taken per read, never held.** `deadpool` checks
 /// `is_closed()` when handing one out, so a held connection fails every request
 /// after a server restart while readiness, asking for a fresh one, still passes.
-pub struct Traced(Pool);
+pub struct TracedPool(Pool);
 
-impl Traced {
+impl TracedPool {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self(pool)
@@ -156,7 +156,7 @@ mod tests {
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
-        let client = Traced::new(pool);
+        let client = TracedPool::new(pool);
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured)

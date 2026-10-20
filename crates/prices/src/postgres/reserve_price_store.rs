@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use postgres::{Pool, Traced};
+use postgres::{Pool, TracedPool};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
 
@@ -34,14 +34,14 @@ const LATEST: &str = "\
     WHERE chain_id = $1";
 
 pub struct PostgresReservePriceStore {
-    db: Traced,
+    db: TracedPool,
 }
 
 impl PostgresReservePriceStore {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self {
-            db: Traced::new(pool),
+            db: TracedPool::new(pool),
         }
     }
 }

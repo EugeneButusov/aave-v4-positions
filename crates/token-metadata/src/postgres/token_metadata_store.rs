@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
-use postgres::{Pool, Traced};
+use postgres::{Pool, TracedPool};
 use tokio_postgres::Row;
 
 use crate::{Error, TokenLabel, TokenMetadataStore};
@@ -16,7 +16,7 @@ const LABELS: &str = "\
     WHERE chain_id = $1";
 
 pub struct PostgresTokenMetadataStore {
-    db: Traced,
+    db: TracedPool,
 }
 
 impl PostgresTokenMetadataStore {
@@ -26,7 +26,7 @@ impl PostgresTokenMetadataStore {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self {
-            db: Traced::new(pool),
+            db: TracedPool::new(pool),
         }
     }
 }

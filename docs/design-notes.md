@@ -2005,7 +2005,7 @@ The database seam comes out **asymmetric again, and the other way round**. The `
 opens `clickhouse.query` itself, and its `opentelemetry` feature makes that a client span and puts
 `traceparent` on the request — so ClickHouse records the same trace in
 `system.opentelemetry_span_log`, which the TypeScript never asked it to. Postgres is the opposite:
-`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::Traced` is a pool whose
+`tokio-postgres` speaks `log`, not `tracing`, and opens nothing, so `postgres::TracedPool` is a pool whose
 `query` and `query_opt` carry the span, held by a store from its constructor — rather than a span to hang
 beside a read, because a span a call site can leave off is a gap nothing fails over. An extension
 trait because the client is an alias for the driver's type, so an inherent `impl` on it is not

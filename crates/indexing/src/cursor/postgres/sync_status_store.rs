@@ -4,7 +4,7 @@
 //! duplicating one, because there is exactly one answer to "where is the
 //! indexer" and a second copy of it would be a second thing to keep in step.
 
-use postgres::{Pool, Traced};
+use postgres::{Pool, TracedPool};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
 
@@ -27,14 +27,14 @@ const STATUS: &str = "\
     LIMIT 1";
 
 pub struct PostgresSyncStatusStore {
-    db: Traced,
+    db: TracedPool,
 }
 
 impl PostgresSyncStatusStore {
     #[must_use]
     pub fn new(pool: Pool) -> Self {
         Self {
-            db: Traced::new(pool),
+            db: TracedPool::new(pool),
         }
     }
 }
