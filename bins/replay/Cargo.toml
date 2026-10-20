@@ -1,0 +1,39 @@
+[package]
+name = "replay"
+description = "Replays one corpus against both read APIs and compares the answers"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The corpus is read out of the fold rather than written down, so it covers
+# every wallet there is instead of the ones someone remembered.
+clickhouse-client.workspace = true
+env.workspace = true
+
+# Already the whole tree's HTTP stack, through axum and the ClickHouse driver.
+# A client crate would have been a second one for two local GETs.
+http-body-util = "0.1.5"
+hyper = { version = "1.11.0", features = ["client", "http1"] }
+hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "tokio"] }
+
+# `derive` for the one row the fold query returns.
+serde = { version = "1.0.229", features = ["derive"] }
+# Parsing and `Number` only. Not `preserve_order`: that feature unifies across
+# the workspace, so `json.rs` keeps key order in a tree of its own.
+serde_json = "1.0.151"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+# Two spellings of one instant, which is the one class of value the two
+# services are meant to disagree on the text of.
+time = { version = "0.3.55", features = ["parsing"] }
+
+[dev-dependencies]
+# A stand-in service on a port the OS picks, so the driving loop, the cursor
+# walk and the client itself are exercised over a real socket. Already the
+# tree's server; this is the one place the harness needs one.
+axum = "0.8.9"
+tokio = { version = "1.53.1", features = ["net"] }
+
+[lints]
+workspace = true

@@ -54,5 +54,8 @@ forbid() {
 
 forbid api "${CHAIN[@]}"
 forbid migrate "${CHAIN[@]}" axum
+# The gate's own harness reads the fold and two HTTP services. Neither is the
+# chain, and it has no business asking one.
+forbid replay "${CHAIN[@]}"
 
 exit "$bad"

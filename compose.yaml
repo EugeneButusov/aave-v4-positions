@@ -216,7 +216,9 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - '${API_RUST_PORT:-3001}:3000'
+      # Not 3001: `indexer` publishes its probes there, and a `docker compose
+      # up` that brings up both fails to bind.
+      - '${API_RUST_PORT:-3002}:3000'
     healthcheck:
       # busybox `wget` is already in the base image, and it exits 1 on a 503 —
       # verified against BusyBox 1.37.0 rather than assumed, because a probe

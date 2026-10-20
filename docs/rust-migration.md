@@ -635,6 +635,25 @@ What that costs is the "any difference is a finding" property, for those two cla
 the exception list was meant to stay short, and the trade is being made deliberately rather than
 discovered.
 
+**Three more exceptions came out of building the harness, and none of them is about spelling.** Two
+requests cannot be issued at the same instant, so a value derived from the clock is not a quantity
+the two services share. `sync.age_seconds` is one — the indexer's progress measured against the
+database clock, which moves whatever the request asked for — and it is compared within a tolerance
+rather than exactly. `uptime_seconds` on liveness is the other, and worse: these are two processes
+with two start times, so only its type is comparable. `valued_at` and `pricing.age_seconds` are the
+same problem without `as_of`, and go back to being compared exactly with it, which is the reason the
+corpus pins every listing at a fixed instant as well as at none.
+
+**The fold has to be frozen while the gate runs.** The indexer advancing mid-walk changes the shares
+under both services, and `sync` is on every page precisely so a caller can see that happen — so a
+page compared across it is a finding about the clock rather than about either service. Stop the
+indexer, then replay.
+
+One further gap is the comparator's to report rather than to forgive: where the oracle's refusal
+names no parameter at all — an unrecognised query key, where Zod says only which key — the parameter
+rule has nothing to hold the candidate to. Those are counted and listed as compared on status alone,
+so a run says how much of itself was a real comparison.
+
 **The two OpenAPI documents cannot be diffed as text, and the reason is the spec version.** utoipa 5
 emits `3.1.0` and `@nestjs/swagger` 11 emits `3.0.0`, so a nullable string is `"type": ["string",
 "null"]` on one side and `"type": "string", "nullable": true` on the other — every one of them, which
@@ -758,6 +777,23 @@ the binary goes 7,072,072 bytes to 12,321,608, and RSS 2.7 MiB to 4.1 MiB agains
 TypeScript SDK costs. `OTEL_SDK_DISABLED=true` still serves and still logs.
 
 Nothing left. Phase 2 is done, and what follows is the replay harness and the cutover.
+
+**The harness is `bins/replay`**, and it is the first half of that gate: the corpus, the one key
+transform, the comparison and the cursor interop check. It reads the wallet list out of
+`user_positions` rather than carrying one, so it covers every wallet the fold has, and crosses each
+with four page sizes and three valuation instants — none, genesis, and the newest `block_timestamp`
+there is — then walks every listing's cursors to exhaustion. Each page's resume point is read off
+both answers and has to be the same bytes before either service is sent it; a pair that differs ends
+that walk, because from there the two would be comparing different pages.
+
+Two things it does not do yet. The OpenAPI comparison is structural and needs `$ref` resolution on
+both documents, which is its own increment — the component *names* differ, so the schemas cannot be
+matched by name and have to be walked from each operation's response. And it records nothing: the
+golden corpus that replaces the oracle once `apps/api` is deleted is the increment after that.
+
+It is excluded from the image by construction — the Dockerfile builds `-p migrate -p api` — and it
+joins `scripts/binary-boundaries.sh` under the same rule as the other two: it reads the fold and two
+HTTP services, and has no business asking a chain.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
