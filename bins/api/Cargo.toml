@@ -24,7 +24,6 @@ token-metadata.workspace = true
 alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
 # The four ports are held as `Box<dyn _>`, which `async fn` in a trait still
 # cannot be. Also what the test doubles in here implement.
-async-trait = "0.1.92"
 axum = "0.8.9"
 # A cursor's payload and its tag, both unpadded URL-safe. Already in the tree
 # through the drivers, so naming it costs no compilation.
@@ -75,6 +74,9 @@ utoipa = { version = "5.5.0", features = ["preserve_order", "time", "yaml"] }
 utoipa-axum = "0.2.0"
 
 [dev-dependencies]
+# The four store doubles implement the ports' `#[async_trait]` traits. The
+# binary implements none of them, so this is a dependency of the cases only.
+async-trait = "0.1.92"
 # The in-memory exporters the span and instrument cases read back, which is the
 # shape `docs/rust-migration.md` asks the inventory test for.
 opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
