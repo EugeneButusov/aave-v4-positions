@@ -1,17 +1,12 @@
 //! Failing readiness before the socket closes.
 //!
-//! `axum::serve(...).with_graceful_shutdown(f)` stops accepting the moment `f`
-//! resolves, which on its own races the endpoints controller: the pod can still
-//! be receiving traffic it is no longer listening for. So `f` is
-//! [`ShutdownFlag::on_signal`], which fails readiness *first*, holds for the removal to
-//! propagate, and only then resolves — leaving axum to finish what is in flight.
+//! `with_graceful_shutdown(f)` stops accepting the moment `f` resolves, which
+//! races the endpoints controller: the pod can still be receiving traffic it is
+//! no longer listening for. So `f` is [`ShutdownFlag::on_signal`], which fails
+//! readiness first, holds for the removal to propagate, and only then resolves.
 //!
-//! A shared flag rather than a service, following
-//! [linkerd2-proxy's `Readiness`](https://github.com/linkerd/linkerd2-proxy/blob/main/linkerd/app/admin/src/server/readiness.rs),
-//! which is a `Weak<()>` and thirty lines. This one runs in the other
-//! direction — ready until told otherwise — so it is an `AtomicBool` rather
-//! than a latch, but the shape of the idea is theirs: readiness is a value the
-//! handler reads, not a collaborator it calls.
+//! A shared flag rather than a service, after linkerd2-proxy's `Readiness`:
+//! readiness is a value the handler reads, not a collaborator it calls.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,11 +23,8 @@ impl ShutdownFlag {
         Self::default()
     }
 
-    /// Read once per readiness request.
-    ///
-    /// `Relaxed`, because nothing is published alongside it: the flag is the
-    /// whole message, and a probe that observes the flip one request late is
-    /// indistinguishable from one that arrived a millisecond earlier.
+    /// Read once per readiness request. `Relaxed`, because the flag is the
+    /// whole message and nothing is published alongside it.
     #[must_use]
     pub fn has_begun(&self) -> bool {
         self.0.load(Ordering::Relaxed)
@@ -52,19 +44,13 @@ impl ShutdownFlag {
         tokio::time::sleep(grace).await;
     }
 
-    /// The future to hand `with_graceful_shutdown`.
-    ///
-    /// SIGTERM is what an orchestrator sends; SIGINT is what a terminal sends.
-    /// Both shutdown, because a `docker compose down` that skipped the shutdown would
-    /// be a different shutdown path from the deployed one, and the deployed one
-    /// is the one that has to work.
+    /// The future to hand `with_graceful_shutdown`. Both SIGTERM and SIGINT,
+    /// so `docker compose down` takes the deployed path rather than its own.
     pub async fn on_signal(&self, grace: Duration) {
         let signal = terminated().await;
 
-        // Named, and logged before the hold rather than after it: without this
-        // the stream goes quiet for the whole grace window with nothing to say
-        // the pod is on its way out. Which signal it was distinguishes an
-        // orchestrator from a human at a terminal.
+        // Logged before the hold, or the stream goes quiet for the whole grace
+        // window with nothing to say the pod is on its way out.
         tracing::info!(
             signal,
             grace_seconds = grace.as_secs(),
@@ -82,9 +68,8 @@ async fn terminated() -> &'static str {
     // Both handlers are installed before either is awaited, so a signal
     // arriving between the two is still caught.
     let Ok(mut term) = signal(SignalKind::terminate()) else {
-        // Nothing can be done about a kernel that will not register the
-        // handler, and refusing to serve over it would be worse than draining
-        // ungracefully on the day it happens.
+        // Refusing to serve over an unregistrable handler would be worse than
+        // draining ungracefully on the day it happens.
         return std::future::pending().await;
     };
 
@@ -118,8 +103,7 @@ mod tests {
 
     #[test]
     fn a_clone_sees_the_same_flag() {
-        // The handler holds one and the signal task holds another; a copy that
-        // drained privately would fail readiness for nobody.
+        // A copy that drained privately would fail readiness for nobody.
         let shutdown = ShutdownFlag::new();
         let handler = shutdown.clone();
 
@@ -130,8 +114,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn fails_readiness_before_it_waits_rather_than_after() {
-        // The ordering is the whole point of the type: hold first and the pod
-        // is still advertised as ready for the length of the grace window.
+        // Hold first and the pod stays advertised as ready for the window.
         let shutdown = ShutdownFlag::new();
         let held = tokio::spawn({
             let shutdown = shutdown.clone();

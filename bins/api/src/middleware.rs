@@ -1,14 +1,10 @@
 //! Everything wrapped around whatever this service serves.
 //!
-//! One place for the stack, as
-//! [crates.io's](https://github.com/rust-lang/crates.io/blob/main/src/middleware.rs) is — and taking
-//! its `CatchPanicLayer` with it. Theirs takes the state too, for the
-//! `from_fn_with_state` middleware it has; this one has none yet and a parameter
-//! nothing reads is `dead_code`, which the workspace denies.
+//! One place for the stack, after crates.io's, and taking its
+//! `CatchPanicLayer` with it.
 //!
-//! **The observation layer is outermost, and that ordering is the contract**:
-//! a request id prefers the trace id, so the span has to exist before the id is
-//! minted.
+//! The observation layer is outermost, and that ordering is the contract: a
+//! request id prefers the trace id, so the span exists before the id is minted.
 
 use std::any::Any;
 
@@ -28,12 +24,9 @@ pub(crate) fn apply(router: Router) -> Router {
     let instruments = Instruments::new();
 
     router.layer(
-        // Ordered explicitly, because it has to be: the span outermost so the
-        // id is minted inside a traced request, `SetRequestId` next so the
-        // header exists before anything reads it, `PropagateRequestId` to copy
-        // it onto the way out, and `CatchPanic` innermost so its 500 still
-        // travels out through all three. Reversed, every response carries a
-        // fresh id unrelated to the one the caller sent.
+        // The order is the contract: span outermost so the id is minted inside
+        // a traced request, then the header, then its copy onto the way out,
+        // and `CatchPanic` innermost so its 500 travels out through all three.
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 instruments,
@@ -51,8 +44,8 @@ struct Traced;
 
 impl MakeRequestId for Traced {
     fn make_request_id<B>(&mut self, request: &Request<B>) -> Option<RequestId> {
-        // Only reached when the caller sent none: `SetRequestId` keeps theirs,
-        // which is echoed and stable across a retry where a trace id is not.
+        // Only reached when the caller sent none; `SetRequestId` keeps theirs,
+        // which is stable across a retry where a trace id is not.
         telemetry::trace_id(&tracing::Span::current())
             .and_then(|id| id.parse().ok())
             .map(RequestId::new)
@@ -62,20 +55,14 @@ impl MakeRequestId for Traced {
 
 /// A panic is a bug here, and the caller learns nothing about it.
 ///
-/// **The body is fixed text.** A panic message carries whatever was in scope
-/// when it fired, which is not a thing to hand a stranger — and this service
-/// answers for any wallet anyone asks about, so every caller is one.
-///
-/// **What an operator needs goes to the log instead.** The default hook already
-/// writes the panic to stderr, but as plain text in a stream where every other
-/// line is a JSON object, and with nothing tying it to the request. This is the
-/// same fact as a record.
+/// The body is fixed text, because a panic message carries whatever was in
+/// scope when it fired. What an operator needs goes to the log instead — the
+/// default hook writes plain text into a stream of JSON objects, with nothing
+/// tying it to the request.
 fn panicked(payload: Box<dyn Any + Send + 'static>) -> Response {
-    // `as_ref()` rather than `&payload`, and it is not a style choice: a
-    // `&Box<dyn Any>` unsizes to a `&dyn Any` holding the *box*, so every
-    // downcast below misses and every panic is logged as having no message.
-    // That is not hypothetical — it is what the first version of this did, and
-    // only running it found out.
+    // `as_ref()`, not `&payload`: a `&Box<dyn Any>` unsizes to a `&dyn Any`
+    // holding the box, so every downcast below misses and every panic is
+    // logged as having no message. Which is what the first version did.
     tracing::error!(panic = said(payload.as_ref()), "a handler panicked");
 
     let mut response = Response::new(Body::from("Service panicked"));
@@ -105,15 +92,14 @@ mod tests {
     use crate::test_support::app::{get, handler, postgres, unreachable_postgres};
     use crate::test_support::observability::{Captured, interesting, observed};
 
-    /// Boxed, because that is how a payload arrives.
     fn payload(value: impl Any + Send) -> Box<dyn Any + Send> {
         Box::new(value)
     }
 
     #[tokio::test]
     async fn a_panicking_handler_answers_500_and_says_nothing_about_why() {
-        // Without the layer this drops the connection with no response at all,
-        // which a caller cannot tell from the service being down.
+        // Without the layer the connection drops with no response, which a
+        // caller cannot tell from the service being down.
         async fn boom() -> &'static str {
             panic!("a secret only the server should know")
         }
@@ -133,8 +119,7 @@ mod tests {
             !body.contains("secret"),
             "the panic message reached the wire"
         );
-        // Still through both request-id layers, so the 500 is findable in the
-        // log beside the record the handler wrote.
+        // Through both request-id layers, so the 500 is findable in the log.
         assert_eq!(request_id.as_deref(), Some("carried-through"));
     }
 
@@ -155,8 +140,7 @@ mod tests {
 
     #[tokio::test]
     async fn echoes_the_request_id_a_caller_did_send() {
-        // The header is caller-supplied and stable across a retry, which is what
-        // makes a client-side report findable in the log stream.
+        // Caller-supplied and stable across a retry, unlike a trace id.
         let request = Request::builder()
             .uri("/health/live")
             .header("x-request-id", "from-the-caller")
@@ -170,8 +154,8 @@ mod tests {
 
     #[test]
     fn the_request_id_a_caller_gets_back_is_the_trace_id() {
-        // Without this a line carries a `request_id` and a `trace_id` with
-        // nothing to do with each other, and an echoed header naming neither.
+        // Or a line carries a `request_id` and a `trace_id` with nothing to do
+        // with each other, and an echoed header naming neither.
         let request = Request::builder()
             .uri("/api/v1/chains/1/users/0x0000000000000000000000000000000000000001/positions")
             .body(Body::empty())
@@ -203,12 +187,9 @@ mod tests {
         );
     }
 
-    /// What the panic handler wrote, as a deployment would read it.
-    ///
-    /// Worth a case of its own: reading the message is done at one call site
-    /// with a coercion that can silently pick the wrong thing, and asserting on
-    /// [`said`] alone leaves that call site uncovered — which is exactly how the
-    /// bug this catches got as far as a running process.
+    /// What the panic handler wrote, as a deployment would read it. Asserting
+    /// on [`said`] alone leaves the coercion uncovered, which is how the bug
+    /// this catches reached a running process.
     fn logged_by(panic: Box<dyn Any + Send>) -> String {
         interesting();
         let (captured, lines) = Captured::new();
@@ -234,8 +215,8 @@ mod tests {
 
     #[test]
     fn reads_a_panic_message_whether_it_was_formatted_or_a_literal() {
-        // `panic!("x")` hands over a `&str` and `panic!("{x}")` a `String`;
-        // reading only one of the two loses half the messages to the fallback.
+        // `panic!("x")` is a `&str` and `panic!("{x}")` a `String`; reading
+        // one of the two loses half the messages to the fallback.
         assert_eq!(said(&*payload("a literal")), "a literal");
         assert_eq!(
             said(&*payload(format!("a {} one", "formatted"))),

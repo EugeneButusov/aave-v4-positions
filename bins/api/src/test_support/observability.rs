@@ -15,21 +15,18 @@ use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SpanData
 use tower::ServiceExt;
 use tracing_subscriber::layer::SubscriberExt as _;
 
-/// Everything one request produced, through a subscriber of the case's own, so
-/// cases run in parallel without reading each other's telemetry.
 pub(crate) struct Observed {
     pub(crate) request_id: Option<String>,
     pub(crate) spans: Vec<SpanData>,
 
-    /// The JSON lines the formatter wrote.
     pub(crate) logged: String,
 }
 
 /// Makes every callsite in this binary interesting, once.
 ///
-/// `tracing` caches callsite interest from the *global* subscriber, which is
-/// `NoSubscriber` here and answers "never". Without this, a case reads an empty
-/// log and a correct response — a harness failure wearing the code's clothes.
+/// `tracing` caches callsite interest from the global subscriber, which is
+/// `NoSubscriber` here and answers "never" — so without this a case reads an
+/// empty log and a correct response.
 pub(crate) fn interesting() {
     static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
@@ -83,8 +80,7 @@ pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     }
 }
 
-/// What a subscriber wrote, where a case can read it back. One of these, for
-/// both suites here.
+/// What a subscriber wrote, where a case can read it back.
 ///
 /// A channel rather than a shared buffer: a `Sender` is `Clone` and
 /// synchronised already, so this needs neither an `Arc` nor a `Mutex`.

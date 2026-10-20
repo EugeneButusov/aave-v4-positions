@@ -150,7 +150,6 @@ async fn serves_the_whole_page_in_the_spelling_this_port_publishes() {
 
 #[tokio::test]
 async fn a_chain_this_deployment_has_never_indexed_is_a_404_not_an_empty_page() {
-    // `200` with nothing in it says the wallet holds no positions.
     let (status, body) = answer(
         Stores {
             sync: None,

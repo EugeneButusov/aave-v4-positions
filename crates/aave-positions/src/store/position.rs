@@ -6,10 +6,9 @@ use crate::valuation::Valuation;
 
 /// What a reserve refers to, once the registry and the Hub have both been read.
 ///
-/// `reserve_id` is a per-Spoke index and means nothing on its own (§1). This is
-/// the resolved identity: `AddReserve` supplies the Hub and its asset id, and
-/// the Hub's `AddAsset` supplies the ERC-20 and its decimals — no Spoke event
-/// carries the token address.
+/// `reserve_id` is a per-Spoke index and means nothing on its own (§1).
+/// `AddReserve` supplies the Hub and asset id, the Hub's `AddAsset` the ERC-20
+/// and its decimals — no Spoke event carries the token address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PositionAsset {
     pub asset_id: U256,
@@ -20,21 +19,15 @@ pub struct PositionAsset {
 
 /// One user's stake in one reserve on one Spoke.
 ///
-/// **Shares are the stored truth; [`Position::value`] is derived.** Between
-/// events the Hub's index accrues and emits nothing, so a share balance is not
-/// a balance (§5) — the amounts are computed at read time from the Hub asset
-/// fold and carry the instant they were computed at.
+/// Shares are the stored truth and [`Position::value`] is derived: a share
+/// balance is not a balance (§5), so the amounts are computed at read time and
+/// carry the instant they were computed at.
 ///
-/// [`Position::asset`] and [`Position::value`] are **`None` together**, and
-/// only when the join has nothing to offer: a reserve the registry has not
-/// seen, or a Hub asset with no interest checkpoint yet. Reporting zero there
-/// would be a number the caller cannot distinguish from a real one.
+/// [`Position::asset`] and [`Position::value`] are `None` together, and only
+/// when the join has nothing to offer.
 ///
-/// **The share columns are signed, and that is not a widening for convenience.**
-/// Each is a sum of `Int256` deltas and cannot go negative on chain, so a
-/// negative one is drift — and §9 catches it by seeing it. Reading them as
-/// `U256` would turn the wrong number that reveals a bug into a refusal that
-/// hides which position produced it.
+/// The share columns are signed although they cannot go negative on chain, so
+/// that drift shows as a wrong number §9 can see rather than a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Position {
     pub chain_id: u32,
@@ -50,20 +43,15 @@ pub struct Position {
     pub premium_shares: I256,
     pub premium_offset_ray: I256,
 
-    /// Net principal flow in asset units — what was put in less what came out.
-    ///
-    /// Kept beside [`Position::value`] rather than replaced by it, because the
-    /// two answer different questions: this one is cost basis, and the
-    /// difference between them is interest.
+    /// Net principal flow in asset units — cost basis, where the difference
+    /// from [`Position::value`] is interest.
     pub net_supplied_amount: I256,
     pub net_borrowed_amount: I256,
 
-    /// The user's own collateral flag, and only that.
-    ///
-    /// §12.1's `collateral` type additionally requires `collateralFactor > 0`
-    /// under the user's pinned `dynamicConfigKey`, which needs config events
-    /// the fold does not ingest. Five of the Main Spoke's fourteen reserves
-    /// have `CF = 0`, so this flag alone overstates collateral for those.
+    /// The user's own collateral flag, and only that. §12.1's `collateral`
+    /// type also requires `collateralFactor > 0`, which needs config events the
+    /// fold does not ingest — and five of the Main Spoke's fourteen reserves
+    /// have `CF = 0`.
     pub using_as_collateral: bool,
 
     /// Ledger rows folded into this position. Zero shares with a non-zero count

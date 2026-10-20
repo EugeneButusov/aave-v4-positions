@@ -1,8 +1,6 @@
-//! The Hub asset state, and the arithmetic that hangs off it.
-//!
 //! `AssetLogic` and `SharesMath`, transcribed from `aave/aave-v4` at commit
-//! `2524fe4`. `AssetLogic` declares `using AssetLogic for IHub.Asset` on its
-//! first line, so these are methods on chain too.
+//! `2524fe4`. `AssetLogic` declares `using AssetLogic for IHub.Asset`, so these
+//! are methods on chain too.
 
 use alloy_primitives::{I256, U256, uint};
 
@@ -13,15 +11,9 @@ use super::math::{
 
 /// The Hub asset state one valuation reads.
 ///
-/// A narrowed view of the `hub_assets_as_of` row — the fields the arithmetic
-/// touches and nothing else, so a change to the row shape cannot silently alter
-/// a formula.
-///
-/// **The widths are the column's.** The summed columns are
-/// `Int256` on the way out of ClickHouse because they are sums of signed
-/// deltas, and non-negative in aggregate; converting them is the store's job in
-/// Phase 2, not this module's. `premium_offset_ray` is the exception and stays
-/// signed, because it genuinely is.
+/// A narrowed view of the `hub_assets_as_of` row, so a change to the row shape
+/// cannot silently alter a formula. The summed columns are non-negative in
+/// aggregate; `premium_offset_ray` stays signed because it genuinely is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AssetState {
     pub(crate) liquidity: U256,
@@ -48,18 +40,13 @@ const VIRTUAL: U256 = uint!(1_000_000_U256);
 impl AssetState {
     /// `AssetLogic.getDrawnIndex`, extrapolated to an arbitrary time.
     ///
-    /// The index accrues every second and emits nothing (§5), so a balance is
-    /// only meaningful with a time attached. What makes this exact rather than
-    /// a model is §5.3: the Hub emits the *settled* index on every accrual, so
-    /// this applies linear interest to an authoritative checkpoint instead of
-    /// reconstructing a rate curve.
+    /// Exact rather than a model because the Hub emits the settled index on
+    /// every accrual (§5.3), so this applies linear interest to an
+    /// authoritative checkpoint.
     ///
-    /// **Two short-circuits, both from the contract and both load-bearing.**
-    /// The index does not move when the checkpoint is already at `at`, nor when
-    /// the asset owes nothing at all — and the second is on the *asset's*
-    /// totals, not the user's, so a user with debt in an otherwise-idle asset
-    /// still does not accrue. Skipping either inflates every debt in that
-    /// asset.
+    /// Both short-circuits are the contract's. The second is on the *asset's*
+    /// totals, not the user's, so a user with debt in an idle asset does not
+    /// accrue; skipping either inflates every debt in that asset.
     pub(super) fn drawn_index_at(&self, at: u64) -> Result<U256, Error> {
         if self.checkpoint_at == at {
             return Ok(self.checkpoint_index);
@@ -93,13 +80,11 @@ impl AssetState {
     }
 
     /// `AssetLogic.getUnrealizedFees` — the protocol's cut of interest accrued
-    /// since the checkpoint, not yet folded into `realized_fees`.
+    /// since the checkpoint.
     ///
-    /// This is the one term §5.2 states in outline rather than in full, so it is
-    /// transcribed rather than reconstructed. Note it is a difference of two
-    /// *separately rounded* values — `from_ray_up(after) - from_ray_up(before)`
-    /// — and not `from_ray_up(after - before)`, which would differ by a wei
-    /// whenever both have a remainder.
+    /// A difference of two *separately rounded* values, not
+    /// `from_ray_up(after - before)`: the two differ by a wei whenever both
+    /// have a remainder.
     fn unrealized_fees(&self, drawn_index: U256) -> Result<U256, Error> {
         if self.checkpoint_index == drawn_index || self.liquidity_fee == 0 {
             return Ok(U256::ZERO);
@@ -116,9 +101,8 @@ impl AssetState {
 
     /// `AssetLogic.totalAddedAssets` — what the whole supply side is worth.
     ///
-    /// Suppliers are paid out of accrued debt, so this depends on `drawn_index`
-    /// and therefore on time: the supply side is a per-second quantity too, not
-    /// just the debt side (§5.2).
+    /// Depends on `drawn_index` and therefore on time: suppliers are paid out
+    /// of accrued debt (§5.2).
     fn total_added_assets(&self, drawn_index: U256) -> Result<U256, Error> {
         let owed = from_ray_up(self.aggregated_owed_ray(drawn_index)?);
         let fees = self.unrealized_fees(drawn_index)?;
@@ -133,10 +117,9 @@ impl AssetState {
 
     /// `SharesMath.toAssetsDown`, via `previewRemoveByShares` — the supply side.
     ///
-    /// **Not an index.** ERC-4626 virtual assets and shares of `1e6` each pad
-    /// the ratio against manipulation, and the padding is inside the division
-    /// rather than applied after it, so it cannot be factored out. Rounds
-    /// **down**, where the debt side rounds up.
+    /// Not an index: the ERC-4626 virtual assets and shares sit inside the
+    /// division, so they cannot be factored out. Rounds down, where the debt
+    /// side rounds up.
     pub(super) fn supplied_assets(&self, shares: U256, drawn_index: U256) -> Result<U256, Error> {
         let assets = self
             .total_added_assets(drawn_index)?
@@ -151,9 +134,6 @@ impl AssetState {
     }
 }
 
-// Same reason as `math`'s: the arithmetic in a vector is the vector, and
-// ruint panics on overflow in every profile, so a fixture that does not fit
-// fails the test.
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -166,14 +146,12 @@ mod tests {
 
         #[test]
         fn applies_linear_interest_from_the_checkpoint() {
-            // 5% for exactly a year, on an index of 1.0.
             assert_eq!(asset().drawn_index_at(T0 + YEAR), Ok(RAY + five_percent()));
         }
 
         #[test]
         fn compounds_only_where_a_checkpoint_landed() {
-            // Two years in one step is 10%, not 10.25% — interest is linear
-            // between checkpoints and compounds only when one lands (§5.1).
+            // Two years in one step is 10%, not 10.25% (§5.1).
             assert_eq!(
                 asset().drawn_index_at(T0 + 2 * YEAR),
                 Ok(RAY + U256::from(2) * five_percent())
@@ -187,9 +165,6 @@ mod tests {
 
         #[test]
         fn does_not_accrue_on_an_asset_that_owes_nothing() {
-            // The short-circuit is on the *asset's* totals. Dropping it makes
-            // every idle asset's index creep upward and inflates any debt later
-            // drawn.
             let idle = AssetState {
                 drawn_shares: U256::ZERO,
                 premium_shares: U256::ZERO,
@@ -201,7 +176,7 @@ mod tests {
 
         #[test]
         fn still_accrues_when_only_the_premium_is_outstanding() {
-            // `drawn_shares == 0 && premium_shares == 0` — both, not either.
+            // Both must be zero, not either.
             let premium_only = AssetState {
                 drawn_shares: U256::ZERO,
                 premium_shares: U256::from(1),
@@ -213,11 +188,10 @@ mod tests {
 
         #[test]
         fn the_checkpoint_short_circuit_is_load_bearing_at_the_top_of_the_range() {
-            // Below `rayMulUp`'s guard the branch is invisible: the else-branch
-            // at `at == checkpoint_at` is `ray_mul_up(index, RAY)`, which is
-            // `index`. That is why deleting it changes nothing in a language
-            // with arbitrary precision, and the design notes record the
-            // TypeScript suite surviving exactly that deletion.
+            // Below `rayMulUp`'s guard the branch is invisible — the else-branch
+            // is `ray_mul_up(index, RAY)`, which is `index`. The TypeScript
+            // suite survived deleting it; past the guard it is the difference
+            // between an answer and none.
             for index in [U256::ZERO, U256::from(1), RAY, U256::MAX / RAY] {
                 let state = AssetState {
                     checkpoint_index: index,
@@ -231,8 +205,6 @@ mod tests {
                 );
             }
 
-            // Past the guard it is the difference between an answer and none,
-            // because `index * RAY` is where the contract reverts.
             let past_the_guard = AssetState {
                 checkpoint_index: U256::MAX,
                 ..asset()
@@ -244,8 +216,6 @@ mod tests {
 
         #[test]
         fn refuses_a_checkpoint_in_the_future() {
-            // On chain this reverts. Here it means two different blocks were
-            // mixed up, and every number downstream would be quietly wrong.
             assert_eq!(
                 asset().drawn_index_at(T0 - 1),
                 Err(Error::CheckpointAhead { seconds: 1 })
@@ -258,9 +228,6 @@ mod tests {
 
         #[test]
         fn pads_the_ratio_with_virtual_assets_and_shares() {
-            // 1e6 each, inside the division rather than applied after — the
-            // padding cannot be factored out, and dropping it changes every
-            // result.
             let state = AssetState {
                 liquidity: U256::ZERO,
                 added_shares: U256::ZERO,
@@ -269,7 +236,6 @@ mod tests {
                 ..asset()
             };
 
-            // An empty asset: shares redeem 1:1 against the padding alone.
             assert_eq!(
                 state.supplied_assets(U256::from(500), RAY),
                 Ok(U256::from(500))
@@ -303,15 +269,13 @@ mod tests {
                 ..asset()
             };
 
-            // liquidity + swept + owed − realizedFees = 1000 + 500 + 2000 − 300.
             assert_eq!(state.total_added_assets(RAY), Ok(U256::from(3_200)));
         }
 
         #[test]
         fn carries_bad_debt_as_if_still_owed() {
             // §12.3: a deficit stays inside aggregatedOwedRay until eliminated,
-            // so suppliers hold shares partly backed by it rather than taking a
-            // haircut.
+            // so suppliers do not take a haircut.
             let with_deficit = AssetState {
                 deficit_ray: U256::from(100) * RAY,
                 drawn_shares: U256::ZERO,
@@ -346,19 +310,13 @@ mod tests {
                 .total_added_assets(state.drawn_index_at(T0 + YEAR).unwrap())
                 .unwrap();
 
-            // 50,000 of interest accrues; the protocol takes 10% and suppliers
-            // get the other 45,000.
             assert_eq!(a_year_on - at_checkpoint, U256::from(45_000));
         }
 
         #[test]
         fn rounds_each_side_of_the_fee_difference_separately() {
-            // `from_ray_up(after) - from_ray_up(before)`, not
-            // `from_ray_up(after - before)`. The two agree unless both sides
-            // have a remainder and the later one's is larger, which is what
-            // this constructs: owed goes from RAY+1 to 2·RAY+2, so the
-            // separately-rounded difference is 3−2 = 1 while rounding the
-            // difference once gives ceil((RAY+1)/RAY) = 2.
+            // The two forms agree unless both sides have a remainder and the
+            // later one's is larger, which is what this constructs.
             let state = AssetState {
                 liquidity: U256::ZERO,
                 swept: U256::ZERO,
@@ -387,7 +345,6 @@ mod tests {
                 ..asset()
             };
 
-            // Both short-circuits in getUnrealizedFees: same index, and zero fee.
             assert_eq!(
                 state.total_added_assets(RAY),
                 AssetState {
@@ -399,16 +356,11 @@ mod tests {
         }
     }
 
-    /// Where these quantities stop, measured rather than assumed.
     mod the_widths {
         use super::*;
 
         #[test]
         fn refuses_a_share_balance_that_would_leave_uint256() {
-            // Both sides of the edge, which pins the term that gives out more
-            // firmly than a label on the error would: at `MAX / RAY` the
-            // `drawnShares * drawnIndex` product is the largest that fits, and
-            // one share more needs a 257th bit.
             let at_the_edge = AssetState {
                 drawn_shares: U256::MAX / RAY,
                 checkpoint_index: RAY,
@@ -425,8 +377,7 @@ mod tests {
 
         #[test]
         fn the_three_intermediates_are_the_widths_the_port_notes_record() {
-            // Prose in a doc comment drifts; this does not. Every row of the
-            // headroom table in `docs/rust-migration.md`, measured.
+            // Every row of the headroom table in `docs/rust-migration.md`.
             let uint120_max: U256 = (U256::from(1) << 120) - U256::from(1);
             assert_eq!(RAY.bit_len(), 90);
 
@@ -440,12 +391,8 @@ mod tests {
             assert_eq!(uint120_max.checked_mul(RAY).unwrap().bit_len(), 210);
 
             // uint120 shares against a totalAssets of 2^128, in
-            // `supplied_assets` — the narrowest margin in the module.
-            //
-            // **The Port notes' 248 counts `totalAssets` alone.** The multiply
-            // is against `totalAssets + VIRTUAL`, because the ERC-4626 padding
-            // is inside the division rather than applied after it, so the
-            // intermediate is one bit wider and the margin is seven.
+            // `supplied_assets`. The notes' 248 counts `totalAssets` alone; the
+            // multiply is against `totalAssets + VIRTUAL`, so the margin is 7.
             let total_assets = U256::from(1) << 128;
             assert_eq!(
                 uint120_max.checked_mul(total_assets).unwrap().bit_len(),
@@ -462,9 +409,8 @@ mod tests {
 
         #[test]
         fn the_widened_intermediate_carries_the_supply_side_past_that() {
-            // Past the seven bits, `shares * total` has no uint256 to live in
-            // — but the quotient does, and that is the whole argument for
-            // `Math.mulDiv` over `(a / c) * b`.
+            // Past the seven bits `shares * total` has no uint256 to live in,
+            // but the quotient does — the argument for `Math.mulDiv`.
             let big = U256::from(1) << 200;
             let state = AssetState {
                 liquidity: big,

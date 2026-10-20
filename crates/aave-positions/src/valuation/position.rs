@@ -1,9 +1,7 @@
 //! One user's shares, and what they are worth at an instant.
 //!
 //! `Spoke.getUserDebt` and `previewRemoveByShares`, transcribed from
-//! `aave/aave-v4` at commit `2524fe4`. Nothing here reads a database: the
-//! inputs are a Hub asset's state and a user's shares, and Phase 2's store is
-//! what will fetch them.
+//! `aave/aave-v4` at commit `2524fe4`. Nothing here reads a database.
 
 use alloy_primitives::{I256, U256};
 
@@ -36,15 +34,12 @@ pub struct Valuation {
 impl PositionShares {
     /// One position's balances at `at`, in token units.
     ///
-    /// `at` is Unix seconds and is the caller's choice, exactly as
-    /// `block.timestamp` is the chain's: `getUserDebt` at `latest` is stored
-    /// shares times an index extrapolated to the head block, and this is the
-    /// same computation with the time named rather than implied.
+    /// `at` is the caller's choice as `block.timestamp` is the chain's:
+    /// `getUserDebt` at `latest` is the same computation with the time implied.
     ///
-    /// The debt side rounds **up** throughout — `rayMulUp` on the drawn part
-    /// and `fromRayUp` on the premium, each separately, which is what
-    /// `Spoke.getUserDebt` does before summing. Rounding the total once instead
-    /// would be a wei light.
+    /// The debt side rounds up throughout, and each part separately, as
+    /// `Spoke.getUserDebt` does before summing — rounding the total once
+    /// instead would be a wei light.
     pub(crate) fn value_at(&self, asset: &AssetState, at: u64) -> Result<Valuation, Error> {
         let drawn_index = asset.drawn_index_at(at)?;
 
@@ -67,9 +62,7 @@ impl PositionShares {
     }
 }
 
-// Same reason as `math`'s: the arithmetic in a vector is the vector, and
-// ruint panics on overflow in every profile, so a fixture that does not fit
-// fails the test.
+// As in `math`: the arithmetic in a vector is the vector.
 #[cfg(test)]
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
@@ -84,9 +77,8 @@ mod tests {
 
         #[test]
         fn rounds_each_component_up_separately_as_the_spoke_does() {
-            // getUserDebt returns (rayMulUp(shares, index), fromRayUp(premiumRay))
-            // and getUserTotalDebt sums those two already-rounded numbers.
-            // Rounding the sum once instead is a wei light.
+            // `getUserTotalDebt` sums two already-rounded numbers; rounding
+            // the sum once instead is a wei light.
             let state = AssetState {
                 checkpoint_index: RAY + U256::from(1),
                 premium_shares: U256::from(1),
@@ -143,8 +135,8 @@ mod tests {
             let now = held.value_at(&state, T0).unwrap().supplied_amount;
             let later = held.value_at(&state, T0 + YEAR).unwrap().supplied_amount;
 
-            // The supply side is a per-second quantity too, because it is paid
-            // out of the debt side (§5.2).
+            // The supply side is per-second too, being paid out of the debt
+            // side (§5.2).
             assert!(later > now);
         }
     }
@@ -155,8 +147,8 @@ mod tests {
 
         #[test]
         fn stays_exact_on_a_realistic_share_balance() {
-            // A real Repay in the Spoke fixture carries this many shares, and
-            // float64 would round the tail (§7.5).
+            // A real Repay carries this many shares; float64 would round the
+            // tail (§7.5).
             let shares = uint!(422166581625087607993_U256);
             let held = PositionShares {
                 drawn_shares: shares,
@@ -173,9 +165,7 @@ mod tests {
 
         #[test]
         fn values_a_uint120_share_balance_against_a_ray_index() {
-            // `drawn_shares * drawn_index` is the 210-bit intermediate, 46 bits
-            // clear of uint256. This is the realistic worst case, and it is
-            // exact rather than merely fitting.
+            // The 210-bit intermediate, 46 bits clear of uint256.
             let shares = (U256::from(1) << 120) - U256::from(1);
             let state = AssetState {
                 drawn_shares: shares,

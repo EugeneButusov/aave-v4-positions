@@ -1,14 +1,7 @@
 //! The ClickHouse implementation of [`PositionStore`](super::PositionStore).
 //!
-//! Everything storage-shaped is in here: `sql` is the statement, `row` is what
-//! the server sends and what it means, `position_store` runs one and returns
-//! the other, and `harness` stands up the migrated database its specs read
-//! from.
-//!
-//! The specs split the same way. What holds for every implementation is the
-//! port's, in `store::conformance`; what is left here either drives a
-//! real server through this adapter's `Harness` or asserts on a string this
-//! module built.
+//! What holds for every implementation is the port's, in `store::conformance`;
+//! what is left here drives a real server or asserts on a string built below.
 
 #[cfg(test)]
 mod harness;

@@ -1,13 +1,7 @@
 //! One position's balances, in token units, at an instant the caller names.
 //!
-//! The split follows what each part answers to. `asset` is the Hub asset and
-//! the five formulas that hang off it; `position` is a user's shares and the
-//! one call that values them against an asset; `price` is `SpokeUtils.toValue`,
-//! which shares no input with either. `math` is the contracts' libraries
-//! underneath all three, `error` is what they refuse with, and `fixtures` is
-//! the vectors `asset` and `position` both build on.
-//!
-//! This file holds the wiring and the one value they are all scaled in.
+//! Every quantity is a `uint256` on chain, so an intermediate that leaves that
+//! range is an [`Error`] rather than a number.
 
 mod asset;
 mod error;

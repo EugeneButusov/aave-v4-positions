@@ -1,9 +1,7 @@
 //! What one embedded file is, and the group it belongs to.
 //!
-//! `label` is the one place this crate concedes anything to a runner:
-//! refinery's parser wants `V{version}__{name}`, and spelling it out here
-//! rather than deriving it there keeps the ledger's keys a thing you can read
-//! rather than compute.
+//! `label` is spelled out rather than derived, because refinery's parser wants
+//! `V{version}__{name}` and the ledger's keys are then readable.
 
 /// One `.sql` file, and the two names it goes by.
 pub struct Embedded {

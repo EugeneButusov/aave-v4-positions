@@ -1,16 +1,11 @@
 //! What Aave prices each reserve at.
 //!
-//! **Enrichment, not fold.** No Aave event carries a price (§4.4), so this is
-//! read from the Spoke's own oracle and kept beside the event log rather than
-//! derived from it — the same sense in which `token-metadata` is enrichment,
-//! and the second thing here that is fetched rather than indexed.
+//! Enrichment, not fold: no Aave event carries a price (§4.4), so this is read
+//! from the Spoke's own oracle and kept beside the event log.
 //!
-//! **The read half only.** `put`, the refresher and the oracle reader belong to
-//! Phase 4; nothing in this workspace writes a price yet.
+//! The read half only — `put`, the refresher and the oracle reader are Phase 4.
 //!
-//! **The port is this level; the adapter is a directory down.** `postgres` is
-//! the one implementation, and the harness that stands a scenario up for it
-//! lives with it rather than beside the port it is proving.
+//! The port is this level; the adapter and its harness are a directory down.
 
 mod error;
 mod postgres;

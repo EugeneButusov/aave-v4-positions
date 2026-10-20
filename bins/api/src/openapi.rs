@@ -31,7 +31,6 @@ state. Protocol details and the derivations behind each field are in \
 JSON number, and the failure mode of getting this wrong is a few wei of drift \
 that reads as a rounding bug rather than a parse error.";
 
-/// The title, the contract version and the one tag; the rest is merged in.
 #[derive(OpenApi)]
 #[openapi(
     info(

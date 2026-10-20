@@ -11,20 +11,18 @@ use crate::{CLICKHOUSE, Embedded, POSTGRES, Source};
 
 /// Rejects a group that has drifted from the directory it was embedded from.
 ///
-/// The lists above are written by hand, so nothing keeps them in step with the directory
-/// on its own — and refinery cannot help, because it only ever sees the list it
-/// is handed. Neither half can move without the other: a `.sql` file nobody added
-/// fails, and a list entry whose file was deleted or renamed fails too.
+/// The lists are written by hand and refinery only ever sees the one it is
+/// handed, so neither half can move without the other: a `.sql` file nobody
+/// added fails, and a list entry whose file was renamed fails too.
 ///
-/// Compares file *names*, not refinery's labels: `001_spoke_events.sql` is on
-/// disk, `V1__spoke_events` is what refinery calls it, and it is the first of
-/// those the directory can be asked about.
+/// Compares file names rather than refinery's labels, since the name is what
+/// the directory can be asked about.
 ///
 /// # Errors
 ///
-/// [`Error::Unreadable`] if the directory cannot be listed — which matters, since
-/// a wrong path returning `Ok` would make the whole guarantee vacuous — and
-/// [`Error::NotEmbedded`] or [`Error::NotOnDisk`] for a disagreement either way.
+/// [`Error::Unreadable`] if the directory cannot be listed, which a wrong path
+/// returning `Ok` would make vacuous, and [`Error::NotEmbedded`] or
+/// [`Error::NotOnDisk`] for a disagreement either way.
 fn check_complete(files: &[Embedded], directory: &Path) -> Result<(), Error> {
     let unreadable = |source| Error::Unreadable {
         directory: directory.to_path_buf(),
@@ -34,8 +32,8 @@ fn check_complete(files: &[Embedded], directory: &Path) -> Result<(), Error> {
     let mut names: Vec<String> = Vec::new();
     for entry in fs::read_dir(directory).map_err(unreadable)? {
         let name = entry.map_err(unreadable)?.file_name();
-        // A name that is not UTF-8 cannot be one of ours: the entries are Rust
-        // string literals. Skipping it is the same answer as not matching `.sql`.
+        // A name that is not UTF-8 cannot be one of ours, the entries being
+        // Rust string literals.
         let Some(name) = name.to_str() else { continue };
 
         if let Some(id) = name.strip_suffix(".sql") {
@@ -143,8 +141,7 @@ fn rejects_an_entry_whose_file_is_gone() {
 
 #[test]
 fn says_which_directory_it_could_not_read() {
-    // A wrong path answering Ok would make every other completeness test in
-    // the workspace vacuous.
+    // A wrong path answering Ok would make every other case vacuous.
     let absent = Path::new("fixtures/no_such_directory");
 
     let error = check_complete(FIXTURES, absent).unwrap_err();
@@ -155,9 +152,8 @@ fn says_which_directory_it_could_not_read() {
     );
 }
 
-/// The guard as the deployment actually needs it: every group in the corpus
-/// against the directory it was embedded from. Per group, because each group
-/// is exactly one directory.
+/// Every group in the corpus against the directory it was embedded from, one
+/// case per group.
 #[test]
 fn every_group_matches_the_directory_it_was_embedded_from() {
     for Source { directory, files } in CLICKHOUSE.iter().chain(POSTGRES) {

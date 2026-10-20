@@ -56,7 +56,6 @@ impl At {
     }
 }
 
-/// A decoded log, shaped as the decoder would hand it over.
 #[derive(Debug, Clone)]
 pub(super) struct Event {
     pub at: At,
@@ -68,7 +67,6 @@ pub(super) struct Event {
     pub body: String,
 }
 
-/// The base instant every fixture below counts from.
 pub(super) const T0: u64 = 1_785_000_000;
 
 pub(super) fn spoke_event(name: &'static str, at: At, body: String) -> Event {
@@ -90,8 +88,6 @@ pub(super) fn hub_event(name: &'static str, at: At, body: String) -> Event {
         body,
     }
 }
-
-// --- the Spoke ledger -------------------------------------------------------
 
 pub(super) fn supply(at: At, user: Address, reserve_id: &str, shares: &str) -> Event {
     supplied_by(at, user, user, reserve_id, shares)
@@ -142,8 +138,6 @@ pub(super) fn add_reserve(at: At, reserve_id: &str, asset_id: &str, hub: Address
     )
 }
 
-// --- the Hub ledger ---------------------------------------------------------
-
 pub(super) fn add_asset(at: At, asset_id: &str, underlying: Address, decimals: u8) -> Event {
     hub_event(
         "AddAsset",
@@ -182,7 +176,6 @@ pub(super) fn update_asset(at: At, asset_id: &str, drawn_index: &str, drawn_rate
     )
 }
 
-/// The block every Hub fixture checkpoints at, and the instant it lands on.
 pub(super) const CHECKPOINT_BLOCK: u64 = 100;
 pub(super) const CHECKPOINT_AT: u64 = T0 + CHECKPOINT_BLOCK;
 pub(super) const YEAR: u64 = 365 * 24 * 3600;

@@ -1,11 +1,9 @@
 //! Where the contract is published: the viewer at `API_DOCS_PATH`, and the
 //! document as JSON and as YAML beneath it.
 //!
-//! **The viewer's files are on disk rather than in the binary** —
-//! `utoipa-swagger-ui` embeds 11 MB to ship the 2 MB a page loads. They are
-//! named one by one rather than served from a directory, so nothing else under
-//! that path is reachable, and the page is written here because the release's
-//! own points at the Petstore.
+//! The viewer's files are on disk rather than in the binary, because
+//! `utoipa-swagger-ui` embeds 11 MB to ship the 2 MB a page loads. Named one by
+//! one, so nothing else under that path is reachable.
 
 use std::path::Path;
 
@@ -31,9 +29,8 @@ const ASSETS: [&str; 3] = [
 pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
     let page = page(mount);
 
-    // Per request from a clone: `Serialize for Arc` is behind serde's `rc`
-    // feature, and rendering once would have to answer for a failure with no
-    // request in front of it. Sixteen kilobytes, on a cold route.
+    // Per request from a clone, because `Serialize for Arc` is behind serde's
+    // `rc` feature. Sixteen kilobytes, on a cold route.
     let rendered = api.clone();
     let document = get(move || {
         let api = rendered.clone();
@@ -53,8 +50,7 @@ pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
         .route(&format!("{mount}/openapi.json"), document)
         .route(&format!("{mount}/openapi.yaml"), yaml);
 
-    // Both spellings, because axum matches them as two paths. An empty mount is
-    // already `/` and cannot be registered twice.
+    // Both spellings, because axum matches them as two paths.
     for at in if mount.is_empty() {
         vec!["/".to_owned()]
     } else {
@@ -106,8 +102,7 @@ fn page(mount: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    //! Read back through the router, never rebuilt: a document a test assembles
-    //! for itself is a second definition.
+    //! Read back through the router, never rebuilt.
 
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -162,16 +157,14 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_the_contract_this_build_serves() {
-        // The guard: everything below names one rule and would survive the rest
-        // of the document changing.
+        // Everything below names one rule and survives the rest changing.
         insta::assert_json_snapshot!(document().await);
     }
 
     #[tokio::test]
     async fn gives_every_operation_a_typed_success_response() {
-        // A route registered without a response body still routes and still
-        // appears, describing nothing — and the schemas it would have pulled in
-        // go with it, a component being reachable only through a response.
+        // A route registered without a response body still routes and appears,
+        // describing nothing — and takes its schemas with it.
         let document = document().await;
 
         let mut missing = Vec::new();
@@ -197,8 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn documents_exactly_the_path_this_service_versions() {
-        // The probes are absent by the decision `crate::openapi` records, and
-        // the routes serving the document because that would be circular.
+        // The probes are absent by the decision `crate::openapi` records.
         let document = document().await;
 
         let paths: Vec<_> = document["paths"]
@@ -213,9 +205,8 @@ mod tests {
 
     #[tokio::test]
     async fn documents_the_path_as_deployed_rather_than_as_written() {
-        // `OpenApiRouter::nest` composes the declared route with the
-        // deployment's prefix, so the document cannot describe an address the
-        // router does not serve.
+        // `nest` composes the declared route with the deployment's prefix, so
+        // the document cannot describe an address the router does not serve.
         let mut app = Stores::default().app(postgres());
         app.prefix = "gateway".to_owned();
 
@@ -276,8 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn marks_the_scale_dependent_fields_nullable_and_the_ray_not() {
-        // A share needs the asset's decimals to render and a ray does not, so
-        // one survives an unresolved reserve and the others cannot.
+        // A share needs the asset's decimals to render and a ray does not.
         let document = document().await;
 
         for field in [
@@ -328,8 +318,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_the_toolchain_out_of_what_callers_read() {
         // A `///` on a `ToSchema` type is the published description, so a note
-        // to whoever maintains it ships to whoever calls it. That happened once
-        // already, on `Worth`.
+        // to its maintainer ships to its callers. It happened once, on `Worth`.
         let (_, body) = fetch("/docs/openapi.json").await;
 
         for name in ["utoipa", "serde", "rustfmt", "clippy"] {
@@ -339,11 +328,9 @@ mod tests {
 
     #[tokio::test]
     async fn publishes_each_schema_in_the_order_the_wire_writes_it() {
-        // `errors::json` and `views` both call field order contractual, and
-        // utoipa's default map would publish `error` before `message`.
-        //
-        // **Against the bytes, not a parsed value**: `serde_json::Value` sorts
-        // its keys, so the snapshot cannot see this at all.
+        // Both call field order contractual, and utoipa's default map would
+        // publish `error` before `message`. Against the bytes, because
+        // `serde_json::Value` sorts its keys.
         let (_, body) = fetch("/docs/openapi.json").await;
 
         assert!(
@@ -412,8 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_wrong_method_on_the_document_is_a_404_and_not_a_405() {
-        // `router::refuse_unmatched`'s property, over routes merged in after
-        // the versioned ones.
+        // `router::refuse_unmatched`, over routes merged in last.
         let request = Request::builder()
             .method("POST")
             .uri("/docs/openapi.json")
