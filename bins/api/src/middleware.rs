@@ -102,7 +102,7 @@ mod tests {
 
     use super::*;
     use crate::test_support::app::{get, handler, postgres, unreachable_postgres};
-    use crate::test_support::observability::{Written, interesting, observed};
+    use crate::test_support::observability::{Captured, interesting, observed};
 
     /// Boxed, because that is how a payload arrives.
     fn payload(value: impl Any + Send) -> Box<dyn Any + Send> {
@@ -210,15 +210,15 @@ mod tests {
     /// bug this catches got as far as a running process.
     fn logged_by(panic: Box<dyn Any + Send>) -> String {
         interesting();
-        let written = Written::default();
+        let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .json()
-            .with_writer(written.clone())
+            .with_writer(captured)
             .finish();
 
         tracing::subscriber::with_default(subscriber, || drop(panicked(panic)));
 
-        written.read()
+        lines.read()
     }
 
     #[test]

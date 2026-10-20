@@ -111,7 +111,7 @@ where
 #[cfg(test)]
 mod tests {
     use std::io;
-    use std::sync::{Arc, Mutex};
+    use std::sync::mpsc;
 
     use tracing::level_filters::LevelFilter;
 
@@ -131,15 +131,25 @@ mod tests {
     }
 
     /// Everything a filtered layer let through, as the bytes it wrote.
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
+    ///
+    /// A channel rather than a shared buffer: a `Sender` is `Clone` and
+    /// synchronised already, so this needs neither an `Arc` nor a `Mutex`.
+    #[derive(Clone)]
+    struct Captured(mpsc::Sender<Vec<u8>>);
+
+    impl Captured {
+        fn new() -> (Self, Lines) {
+            let (sender, received) = mpsc::channel();
+
+            (Self(sender), Lines(received))
+        }
+    }
 
     impl io::Write for Captured {
         fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
-            self.0.lock().map_or(Ok(0), |mut held| {
-                held.extend_from_slice(buffer);
-                Ok(buffer.len())
-            })
+            let _ = self.0.send(buffer.to_vec());
+
+            Ok(buffer.len())
         }
 
         fn flush(&mut self) -> io::Result<()> {
@@ -155,11 +165,24 @@ mod tests {
         }
     }
 
+    /// The other end. [`Lines::read`] consumes it, because a channel is drained
+    /// rather than re-read.
+    struct Lines(mpsc::Receiver<Vec<u8>>);
+
+    impl Lines {
+        fn read(self) -> String {
+            self.0
+                .try_iter()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .collect()
+        }
+    }
+
     /// What survives the filter the log bridge carries.
     fn through_the_filter() -> String {
-        let captured = Captured::default();
+        let (captured, lines) = Captured::new();
         let layer = tracing_subscriber::fmt::layer()
-            .with_writer(captured.clone())
+            .with_writer(captured)
             .with_filter(tracing_subscriber::filter::filter_fn(ours));
 
         tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
@@ -168,8 +191,7 @@ mod tests {
             tracing::info!(target: "api::positions::list", "request completed");
         });
 
-        let held = captured.0.lock().expect("nothing else holds this");
-        String::from_utf8_lossy(&held).into_owned()
+        lines.read()
     }
 
     #[test]

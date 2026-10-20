@@ -4,7 +4,7 @@
 //! reading each other's telemetry. Nothing here knows what this service does —
 //! it takes a router and hands back what came out of it.
 
-use std::sync::Arc;
+use std::sync::mpsc;
 
 use axum::Router;
 use axum::body::Body;
@@ -50,12 +50,12 @@ pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(exporter.clone())
         .build();
-    let written = Written::default();
+    let (captured, lines) = Captured::new();
     let subscriber = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .json()
-                .with_writer(written.clone()),
+                .with_writer(captured),
         )
         .with(tracing_opentelemetry::layer().with_tracer(provider.tracer(telemetry::SCOPE)));
 
@@ -79,24 +79,30 @@ pub(crate) fn observed(router: Router, request: Request<Body>) -> Observed {
     Observed {
         request_id,
         spans: exporter.get_finished_spans().unwrap(),
-        logged: written.read(),
+        logged: lines.read(),
     }
 }
 
-/// What a subscriber wrote, held where a case can read it back. One of these,
-/// for both suites here.
-#[derive(Clone, Default)]
-pub(crate) struct Written(Arc<std::sync::Mutex<Vec<u8>>>);
+/// What a subscriber wrote, where a case can read it back. One of these, for
+/// both suites here.
+///
+/// A channel rather than a shared buffer: a `Sender` is `Clone` and
+/// synchronised already, so this needs neither an `Arc` nor a `Mutex`.
+#[derive(Clone)]
+pub(crate) struct Captured(mpsc::Sender<Vec<u8>>);
 
-impl Written {
-    pub(crate) fn read(&self) -> String {
-        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+impl Captured {
+    pub(crate) fn new() -> (Self, Lines) {
+        let (sender, received) = mpsc::channel();
+
+        (Self(sender), Lines(received))
     }
 }
 
-impl std::io::Write for Written {
+impl std::io::Write for Captured {
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(buffer);
+        let _ = self.0.send(buffer.to_vec());
+
         Ok(buffer.len())
     }
 
@@ -105,10 +111,23 @@ impl std::io::Write for Written {
     }
 }
 
-impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Written {
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
     type Writer = Self;
 
     fn make_writer(&'a self) -> Self::Writer {
         self.clone()
+    }
+}
+
+/// The other end. [`Lines::read`] consumes it, because a channel is drained
+/// rather than re-read.
+pub(crate) struct Lines(mpsc::Receiver<Vec<u8>>);
+
+impl Lines {
+    pub(crate) fn read(self) -> String {
+        self.0
+            .try_iter()
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .collect()
     }
 }

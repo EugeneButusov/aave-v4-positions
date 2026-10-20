@@ -76,7 +76,7 @@ fn span(name: &'static str, sql: &'static str) -> tracing::Span {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::mpsc;
 
     use tracing::instrument::WithSubscriber as _;
     use tracing_subscriber::fmt::format::FmtSpan;
@@ -89,18 +89,51 @@ mod tests {
     const TABLES: &str =
         "SELECT schemaname FROM pg_catalog.pg_tables WHERE schemaname = $1 LIMIT 1";
 
-    /// Somewhere a case can read a span back from.
-    #[derive(Clone, Default)]
-    struct Sink(Arc<Mutex<Vec<u8>>>);
+    /// Somewhere a case can read a subscriber's output back from.
+    ///
+    /// A channel rather than a shared buffer: a `Sender` is `Clone` and
+    /// synchronised already, so this needs neither an `Arc` nor a `Mutex`.
+    #[derive(Clone)]
+    struct Captured(mpsc::Sender<Vec<u8>>);
 
-    impl std::io::Write for Sink {
+    impl Captured {
+        fn new() -> (Self, Lines) {
+            let (sender, received) = mpsc::channel();
+
+            (Self(sender), Lines(received))
+        }
+    }
+
+    impl std::io::Write for Captured {
         fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buffer);
+            let _ = self.0.send(buffer.to_vec());
+
             Ok(buffer.len())
         }
 
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
+        type Writer = Self;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// The other end. [`Lines::read`] consumes it, because a channel is drained
+    /// rather than re-read.
+    struct Lines(mpsc::Receiver<Vec<u8>>);
+
+    impl Lines {
+        fn read(self) -> String {
+            self.0
+                .try_iter()
+                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                .collect()
         }
     }
 
@@ -124,12 +157,9 @@ mod tests {
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let pool = build_pool(&url).unwrap();
         let client = Traced::new(pool);
-        let sink = Sink::default();
+        let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
-            .with_writer({
-                let sink = sink.clone();
-                move || sink.clone()
-            })
+            .with_writer(captured)
             .with_ansi(false)
             .with_span_events(FmtSpan::CLOSE)
             .finish();
@@ -140,7 +170,7 @@ mod tests {
             .await
             .unwrap();
 
-        let written = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+        let written = lines.read();
 
         assert!(
             written.contains(r#"otel.name="SELECT pg_tables""#),

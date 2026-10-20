@@ -126,7 +126,7 @@ impl ApiError {
 mod tests {
     use super::*;
     use crate::test_support::app::answered;
-    use crate::test_support::observability::{Written, interesting};
+    use crate::test_support::observability::{Captured, interesting};
 
     #[tokio::test]
     async fn a_std_error_is_a_500_that_tells_the_caller_nothing() {
@@ -153,10 +153,10 @@ mod tests {
         // `interesting` because the case above reaches this same callsite with
         // nothing in scope, which settles it off for the process.
         interesting();
-        let written = Written::default();
+        let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .json()
-            .with_writer(written.clone())
+            .with_writer(captured)
             .finish();
         let failed = Read(std::io::Error::other("Connection refused"));
 
@@ -166,7 +166,7 @@ mod tests {
                 .unwrap()
                 .block_on(answered(failed.into()))
         });
-        let logged = written.read();
+        let logged = lines.read();
 
         assert!(logged.contains("the sync status read failed"), "{logged}");
         assert!(logged.contains("Connection refused"), "{logged}");
