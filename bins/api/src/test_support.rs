@@ -1,10 +1,8 @@
-//! What a case needs that the binary does not: an app with its ports doubled,
-//! and a way to read back what one request produced.
+//! What a case needs that the binary does not.
+//!
+//! Two kinds of thing, kept apart because they share nothing: [`app`] stands up
+//! an `App` with its four ports doubled, and [`observability`] reads back what
+//! one request produced. The path a case imports says which it is using.
 
-mod app;
-mod observability;
-
-pub(crate) use app::{
-    Stores, VALUED_AT, answered, get, handler, postgres, state, synced, unreachable_postgres,
-};
-pub(crate) use observability::{Written, interesting, observed};
+pub(crate) mod app;
+pub(crate) mod observability;

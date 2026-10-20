@@ -113,7 +113,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
 
-    use crate::test_support::{Stores, get, postgres};
+    use crate::test_support::app::{Stores, get, postgres};
 
     async fn fetch(path: &str) -> (StatusCode, String) {
         let request = Request::builder()

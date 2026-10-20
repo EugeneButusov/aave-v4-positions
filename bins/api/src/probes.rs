@@ -35,7 +35,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
 
-    use crate::test_support::{get, handler, postgres, unreachable_postgres};
+    use crate::test_support::app::{get, handler, postgres, unreachable_postgres};
 
     fn ready() -> Request<Body> {
         Request::builder()

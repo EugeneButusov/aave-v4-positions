@@ -125,7 +125,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::test_support::{postgres, state};
+    use crate::test_support::app::{postgres, state};
 
     #[tokio::test]
     async fn serves_over_a_socket_and_stops_when_drained() {

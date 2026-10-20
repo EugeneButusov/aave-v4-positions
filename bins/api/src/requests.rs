@@ -162,7 +162,7 @@ mod tests {
     use tower::ServiceExt as _;
 
     use super::*;
-    use crate::test_support::observed;
+    use crate::test_support::observability::observed;
 
     /// A trace parent a caller might have sent, and the trace it names.
     const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";

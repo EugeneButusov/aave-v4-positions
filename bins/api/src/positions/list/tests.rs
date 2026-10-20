@@ -18,7 +18,7 @@ use time::OffsetDateTime;
 use token_metadata::TokenLabel;
 
 use crate::positions::params::{DEFAULT_LIMIT, GENESIS, MAX_AS_OF, MAX_LIMIT};
-use crate::test_support::{Stores, VALUED_AT, get, synced};
+use crate::test_support::app::{Stores, VALUED_AT, get, synced};
 
 const ALICE: &str = "0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8";
 const SPOKE: &str = "0x94e7a5dcbe816e498b89ab752661904e2f56c485";

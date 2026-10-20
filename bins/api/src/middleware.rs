@@ -101,7 +101,8 @@ mod tests {
     use axum::http::Request;
 
     use super::*;
-    use crate::test_support::{get, postgres};
+    use crate::test_support::app::{get, handler, postgres, unreachable_postgres};
+    use crate::test_support::observability::{Written, interesting, observed};
 
     /// Boxed, because that is how a payload arrives.
     fn payload(value: impl Any + Send) -> Box<dyn Any + Send> {
@@ -143,7 +144,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let (_, _, request_id) = get(crate::test_support::handler(postgres()), request).await;
+        let (_, _, request_id) = get(handler(postgres()), request).await;
 
         assert!(
             request_id.is_some_and(|id| !id.is_empty()),
@@ -161,7 +162,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let (_, _, request_id) = get(crate::test_support::handler(postgres()), request).await;
+        let (_, _, request_id) = get(handler(postgres()), request).await;
 
         assert_eq!(request_id.as_deref(), Some("from-the-caller"));
     }
@@ -175,10 +176,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let observed = crate::test_support::observed(
-            crate::test_support::handler(crate::test_support::unreachable_postgres()),
-            request,
-        );
+        let observed = observed(handler(unreachable_postgres()), request);
         let trace = observed.spans[0].span_context.trace_id().to_string();
 
         assert_eq!(observed.request_id.as_deref(), Some(trace.as_str()));
@@ -192,10 +190,7 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let observed = crate::test_support::observed(
-            crate::test_support::handler(crate::test_support::unreachable_postgres()),
-            request,
-        );
+        let observed = observed(handler(unreachable_postgres()), request);
 
         assert_eq!(observed.request_id.as_deref(), Some("from-the-caller"));
         assert!(
@@ -214,8 +209,8 @@ mod tests {
     /// [`said`] alone leaves that call site uncovered — which is exactly how the
     /// bug this catches got as far as a running process.
     fn logged_by(panic: Box<dyn Any + Send>) -> String {
-        crate::test_support::interesting();
-        let written = crate::test_support::Written::default();
+        interesting();
+        let written = Written::default();
         let subscriber = tracing_subscriber::fmt()
             .json()
             .with_writer(written.clone())

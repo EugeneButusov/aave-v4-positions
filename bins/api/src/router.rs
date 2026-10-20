@@ -74,7 +74,7 @@ mod tests {
 
     use super::{docs, mount};
 
-    use crate::test_support::{get, handler, postgres};
+    use crate::test_support::app::{get, handler, postgres};
 
     /// A 404 for a path this service does not serve *and* for a method it does
     /// not serve on a path it does, echoing the whole request target.

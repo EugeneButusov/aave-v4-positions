@@ -193,7 +193,7 @@ mod tests {
     use axum::http::StatusCode;
 
     use super::*;
-    use crate::test_support::answered;
+    use crate::test_support::app::answered;
 
     /// Checksummed, as every block explorer hands them back.
     const ALICE: &str = "0x82D16fF1C724ab72F218A3f7f6DD3E5385ee87E8";
