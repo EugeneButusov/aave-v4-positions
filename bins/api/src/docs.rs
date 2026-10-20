@@ -16,7 +16,7 @@ use axum::{Json, Router};
 use tower_http::services::ServeFile;
 use utoipa::openapi::OpenApi;
 
-use crate::errors::BoxedAppError;
+use crate::errors::ApiError;
 
 /// What the page loads, and the whole of what is served off disk.
 const ASSETS: [&str; 3] = [
@@ -45,7 +45,7 @@ pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
         async move {
             api.to_yaml()
                 .map(|yaml| ([(header::CONTENT_TYPE, "application/yaml")], yaml))
-                .map_err(BoxedAppError::from)
+                .map_err(ApiError::from)
         }
     });
 
@@ -113,7 +113,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use serde_json::Value;
 
-    use crate::test_support::{Stores, get, postgres};
+    use crate::test_support::app::{Stores, get, postgres};
 
     async fn fetch(path: &str) -> (StatusCode, String) {
         let request = Request::builder()
@@ -390,7 +390,7 @@ mod tests {
             assert_eq!(
                 positions(&document)["responses"][status]["content"]["application/json"]["schema"]
                     ["$ref"],
-                "#/components/schemas/ApiErrorResponse",
+                "#/components/schemas/ErrorEnvelope",
                 "{status}"
             );
         }

@@ -199,9 +199,15 @@ services:
       POSITIONS_CURSOR_SECRET: ${POSITIONS_CURSOR_SECRET:-local-development-cursor-secret-0000}
       API_SYNC_STALE_AFTER_SECONDS: '60'
       API_PRICE_STALE_AFTER_SECONDS: '300'
-      # Deliberately none of the OTEL_* group: this process reads none of them
-      # yet, and setting a variable nothing honours is how a deployment comes to
-      # believe it is configured.
+      # Read through this service's own config, not by an SDK ahead of it: the
+      # binary parses one environment and hands telemetry down from it.
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      # **`api-rust`, not `api`, while both run.** Every signal is grouped by
+      # `service.name`, and the two services sharing one would merge the streams
+      # the Phase 2 gate exists to compare. It becomes `api` when this one takes
+      # that name and port.
+      OTEL_SERVICE_NAME: api-rust
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
     depends_on:
       clickhouse:
         condition: service_healthy

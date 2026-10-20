@@ -16,6 +16,8 @@
 
 use serde::Serialize;
 
+use crate::cause::error_message_with_causes;
+
 /// The process is running. That is all liveness may claim.
 ///
 /// One variant, because a wedged process fails to answer at all — a liveness
@@ -83,37 +85,6 @@ where
     }
 }
 
-/// The error's own message followed by its causes, skipping any already
-/// spelled out by the one above it.
-///
-/// A *cause* chain, not a call stack: `source()` walks what each error wrapped,
-/// which is a chain of whys rather than of frames. Nothing here captures a
-/// backtrace, and the two answer different questions — a frame list says where
-/// the code was, and this says what the database refused.
-///
-/// Two conventions live side by side in the ecosystem: `thiserror` messages
-/// here name only their own stage and leave the cause to `source()`, while
-/// `deadpool`'s interpolate theirs. Walking a mixed chain naively prints the
-/// bottom half twice — measured against the real refusal, which came out as
-/// "error connecting to server: error connecting to server: Connection
-/// refused". A containment test reconciles both without either side having to
-/// know about the other.
-fn error_message_with_causes(error: &dyn std::error::Error) -> String {
-    let mut message = error.to_string();
-    let mut cause = error.source();
-
-    while let Some(next) = cause {
-        let text = next.to_string();
-        if !message.contains(&text) {
-            message.push_str(": ");
-            message.push_str(&text);
-        }
-        cause = next.source();
-    }
-
-    message
-}
-
 /// Why readiness answered the way it did.
 ///
 /// `shutting_down` outranks a failing dependency, because the two say different
@@ -170,10 +141,6 @@ mod tests {
     #[error("connection refused")]
     struct Refused;
 
-    #[derive(Debug, thiserror::Error)]
-    #[error("could not check out a connection")]
-    struct Unavailable(#[source] Refused);
-
     fn json<T: Serialize>(value: &T) -> String {
         serde_json::to_string(value).unwrap()
     }
@@ -201,36 +168,6 @@ mod tests {
         assert_eq!(
             json(&result),
             r#"{"name":"clickhouse","status":"down","error":"connection refused"}"#
-        );
-    }
-
-    /// `deadpool`'s convention: the message already contains the source's.
-    #[derive(Debug, thiserror::Error)]
-    #[error("could not create an object: {0}")]
-    struct Verbose(#[source] Refused);
-
-    #[tokio::test]
-    async fn says_a_cause_once_even_when_the_message_already_spells_it_out() {
-        // Measured: walking this chain naively produced "error connecting to
-        // server: error connecting to server: Connection refused", which reads
-        // as two failures rather than one.
-        let result = check("postgres", async { Err::<(), _>(Verbose(Refused)) }).await;
-
-        assert_eq!(
-            result.error.as_deref(),
-            Some("could not create an object: connection refused")
-        );
-    }
-
-    #[tokio::test]
-    async fn carries_the_cause_as_well_as_the_head() {
-        // A pool that cannot hand out a connection says so, but the reason it
-        // cannot is one level down and is the half worth reading.
-        let result = check("postgres", async { Err::<(), _>(Unavailable(Refused)) }).await;
-
-        assert_eq!(
-            result.error.as_deref(),
-            Some("could not check out a connection: connection refused")
         );
     }
 

@@ -9,7 +9,7 @@
 use axum::Router;
 use axum::http::{Method, Uri};
 
-use crate::errors::{self, BoxedAppError};
+use crate::errors::ApiError;
 
 /// Where the versioned routes hang, given whatever a deployment wrote in
 /// `API_GLOBAL_PREFIX`. Slashes are trimmed, and an empty prefix is one asking
@@ -56,12 +56,12 @@ pub(crate) fn refuse_unmatched(router: Router) -> Router {
 ///
 /// **The whole request target, not just the path**: `GET /nope?a=1&b=2` comes
 /// back verbatim, which `uri.path()` would not give.
-async fn not_found(method: Method, uri: Uri) -> BoxedAppError {
+async fn not_found(method: Method, uri: Uri) -> ApiError {
     let target = uri
         .path_and_query()
         .map_or_else(|| uri.path(), axum::http::uri::PathAndQuery::as_str);
 
-    errors::not_found(format!("Cannot {method} {target}"))
+    ApiError::not_found(format!("Cannot {method} {target}"))
 }
 
 #[cfg(test)]
@@ -74,7 +74,7 @@ mod tests {
 
     use super::{docs, mount};
 
-    use crate::test_support::{get, handler, postgres};
+    use crate::test_support::app::{get, handler, postgres};
 
     /// A 404 for a path this service does not serve *and* for a method it does
     /// not serve on a path it does, echoing the whole request target.

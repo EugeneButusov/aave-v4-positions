@@ -18,7 +18,7 @@ use super::cursor::Scope;
 use super::params::Listing;
 use super::views::{self, Prices};
 use crate::app::AppState;
-use crate::errors::{self, ApiErrorResponse, BoxedAppError};
+use crate::errors::{ApiError, ErrorEnvelope};
 
 pub(crate) fn routes() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().routes(routes!(list))
@@ -117,14 +117,14 @@ behind unrelated collateral. Every row names the Spoke it came from.";
             description = "A malformed address, a limit outside its bounds, an unrecognised \
                            query parameter, or a cursor this service did not issue for this \
                            listing.",
-            body = ApiErrorResponse<'_>,
+            body = ErrorEnvelope,
         ),
         (
             status = 404,
             description = "This deployment has never indexed that chain, so it cannot answer \
                            for it. Also returned in the window between an indexer starting \
                            and recording its first block.",
-            body = ApiErrorResponse<'_>,
+            body = ErrorEnvelope,
         ),
     ),
 )]
@@ -132,13 +132,13 @@ async fn list(
     State(app): State<AppState>,
     Path((chain_id, user)): Path<(String, String)>,
     RawQuery(query): RawQuery,
-) -> Result<Json<views::Page>, BoxedAppError> {
+) -> Result<Json<views::Page>, ApiError> {
     let listing = Listing::parse(&chain_id, &user, query.as_deref().unwrap_or_default())?;
 
     // Read first, and fail here rather than after a query that would answer "no
     // positions" for a chain this deployment does not follow.
     let Some(sync) = app.sync.get(listing.chain_id).await? else {
-        return Err(errors::not_found(format!(
+        return Err(ApiError::not_found(format!(
             "chain {} has not been indexed by this deployment",
             listing.chain_id
         )));
@@ -163,7 +163,7 @@ async fn list(
             // where the answer is already an HTTP one.
             .map(|cursor| {
                 app.signer.decode(cursor, &scope).map_err(|invalid| {
-                    errors::bad_request(format!("invalid page cursor: {invalid}"))
+                    ApiError::bad_request(format!("invalid page cursor: {invalid}"))
                 })
             })
             .transpose()?,

@@ -1,5 +1,4 @@
-//! Reading a container's environment: one variable at a time, collecting the
-//! problems rather than stopping at the first.
+//! Reading a container's environment, one variable at a time.
 //!
 //! **Nothing here knows what a service is**, and that is the whole boundary. It
 //! knows a port is `1..=65535` and that `pino` spells a level seven ways. What
@@ -14,8 +13,8 @@
 //! into.
 //!
 //! Two halves, and a caller uses them in this order: [`Source`] says where the
-//! variables come from, [`Env`] reads them one at a time and reports everything
-//! wrong with them as [`Invalid`].
+//! variables come from, [`Env`] reads them one at a time and reports the one it
+//! could not read as [`Invalid`].
 
 mod reader;
 mod source;

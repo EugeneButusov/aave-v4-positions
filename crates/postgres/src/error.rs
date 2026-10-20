@@ -1,4 +1,4 @@
-/// What connecting can fail at.
+/// What a connection and the reads it carries can fail at.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("could not parse the Postgres URL")]
@@ -17,6 +17,12 @@ pub enum Error {
     ConnectFailed {
         #[source]
         source: deadpool_postgres::PoolError,
+    },
+
+    #[error("the query failed")]
+    QueryFailed {
+        #[source]
+        source: tokio_postgres::Error,
     },
 
     #[error("the health query failed")]
