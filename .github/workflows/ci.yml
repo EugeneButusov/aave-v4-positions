@@ -197,6 +197,31 @@ jobs:
           --fail-under-lines 93
           --fail-under-regions 92
 
+      - name: Add coverage to the job summary
+        run: |
+          cargo llvm-cov report \
+            --workspace \
+            --summary-only \
+            --json \
+            --output-path target/llvm-cov-summary.json
+
+          {
+            echo '## Rust coverage'
+            echo
+            echo '| Metric | Covered | Total | Coverage | Required |'
+            echo '| --- | ---: | ---: | ---: | ---: |'
+            jq -r '
+              def row($label; $key; $required):
+                .data[0].totals[$key] as $metric
+                | "| \($label) | \($metric.covered) | \($metric.count) | \(($metric.percent * 100 | round) / 100)% | \($required) |";
+              row("Lines"; "lines"; "93%"),
+              row("Regions"; "regions"; "92%"),
+              row("Functions"; "functions"; "—")
+            ' target/llvm-cov-summary.json
+            echo
+            echo 'Download the `rust-coverage` artifact for the per-file HTML report.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload the HTML report
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
