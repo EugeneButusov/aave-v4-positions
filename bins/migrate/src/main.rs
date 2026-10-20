@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use migrations::Source;
 use refinery_core::{AsyncMigrate, Error, Migration, Report, Runner};
 
-/// Which database a failure was against.
+/// What stops a run, and which database it was against.
 ///
 /// **Said here rather than inherited from whatever failed underneath.** Before
 /// this, the Postgres stage looked like it named itself and only did so because
@@ -26,11 +26,17 @@ use refinery_core::{AsyncMigrate, Error, Migration, Report, Runner};
 /// dependency's to change; which of two databases a deploy died on is ours to
 /// state.
 #[derive(Debug, thiserror::Error)]
-#[error("the {database} migrations could not be applied")]
-struct Failed {
-    database: &'static str,
-    #[source]
-    source: Box<dyn std::error::Error + Send + Sync>,
+enum Failed {
+    /// Before either database is reached, so it names neither.
+    #[error("the environment could not be read")]
+    Configuration(#[from] env::Invalid),
+
+    #[error("the {database} migrations could not be applied")]
+    Database {
+        database: &'static str,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 impl Failed {
@@ -38,7 +44,7 @@ impl Failed {
         database: &'static str,
         source: impl Into<Box<dyn std::error::Error + Send + Sync>>,
     ) -> Self {
-        Self {
+        Self::Database {
             database,
             source: source.into(),
         }
@@ -100,15 +106,19 @@ async fn main() -> ExitCode {
 /// ClickHouse first, then Postgres, each named on the way out whether it
 /// succeeded or not.
 async fn run() -> Result<(), Failed> {
-    let mut target = clickhouse::ClickHouse(clickhouse_client::build_client(clickhouse_config()));
+    let Settings {
+        clickhouse,
+        postgres,
+    } = Settings::from_env()?;
+
+    let mut target = clickhouse::ClickHouse(clickhouse_client::build_client(clickhouse));
     apply("clickhouse", migrations::CLICKHOUSE, &mut target).await?;
 
     // One connection out of the pool, which is the only way this workspace
     // connects to Postgres. A job that runs to completion wants exactly one and
     // then exits; that it comes from a pool costs nothing and means there is not
     // a second constructor to keep in step.
-    let url = env("POSTGRES_URL", POSTGRES_URL);
-    let pool = postgres::build_pool(&url).map_err(|error| Failed::at("postgres", error))?;
+    let pool = postgres::build_pool(&postgres).map_err(|error| Failed::at("postgres", error))?;
     let mut target = postgres::connection(&pool)
         .await
         .map_err(|error| Failed::at("postgres", error))?;
@@ -148,26 +158,43 @@ fn report(database: &str, applied: &Report) {
     }
 }
 
-const POSTGRES_URL: &str = "postgres://postgres@localhost:5432/postgres";
-
-/// The environment is read here and nowhere else.
+/// Which two servers to migrate.
 ///
 /// The database crates take their configuration as parameters, so they can be
 /// used twice in one process against two servers and can be tested without
 /// setting global state. The binary is the one place that has an environment.
-fn clickhouse_config() -> clickhouse_client::Config {
-    clickhouse_client::Config {
-        url: env("CLICKHOUSE_URL", "http://localhost:8123"),
-        database: env("CLICKHOUSE_DATABASE", "default"),
-        user: env("CLICKHOUSE_USER", "default"),
-        // Empty is legitimate: a container started with CLICKHOUSE_SKIP_USER_SETUP
-        // has no password, which is how the test and CI instances run.
-        password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
-    }
+struct Settings {
+    clickhouse: clickhouse_client::Config,
+    postgres: String,
 }
 
-fn env(key: &str, fallback: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| fallback.to_owned())
+impl Settings {
+    /// Through `env`, which is what `bins/api` reads with — so a `.env` that
+    /// points the API at one database no longer leaves the migrator pointed at
+    /// another, and a URL that will not parse is refused before any DDL runs.
+    ///
+    /// # Errors
+    ///
+    /// [`env::Invalid`], naming the first variable that could not be read.
+    fn from_env() -> Result<Self, env::Invalid> {
+        let vars = env::Source::from_env().read();
+        let env = env::Env::new(&vars);
+
+        Ok(Self {
+            clickhouse: clickhouse_client::Config {
+                url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
+                database: env.text("CLICKHOUSE_DATABASE", "default"),
+                user: env.text("CLICKHOUSE_USER", "default"),
+                // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no
+                // password, which is how the test and CI instances run.
+                password: env.text("CLICKHOUSE_PASSWORD", ""),
+            },
+            postgres: env.url(
+                "POSTGRES_URL",
+                "postgres://postgres@localhost:5432/postgres",
+            )?,
+        })
+    }
 }
 
 #[cfg(test)]

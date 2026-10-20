@@ -2002,6 +2002,7 @@ version = "0.0.0"
 dependencies = [
  "async-trait",
  "clickhouse-client",
+ "env",
  "migrations",
  "postgres",
  "refinery-core",
