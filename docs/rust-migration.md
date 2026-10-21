@@ -629,11 +629,46 @@ no per-key exceptions. That the transform is total is itself the assertion: the 
 agree exactly under it, so a field that is missing, extra or misspelled still fails. Values and key
 *order* are compared exactly — the error envelope still emits `message`, then `error`, then the
 status, which is the order the running service uses and not the order its own DTO class declares.
-Timestamps are compared as instants; validation bodies on status and on which parameters they name.
+Timestamps are compared as instants **at millisecond resolution**; validation bodies on status and
+on which parameters they name.
 
 What that costs is the "any difference is a finding" property, for those two classes only. It is why
 the exception list was meant to stay short, and the trade is being made deliberately rather than
 discovered.
+
+**Three more exceptions came out of running the gate, and none of them is about spelling.** Two
+requests cannot be issued at the same instant, so a value derived from the clock is not a quantity
+the two services share. `sync.age_seconds` is one — the indexer's progress measured against the
+database clock, which moves whatever the request asked for — and it is compared within a tolerance
+rather than exactly. `uptime_seconds` on liveness is the other, and worse: these are two processes
+with two start times, so only its type is comparable. `valued_at` and `pricing.age_seconds` are the
+same problem without `as_of`, and go back to being compared exactly with it, which is the reason the
+corpus pins every listing at a fixed instant as well as at none.
+
+**The fold has to be frozen while the gate runs.** The indexer advancing mid-walk changes the shares
+under both services, and `sync` is on every page precisely so a caller can see that happen — so a
+page compared across it is a finding about the clock rather than about either service. Stop the
+indexer, then replay.
+
+**"Compared as instants" was not enough, and the first real run is what said so.** The oracle serves
+`sync.updated_at` as `.987` where this service serves `.987082` — the same reading rendered twice,
+because a JavaScript `Date` truncates the microseconds Postgres stored. Those are not the same
+instant, so the rule this entry carried would have reported every page as a finding. The clocks are
+therefore compared at the finest resolution *both* services can express, which is a millisecond. It
+costs under a millisecond of comparison on three fields and it is exactly the difference the table
+above already declared; comparing any finer only re-finds that declaration.
+
+**And a gate can be green over nothing at all.** That same run had the corpus asking for `/v1/...`
+where both services mount `/api/v1/...`, so 27 of its 45 requests "agreed" by both answering the
+same 404 — the only reason any of them failed is that the 404 body echoes the request target, and
+`asOf` against `as_of` made two of those targets differ. So a comparator has to do the prefix
+arithmetic both services do, and has to treat a listing that answers 404 on both sides as a failure
+rather than as agreement.
+
+One further gap is the comparator's to report rather than to forgive: where the oracle's refusal
+names no parameter at all — an unrecognised query key, where Zod says only which key — the parameter
+rule has nothing to hold the candidate to. Those are counted and listed as compared on status alone,
+so a run says how much of itself was a real comparison.
 
 **The two OpenAPI documents cannot be diffed as text, and the reason is the spec version.** utoipa 5
 emits `3.1.0` and `@nestjs/swagger` 11 emits `3.0.0`, so a nullable string is `"type": ["string",
@@ -758,6 +793,25 @@ the binary goes 7,072,072 bytes to 12,321,608, and RSS 2.7 MiB to 4.1 MiB agains
 TypeScript SDK costs. `OTEL_SDK_DISABLED=true` still serves and still logs.
 
 Nothing left. Phase 2 is done, and what follows is the replay harness and the cutover.
+
+**The harness itself is a local tool and is deliberately not in this tree.** It exists to find
+differences, and what is worth keeping is the differences it found and the rules it had to be told —
+both of which are above. A gate run from a developer's shell against two containers is not something
+CI can run anyway: it needs an indexed fold, two services and the oracle still deployed, and all
+three stop existing at cutover.
+
+**A run of zeros is only worth reading if the comparator is live, and there is a cheap way to see
+that it is**: point the comparator's candidate at the oracle, so both sides are the TypeScript. The
+key transform is then applied to one of them and every snake_case key mismatches — measured, 18
+findings out of 31 on one wallet, naming the key set at the body, at `sync` and at `pricing`. It also
+settles something the gate would otherwise take on trust: the two key *sequences* differ only in
+spelling, in the same positions, which is the field-order claim this entry makes.
+
+Still outstanding, and each its own increment. The **OpenAPI comparison** is structural and needs
+`$ref` resolution on both documents, because the component *names* differ and the schemas have to be
+walked from each operation's response rather than matched by name. And the **golden corpus** — the
+recorded request/response pairs that replace the oracle once `apps/api` is deleted — is the one that
+has to land before anything is deleted, since it is the only part of this gate that outlives it.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
