@@ -6,10 +6,11 @@
 //! [`super::clickhouse::harness`].
 
 use alloy_primitives::{Address, address};
+use units::ChainId;
 
 use super::{PositionPage, PositionQuery};
 
-pub(super) const CHAIN_ID: u32 = 1;
+pub(super) const CHAIN_ID: ChainId = ChainId::known(1);
 pub(super) const SPOKE: Address = address!("0x94e7a5dcbe816e498b89ab752661904e2f56c485");
 /// The Bluechip Spoke — a second isolated margin account for the same wallet.
 /// Sorts *after* [`SPOKE`] as a string (`0x94…` < `0x97…`), which is what makes

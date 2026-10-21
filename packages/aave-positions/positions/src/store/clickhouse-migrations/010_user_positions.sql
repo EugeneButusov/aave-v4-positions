@@ -15,7 +15,7 @@
 -- no notion of one.
 CREATE TABLE IF NOT EXISTS user_positions
 (
-    chain_id            UInt32,
+    chain_id            UInt64,
     -- Lower-cased. Addresses decoded out of `body` are checksummed, so a caller
     -- passing the lower-case form they got from a URL would otherwise match
     -- nothing. §12.1: the key is `user`, never `caller`.

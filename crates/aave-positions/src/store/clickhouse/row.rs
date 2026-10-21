@@ -7,6 +7,7 @@
 use alloy_primitives::{Address, I256, U256};
 use clickhouse_client::clickhouse;
 use serde::Deserialize;
+use units::ChainId;
 
 use crate::store::{Error, Position, PositionAsset};
 use crate::valuation::{AssetState, PositionShares, Valuation};
@@ -18,7 +19,7 @@ use crate::valuation::{AssetState, PositionShares, Valuation};
 /// fills them with `"0"` and `""`; what says the join missed is `underlying`.
 #[derive(clickhouse::Row, Deserialize)]
 pub(super) struct Row {
-    chain_id: u32,
+    chain_id: u64,
     user: String,
     spoke: String,
     reserve_id: String,
@@ -52,7 +53,7 @@ pub(super) struct Row {
 impl Row {
     pub(super) fn to_position(&self, at: u64) -> Result<Position, Error> {
         Ok(Position {
-            chain_id: self.chain_id,
+            chain_id: parse_chain_id(self.chain_id)?,
             user: parse_address("user", &self.user)?,
             spoke: parse_address("spoke", &self.spoke)?,
             reserve_id: parse_unsigned("reserve_id", &self.reserve_id)?,
@@ -150,6 +151,16 @@ fn non_negative(value: I256) -> Option<U256> {
 /// Not [`Address::parse_checksummed`]: the projection lower-cases the column,
 /// so EIP-55 validation would reject what the fold stores. The empty string a
 /// `LEFT JOIN` miss leaves does fail here, which is the point.
+/// The column is wider than a chain id can be, so the fold could hold a number
+/// that is not one — zero, or past EIP-2294's ceiling.
+fn parse_chain_id(value: u64) -> Result<ChainId, Error> {
+    ChainId::new(value).map_err(|_| Error::Malformed {
+        column: "chain_id",
+        expected: "chain id",
+        value: value.to_string(),
+    })
+}
+
 fn parse_address(column: &'static str, value: &str) -> Result<Address, Error> {
     value.parse::<Address>().map_err(|_| Error::Malformed {
         column,
@@ -201,6 +212,8 @@ fn parse_seconds(column: &'static str, value: &str) -> Result<u64, Error> {
 #[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use alloy_primitives::{I256, U256};
+
+    use units::ChainId;
 
     use super::Row;
     use crate::store::Error;
@@ -294,7 +307,7 @@ mod tests {
     }
 
     mod the_columns {
-        use super::{CHECKPOINT_AT, Error, HUGE, Row, row};
+        use super::{CHECKPOINT_AT, ChainId, Error, HUGE, Row, row};
 
         #[test]
         fn carries_a_share_balance_past_2_53_without_losing_its_tail() {
@@ -322,7 +335,7 @@ mod tests {
             };
 
             let position = flagged.to_position(CHECKPOINT_AT).unwrap();
-            assert_eq!(position.chain_id, 1);
+            assert_eq!(position.chain_id, ChainId::known(1));
             assert!(position.using_as_collateral);
             assert_eq!(position.events, 4);
             assert!(
@@ -358,6 +371,31 @@ mod tests {
                 refused.to_string(),
                 "drawn_shares is not a int256: not a number"
             );
+        }
+
+        /// The column is `UInt64` and a chain id is narrower, so this is the
+        /// one value the fold can hold that the domain type cannot.
+        #[test]
+        fn refuses_a_chain_id_the_column_can_hold_and_the_chain_cannot() {
+            for held in [0, ChainId::MAX.get() + 1] {
+                let corrupt = Row {
+                    chain_id: held,
+                    ..row()
+                };
+
+                let refused = corrupt.to_position(CHECKPOINT_AT).unwrap_err();
+                assert!(
+                    matches!(
+                        refused,
+                        Error::Malformed {
+                            column: "chain_id",
+                            expected: "chain id",
+                            ..
+                        }
+                    ),
+                    "{held}: {refused:?}"
+                );
+            }
         }
     }
 

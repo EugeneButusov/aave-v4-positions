@@ -16,7 +16,7 @@
 -- id there. One column cannot hold two meanings and stay queryable.
 CREATE TABLE IF NOT EXISTS hub_events
 (
-    chain_id        UInt32,
+    chain_id        UInt64,
     -- The emitting Hub. One per processor today, so every row in a given
     -- deployment carries the same value — but stored, not assumed, so a second
     -- Hub writing here stays distinguishable.

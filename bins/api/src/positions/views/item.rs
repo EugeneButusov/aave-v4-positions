@@ -13,7 +13,7 @@ use super::{Error, Labels, Prices, price_for};
 /// One user's stake in one reserve on one Spoke.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct Item {
-    chain_id: u32,
+    chain_id: u64,
 
     /// The position owner, lower-cased. Never the caller that routed the
     /// action: position managers act on behalf of users.
@@ -107,7 +107,7 @@ impl Item {
             .transpose()?;
 
         Ok(Self {
-            chain_id: position.chain_id,
+            chain_id: u64::from(position.chain_id),
             user: format!("{:#x}", position.user),
             spoke: format!("{:#x}", position.spoke),
             reserve_id: position.reserve_id.to_string(),

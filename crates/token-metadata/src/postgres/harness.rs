@@ -6,7 +6,7 @@
 //! `INSERT`, and the column list is the migration's.
 
 use alloy_primitives::Address;
-use postgres::{Pool, build_pool, connection};
+use postgres::{Bigint, Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use super::PostgresTokenMetadataStore;
@@ -69,14 +69,14 @@ impl Harness for PostgresHarness {
                      (chain_id, token, symbol, name, token_decimals, fetched_at_block) \
                      VALUES ($1, $2, $3, $4, $5, $6)",
                     &[
-                        &i64::from(row.chain_id),
+                        &Bigint(row.chain_id.into()),
                         // The column's `CHECK` allows nothing else, and this is
                         // what makes the checksummed-lookup case mean anything.
                         &lower(row.token),
                         &row.symbol,
                         &row.name,
                         &18i16,
-                        &1i64,
+                        &Bigint(1),
                     ],
                 )
                 .await

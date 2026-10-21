@@ -10,7 +10,10 @@
 -- and everything else is JSON.
 CREATE TABLE IF NOT EXISTS spoke_events
 (
-    chain_id        UInt32,
+    -- UInt64, not UInt32. Deployed chain ids already exceed it — Palm is
+    -- 11297108109 — and EIP-2294 only caps them at MAX_SAFE_INTEGER. The
+    -- Postgres side has always been bigint; this is the ledger agreeing.
+    chain_id        UInt64,
     -- The emitting Spoke. One per processor today, so every row in a given
     -- deployment carries the same value — but stored, not assumed, so a second
     -- Spoke writing here stays distinguishable.

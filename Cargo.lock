@@ -13,6 +13,7 @@ dependencies = [
  "serde",
  "thiserror",
  "tokio",
+ "units",
 ]
 
 [[package]]
@@ -111,6 +112,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "units",
  "utoipa",
  "utoipa-axum",
 ]
@@ -1724,6 +1726,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
+ "units",
 ]
 
 [[package]]
@@ -2399,6 +2402,7 @@ dependencies = [
 name = "postgres"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "deadpool-postgres",
  "thiserror",
  "tokio",
@@ -2474,6 +2478,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
+ "units",
 ]
 
 [[package]]
@@ -3392,6 +3397,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tokio-postgres",
+ "units",
 ]
 
 [[package]]
@@ -3756,6 +3762,10 @@ name = "unicode-xid"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
+
+[[package]]
+name = "units"
+version = "0.0.0"
 
 [[package]]
 name = "unsafe-libyaml-norway"

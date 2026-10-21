@@ -1,3 +1,5 @@
+use units::ChainId;
+
 use crate::cursor::{Error, SyncStatus};
 
 /// Reads the indexer's position from outside the indexer.
@@ -20,5 +22,5 @@ pub trait SyncStatusStore: Send + Sync {
     /// # Errors
     ///
     /// [`Error`] when the query cannot be taken or the row cannot be read.
-    async fn get(&self, chain_id: u32) -> Result<Option<SyncStatus>, Error>;
+    async fn get(&self, chain_id: ChainId) -> Result<Option<SyncStatus>, Error>;
 }

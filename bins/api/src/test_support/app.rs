@@ -26,6 +26,7 @@ use prices::{Error as PriceError, ReserveKey, ReservePrice, ReservePriceStore};
 use time::OffsetDateTime;
 use token_metadata::{Error as LabelError, TokenLabel, TokenMetadataStore};
 use tower::ServiceExt;
+use units::ChainId;
 
 use crate::app::{self as app, App};
 use crate::config::Staleness;
@@ -110,7 +111,7 @@ pub(crate) const VALUED_AT: u64 = 1_785_000_000;
 
 pub(crate) fn synced() -> SyncStatus {
     SyncStatus {
-        chain_id: 1,
+        chain_id: ChainId::known(1),
         last_block: 25_652_535,
         last_hash: format!("0x{}", "ab".repeat(32))
             .parse::<B256>()
@@ -161,7 +162,7 @@ struct Labels(HashMap<Address, TokenLabel>);
 
 #[async_trait::async_trait]
 impl TokenMetadataStore for Labels {
-    async fn labels(&self, _chain_id: u32) -> Result<HashMap<Address, TokenLabel>, LabelError> {
+    async fn labels(&self, _chain_id: ChainId) -> Result<HashMap<Address, TokenLabel>, LabelError> {
         Ok(self.0.clone())
     }
 }
@@ -175,7 +176,7 @@ struct Prices {
 impl ReservePriceStore for Prices {
     async fn latest(
         &self,
-        _chain_id: u32,
+        _chain_id: ChainId,
     ) -> Result<HashMap<ReserveKey, ReservePrice>, PriceError> {
         self.reads.fetch_add(1, Ordering::Relaxed);
 
@@ -187,7 +188,7 @@ struct Synced(Option<SyncStatus>);
 
 #[async_trait::async_trait]
 impl SyncStatusStore for Synced {
-    async fn get(&self, _chain_id: u32) -> Result<Option<SyncStatus>, SyncError> {
+    async fn get(&self, _chain_id: ChainId) -> Result<Option<SyncStatus>, SyncError> {
         Ok(self.0.clone())
     }
 }

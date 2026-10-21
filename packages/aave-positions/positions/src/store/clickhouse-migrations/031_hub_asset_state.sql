@@ -17,7 +17,7 @@
 -- `UpdateAsset` never overwrites what `AddAsset` set.
 CREATE TABLE IF NOT EXISTS hub_asset_state
 (
-    chain_id           UInt32,
+    chain_id           UInt64,
     hub                String,
     asset_id           UInt256,
 

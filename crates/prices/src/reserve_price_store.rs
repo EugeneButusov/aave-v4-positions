@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use units::ChainId;
+
 use crate::{Error, ReserveKey, ReservePrice};
 
 /// Reads what Aave prices each reserve at.
@@ -20,5 +22,5 @@ pub trait ReservePriceStore: Send + Sync {
     /// # Errors
     ///
     /// [`Error`] when the query cannot be taken or a row cannot be read.
-    async fn latest(&self, chain_id: u32) -> Result<HashMap<ReserveKey, ReservePrice>, Error>;
+    async fn latest(&self, chain_id: ChainId) -> Result<HashMap<ReserveKey, ReservePrice>, Error>;
 }

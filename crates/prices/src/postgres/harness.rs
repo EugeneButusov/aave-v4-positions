@@ -5,7 +5,7 @@
 //! is the migration's.
 
 use alloy_primitives::Address;
-use postgres::{Pool, build_pool, connection};
+use postgres::{Bigint, Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use super::PostgresReservePriceStore;
@@ -46,7 +46,7 @@ impl Harness for PostgresHarness {
                      VALUES ($1, $2, $3::text::numeric, $4::text::numeric, \
                              now() - make_interval(secs => $5::double precision))",
                     &[
-                        &i64::from(row.chain_id),
+                        &Bigint(row.chain_id.into()),
                         &lower(row.spoke),
                         &row.reserve_id.to_string(),
                         &row.price,

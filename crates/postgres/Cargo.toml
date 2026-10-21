@@ -6,6 +6,11 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+# `ToSql` writes into a `BytesMut` and neither the driver nor `postgres-types`
+# re-exports the crate it comes from, so an impl outside the driver has to name
+# it. Already in the graph underneath `tokio-postgres`.
+bytes = "1.12.1"
+
 # A pool rather than a connection is what a long-lived process needs, and this
 # is the pool for this driver: `sqlx` bundles one, `tokio-postgres` does not.
 deadpool-postgres = "0.14.1"

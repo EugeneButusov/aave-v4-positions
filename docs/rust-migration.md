@@ -441,6 +441,47 @@ parsed config, and both the exception and the explanation are gone. `OTEL_SERVIC
 variable in `bins/api/src/config.rs` with no default, refused on the same grounds as the cursor
 secret.
 
+### `chain_id` is 64 bits, in one place
+
+Every Postgres table has always declared `chain_id bigint`, with the reason written on the column:
+EIP-2294 caps chain ids at `MAX_SAFE_INTEGER`, and deployed ones already exceed `int4`. The first
+Rust port read those columns as `u32` in 31 places, so the code could not hold what its own storage
+could — and the mismatch had already cost something concrete, because
+[`sync_status_store.rs`](../crates/indexing/src/cursor/postgres/sync_status_store.rs) declines to
+read `chain_id` back from the row specifically on the grounds that narrowing a `bigint` has
+"nothing sensible to do if it did not fit".
+
+**No chain this deployment serves needs the width.** `CHAIN_ID=1`, and multi-chain is in
+[Deliberately not in this migration](#deliberately-not-in-this-migration). The argument is the
+mismatch above and the cost of fixing it later, not a chain anyone is about to index. What *was* a
+live defect is the message: a well-formed number was answered with
+`400 chain_id must be a positive integer`, which is wrong at any width.
+
+Both halves are now 64-bit. [`units::ChainId`](../crates/units/src/chain_id.rs) carries the value,
+and its constructor refuses zero and anything past `MAX_SAFE_INTEGER`. The crate has no
+dependencies, because every member names the type and `aave-positions` reaches ClickHouse while
+`indexing` reaches Postgres — neither may acquire the other's driver for a newtype.
+
+**And it names no signed type.** `bigint` is signed; a chain id is not, and neither is a height or a
+block timestamp. So the narrowing lives in [`postgres::Bigint`](../crates/postgres/src/bigint.rs),
+a `u64` bound for a `bigint` column that refuses past `i64::MAX` rather than wrapping — one place,
+in the crate that owns this database's type mapping, knowing nothing about what the number means.
+A domain type that spelled its own storage width would be answering a question the storage asks.
+It replaced a `#[expect(clippy::cast_possible_wrap)]` on a block height as well, which is the
+measure of what the suppression had been standing in for.
+
+The ClickHouse side moved by editing the seven base-table declarations rather than by `ALTER`,
+which is only available once: refinery stores a checksum per applied file, so the edit diverges
+from any database that already has it, and the parameterised views infer `chain_id` from the tables
+they read. Done now, while nothing is deployed and the fold is disposable; after the ledger holds
+production data it is a re-fold rather than a type change.
+
+The wider column costs nothing worth weighing. Measured over two million rows with one distinct
+`chain_id`: 35.2 KiB compressed at `UInt32` against 70.6 KiB at `UInt64` — double, and about
+eighteen bytes per thousand rows, against the 1.5 million rows a year `hub_asset_state` is
+projected to grow by. `log_index` and `tx_index` stay `UInt32`, because they are genuinely bounded
+and widening them would be a change with no argument behind it.
+
 ## Phases
 
 Each is a PR, and each ends with a gate run against the TypeScript implementation. **Cutover is per

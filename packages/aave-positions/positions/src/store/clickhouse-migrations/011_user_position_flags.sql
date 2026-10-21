@@ -18,7 +18,7 @@
 -- mainnet history.
 CREATE TABLE IF NOT EXISTS user_position_flags
 (
-    chain_id            UInt32,
+    chain_id            UInt64,
     user                String,
     spoke               String,
     reserve_id          UInt256,

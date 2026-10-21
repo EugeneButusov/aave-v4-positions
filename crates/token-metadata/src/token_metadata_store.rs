@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use alloy_primitives::Address;
 
+use units::ChainId;
+
 use crate::{Error, TokenLabel};
 
 /// Reads what tokens call themselves.
@@ -26,5 +28,5 @@ pub trait TokenMetadataStore: Send + Sync {
     /// # Errors
     ///
     /// [`Error`] when the query cannot be taken or a row cannot be read.
-    async fn labels(&self, chain_id: u32) -> Result<HashMap<Address, TokenLabel>, Error>;
+    async fn labels(&self, chain_id: ChainId) -> Result<HashMap<Address, TokenLabel>, Error>;
 }

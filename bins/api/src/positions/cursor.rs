@@ -21,6 +21,7 @@ use hmac::digest::InvalidLength;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq as _;
+use units::ChainId;
 
 type Keyed = Hmac<Sha256>;
 
@@ -44,7 +45,7 @@ pub(crate) const MIN_SECRET_BYTES: usize = 32;
 /// `None` spans every Spoke — so the two listings must not sign identically.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Scope {
-    pub(crate) chain_id: u32,
+    pub(crate) chain_id: ChainId,
     pub(crate) user: Address,
     pub(crate) spoke: Option<Address>,
 }
@@ -209,7 +210,7 @@ mod tests {
 
     fn scope() -> Scope {
         Scope {
-            chain_id: 1,
+            chain_id: ChainId::known(1),
             user: address(ALICE),
             spoke: Some(address(SPOKE)),
         }
@@ -326,7 +327,7 @@ mod tests {
 
         for elsewhere in [
             Scope {
-                chain_id: 8453,
+                chain_id: ChainId::known(8453),
                 ..scope()
             },
             Scope {

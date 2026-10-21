@@ -20,6 +20,7 @@ postgres = { path = "crates/postgres" }
 prices = { path = "crates/prices" }
 telemetry = { path = "crates/telemetry" }
 token-metadata = { path = "crates/token-metadata" }
+units = { path = "crates/units" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

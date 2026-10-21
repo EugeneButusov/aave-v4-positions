@@ -1,5 +1,6 @@
 use alloy_primitives::B256;
 use time::OffsetDateTime;
+use units::ChainId;
 
 /// How far the indexer has got on one chain, and how long ago it got there.
 ///
@@ -7,7 +8,7 @@ use time::OffsetDateTime;
 /// the indexer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncStatus {
-    pub chain_id: u32,
+    pub chain_id: ChainId,
     pub last_block: u64,
     pub last_hash: B256,
 

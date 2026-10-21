@@ -5,7 +5,7 @@
 //! column list is the migration's.
 
 use alloy_primitives::B256;
-use postgres::{Pool, build_pool, connection};
+use postgres::{Bigint, Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use super::PostgresSyncStatusStore;
@@ -46,12 +46,8 @@ impl Harness for PostgresHarness {
                      VALUES ($1, $2, $3, \
                              now() - make_interval(secs => $4::double precision))",
                     &[
-                        &i64::from(row.chain_id),
-                        #[expect(
-                            clippy::cast_possible_wrap,
-                            reason = "a block height, which `bigint` is signed and blocks are not"
-                        )]
-                        &(row.last_block as i64),
+                        &Bigint(row.chain_id.into()),
+                        &Bigint(row.last_block),
                         &lower(row.last_hash),
                         #[expect(
                             clippy::cast_precision_loss,
