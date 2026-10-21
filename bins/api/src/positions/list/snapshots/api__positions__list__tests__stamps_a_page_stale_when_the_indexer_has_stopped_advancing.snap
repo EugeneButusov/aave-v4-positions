@@ -1,0 +1,5 @@
+---
+source: bins/api/src/positions/list/tests.rs
+expression: body
+---
+{"sync":{"last_block":25652535,"last_block_hash":"0xabababababababababababababababababababababababababababababababab","updated_at":"2026-07-25T17:21:11Z","age_seconds":61,"stale":true},"valued_at":"2026-07-25T17:20:00Z","pricing":null,"items":[],"next_cursor":null}

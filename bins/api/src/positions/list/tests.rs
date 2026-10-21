@@ -1,8 +1,6 @@
 //! The route end to end, with the four ports doubled.
 //!
-//! One case asserts a whole body and the rest assert one decision each: the
-//! key spellings, the field order and the timestamp format are one contract
-//! and belong in one literal.
+//! Each case names one decision and then pins the whole body it came in.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -164,6 +162,8 @@ async fn a_chain_this_deployment_has_never_indexed_is_a_404_not_an_empty_page() 
         body,
         r#"{"message":"chain 1 has not been indexed by this deployment","error":"Not Found","status_code":404}"#
     );
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -194,6 +194,8 @@ async fn an_explicit_instant_skips_the_price_read_rather_than_discarding_it() {
         body.contains(r#""valued_at":"2026-05-28T20:26:40Z""#),
         "{body}"
     );
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -222,6 +224,8 @@ async fn the_page_clock_is_the_oldest_price_behind_it_not_the_newest() {
         ),
         "{body}"
     );
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -248,6 +252,8 @@ async fn writes_a_subsecond_at_whatever_width_it_takes_to_say_it() {
         body.contains(r#""updated_at":"2026-07-25T17:19:19.5Z""#),
         "{body}"
     );
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -289,6 +295,8 @@ async fn an_unresolved_reserve_nulls_the_asset_the_value_and_the_shares_together
         body.contains(r#""premium_offset_ray":"-0.000000000000000000000000001""#),
         "{body}"
     );
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -318,6 +326,8 @@ async fn a_hub_that_listed_the_asset_without_checkpointing_it_keeps_the_shares()
     assert!(body.contains(r#""symbol":"USDC""#), "{body}");
     assert!(body.contains(r#""value":null"#), "{body}");
     assert!(body.contains(r#""pricing":null"#), "{body}");
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -337,12 +347,16 @@ async fn a_reserve_nobody_has_priced_nulls_the_dollars_and_keeps_the_tokens() {
     assert!(body.contains(r#""supplied_amount":"1000""#), "{body}");
     assert!(body.contains(r#""price_usd":null"#), "{body}");
     assert!(body.contains(r#""pricing":null"#), "{body}");
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
 async fn a_token_with_no_label_and_one_with_no_symbol_both_serve_null() {
     // A row the sweep has not written and a row it wrote without a symbol are
     // two states in the store and one on the wire.
+    let mut served = Vec::new();
+
     for labels in [
         HashMap::new(),
         HashMap::from([(
@@ -366,7 +380,11 @@ async fn a_token_with_no_label_and_one_with_no_symbol_both_serve_null() {
         let (_, body) = answer(stores, "").await;
 
         assert!(body.contains(r#""symbol":null,"name":null"#), "{body}");
+        served.push(body);
     }
+
+    assert_eq!(served[0], served[1]);
+    insta::assert_snapshot!(served[0]);
 }
 
 #[tokio::test]
@@ -387,9 +405,12 @@ async fn takes_back_the_cursor_it_issued_and_only_for_the_listing_it_issued_it_f
     let page: serde_json::Value = serde_json::from_str(&body).expect("a JSON body");
     let cursor = page["next_cursor"].as_str().expect("a cursor").to_owned();
 
-    let (resumed, _) = answer(Stores::default(), &format!("?cursor={cursor}")).await;
+    insta::assert_snapshot!("a_page_with_a_next_cursor", body);
+
+    let (resumed, body) = answer(Stores::default(), &format!("?cursor={cursor}")).await;
 
     assert_eq!(resumed, StatusCode::OK);
+    insta::assert_snapshot!("the_page_it_resumes", body);
 
     // Well-formed, genuinely ours, and a listing it was not issued for.
     let (status, body) = answer(
@@ -425,6 +446,8 @@ async fn a_bad_parameter_is_a_400_through_the_router_and_not_only_in_the_parser(
         body.contains("user must be a 20-byte hex address"),
         "{body}"
     );
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
@@ -440,14 +463,14 @@ async fn stamps_a_page_stale_when_the_indexer_has_stopped_advancing() {
     let (_, body) = answer(stores, "").await;
 
     assert!(body.contains(r#""age_seconds":61,"stale":true"#), "{body}");
+
+    insta::assert_snapshot!(body);
 }
 
 #[tokio::test]
 async fn documents_the_bounds_the_parser_enforces() {
-    // The four bounds are written twice — where `params` enforces them and
-    // where `IntoParams` publishes them, the attribute parser taking a literal
-    // and not a `const`. The default is not: `default` takes a function, so
-    // `params::default_limit` reads the constant and this checks it arrived.
+    // The bounds are literals in the attribute and constants in the parser,
+    // so nothing but this stops the two drifting apart.
     let request = Request::builder()
         .uri("/docs/openapi.json")
         .body(Body::empty())
@@ -475,8 +498,5 @@ async fn documents_the_bounds_the_parser_enforces() {
     assert_eq!(parameter("as_of")["schema"]["minimum"], GENESIS);
     assert_eq!(parameter("as_of")["schema"]["maximum"], MAX_AS_OF);
 
-    // What a caller gets by saying nothing. Published as a schema keyword
-    // rather than left to the prose, which is what the predecessor did and
-    // what a schema diff is able to see.
     assert_eq!(parameter("limit")["schema"]["default"], DEFAULT_LIMIT);
 }

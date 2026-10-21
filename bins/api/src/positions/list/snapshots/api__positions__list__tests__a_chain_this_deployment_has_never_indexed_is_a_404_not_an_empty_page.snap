@@ -1,0 +1,5 @@
+---
+source: bins/api/src/positions/list/tests.rs
+expression: body
+---
+{"message":"chain 1 has not been indexed by this deployment","error":"Not Found","status_code":404}
