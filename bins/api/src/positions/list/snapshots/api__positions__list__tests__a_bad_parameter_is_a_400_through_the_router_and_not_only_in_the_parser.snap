@@ -1,0 +1,5 @@
+---
+source: bins/api/src/positions/list/tests.rs
+expression: body
+---
+{"message":"user must be a 20-byte hex address, got \"0xnope\"","error":"Bad Request","status_code":400}

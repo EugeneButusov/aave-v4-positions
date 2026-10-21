@@ -1,0 +1,5 @@
+---
+source: bins/api/src/positions/list/tests.rs
+expression: "served[0]"
+---
+{"sync":{"last_block":25652535,"last_block_hash":"0xabababababababababababababababababababababababababababababababab","updated_at":"2026-07-25T17:21:11Z","age_seconds":7,"stale":false},"valued_at":"2026-07-25T17:20:00Z","pricing":null,"items":[{"chain_id":1,"user":"0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8","spoke":"0x94e7a5dcbe816e498b89ab752661904e2f56c485","reserve_id":"7","supplied_shares":"500.5","drawn_shares":"0","premium_shares":"0","premium_offset_ray":"0","net_supplied_amount":"500.5","net_borrowed_amount":"0","using_as_collateral":true,"events":3,"asset":{"asset_id":"7","hub":"0xcca852bc40e560adc3b1cc58ca5b55638ce826c9","underlying":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","decimals":6,"symbol":null,"name":null},"value":{"supplied_amount":"1000","drawn_debt":"0","premium_debt":"0","total_debt":"0","drawn_index":"1","price_usd":null,"supplied_amount_usd":null,"total_debt_usd":null}}],"next_cursor":null}
