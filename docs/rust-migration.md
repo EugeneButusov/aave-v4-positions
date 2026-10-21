@@ -802,6 +802,13 @@ there is — then walks every listing's cursors to exhaustion. Each page's resum
 both answers and has to be the same bytes before either service is sent it; a pair that differs ends
 that walk, because from there the two would be comparing different pages.
 
+**A run of zeros is only worth reading if the comparator is live, and there is a cheap way to see
+that it is**: point `REPLAY_CANDIDATE_URL` at the oracle. Both sides are then the TypeScript, the key
+transform is applied to one of them, and every snake_case key mismatches — 18 findings out of 31 on
+one wallet, naming the key set at the body, at `sync` and at `pricing`. It also says something the
+gate would otherwise have to take on trust: the two key *sequences* differ only in spelling, in the
+same positions, which is the field-order claim this entry makes.
+
 Two things it does not do yet. The OpenAPI comparison is structural and needs `$ref` resolution on
 both documents, which is its own increment — the component *names* differ, so the schemas cannot be
 matched by name and have to be walked from each operation's response. And it records nothing: the
