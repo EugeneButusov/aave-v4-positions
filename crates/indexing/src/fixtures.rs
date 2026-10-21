@@ -25,11 +25,27 @@ pub(crate) fn hash_of(branch: u8, block: u64) -> B256 {
 }
 
 /// A header on `branch` at `block`, its parent the same branch below it.
+///
+/// Genesis has no parent, so its `parent_hash` is zero rather than its own
+/// hash — the chain double composes the two sides separately and they have to
+/// agree about that block.
 pub(crate) fn header(block: u64, branch: u8) -> BlockHeader {
     BlockHeader {
         number: block,
         hash: hash_of(branch, block),
-        parent_hash: hash_of(branch, block.saturating_sub(1)),
-        timestamp: 1_700_000_000 + block * 12,
+        parent_hash: parent_of(block, branch),
+        timestamp: timestamp_of(block),
     }
+}
+
+/// The hash a block on `branch` names as its parent.
+pub(crate) fn parent_of(block: u64, branch: u8) -> B256 {
+    block
+        .checked_sub(1)
+        .map_or(B256::ZERO, |below| hash_of(branch, below))
+}
+
+/// Twelve seconds a block, from a fixed epoch, so a header is reproducible.
+pub(crate) fn timestamp_of(block: u64) -> u64 {
+    1_700_000_000 + block * 12
 }

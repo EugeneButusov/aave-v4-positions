@@ -25,5 +25,6 @@ pub use cursor::{
 };
 pub use processors::{BlockProcessor, Failure, Outcome};
 pub use reorg::{
-    BlockHeaderStore, Error as ReorgError, PostgresBlockHeaderStore, ReorgDetector, Verdict,
+    BlockHeaderStore, Error as ReorgError, HashChainReorgDetector, PostgresBlockHeaderStore,
+    ReorgDetector, Verdict,
 };

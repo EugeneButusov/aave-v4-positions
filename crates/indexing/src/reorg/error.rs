@@ -5,13 +5,20 @@
 /// which retries all of it.
 ///
 /// [`Chain`](Self::Chain) is the detector's alone and [`Malformed`](Self::Malformed)
-/// the window's; a reader of either signature can see which from the variant.
+/// the window adapter's; a reader of either signature can see which from the
+/// variant.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Postgres would not answer: no connection to be had, or a statement it
-    /// refused. Which of the two is in the cause.
+    /// **Opaque rather than this adapter's driver error**, unlike
+    /// [`cursor::Error`](crate::Error). That port has one implementation and
+    /// this one has two that must both be able to refuse: the detector's
+    /// contract says a failed `append` surfaces rather than reporting a block it
+    /// does not hold, and only a store that refuses can show it does.
     #[error("the header window could not be read or written")]
-    Failed(#[from] postgres::Error),
+    Failed {
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     /// A column held something its type says it cannot.
     ///
@@ -29,4 +36,23 @@ pub enum Error {
     /// Walking a fork and vetting a resume point both read headers.
     #[error("the chain could not be read while placing a fork")]
     Chain(#[from] crate::chain::Error),
+}
+
+/// By hand rather than `#[from]`, so `?` still works over a boxed source.
+impl From<postgres::Error> for Error {
+    fn from(source: postgres::Error) -> Self {
+        Self::Failed {
+            source: Box::new(source),
+        }
+    }
+}
+
+impl Error {
+    /// What an implementation that is not a database refuses with.
+    #[cfg(test)]
+    pub(crate) fn unavailable(what: &'static str) -> Self {
+        Self::Failed {
+            source: what.into(),
+        }
+    }
 }

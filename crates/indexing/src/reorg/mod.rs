@@ -6,13 +6,19 @@
 
 mod block_header_store;
 mod error;
+mod hash_chain;
 mod postgres;
 mod reorg_detector;
 
 #[cfg(test)]
 pub(crate) mod conformance;
+#[cfg(test)]
+mod harness;
+#[cfg(test)]
+mod tests;
 
 pub use block_header_store::BlockHeaderStore;
 pub use error::Error;
+pub use hash_chain::HashChainReorgDetector;
 pub use postgres::PostgresBlockHeaderStore;
 pub use reorg_detector::{ReorgDetector, Verdict};

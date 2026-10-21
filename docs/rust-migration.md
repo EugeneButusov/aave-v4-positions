@@ -880,6 +880,11 @@ Four PRs — the ports and the two that are a database, the detector, the loop, 
 differential gate here and cannot be; nothing to diff exists until 3b. What answers for it instead is
 the ported case coverage, and a guard broken on purpose for each ordering claim.
 
+The detector's cases drive the **real** detector over a chain whose ancestry is *derived*: a block's
+hash is its branch and its height, so declaring a fork rewrites every block above its point at once
+and self-consistently. Nothing scripts a verdict — each one is reached from headers the detector
+read, which is what makes the window shapes worth asserting on at all.
+
 **Four TypeScript behaviours are reproduced rather than fixed**, because 3b's gate is differential
 and each of these would show up in it as a difference to explain away:
 

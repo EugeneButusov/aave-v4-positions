@@ -19,6 +19,9 @@ tokio-util = { version = "0.7.19", default-features = false }
 # crate that needs it, not to whoever happens to own the dependency.
 tokio-postgres = { version = "0.7.18", features = ["with-time-0_3"] }
 thiserror = "2.0.19"
+# The one line the detector writes: a header that did not extend the one below
+# it, which finality says cannot happen at or below the safe head.
+tracing = { version = "0.1.42", default-features = false, features = ["std", "attributes"] }
 # When the indexer last advanced, which reaches the wire as an ISO-8601 string.
 time = "0.3.55"
 
