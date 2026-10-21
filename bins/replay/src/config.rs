@@ -18,7 +18,12 @@ pub(crate) struct Config {
     /// may leave a clock-derived number.
     pub(crate) skew: u64,
 
-    /// How many wallets of the fold to replay. Zero is all of them.
+    /// How many days back from the fold's newest instant to take wallets
+    /// from. Zero is every wallet there is.
+    pub(crate) window: u32,
+
+    /// A further cap on how many of those wallets to replay, in address
+    /// order. Zero is all of them.
     pub(crate) wallets: usize,
 
     /// How many listings to walk at once. The pages of one listing are
@@ -57,6 +62,7 @@ impl Config {
             chain_id: number(env, "REPLAY_CHAIN_ID", 1)?,
             prefix: env.text("REPLAY_PREFIX", "api"),
             skew: env.seconds("REPLAY_SKEW_SECONDS", 5, 3600)?,
+            window: number(env, "REPLAY_WINDOW_DAYS", 7)?,
             wallets: number(env, "REPLAY_WALLETS", 0)?,
             concurrency: concurrency(env)?,
             clickhouse: clickhouse_client::Config {
@@ -139,6 +145,7 @@ mod tests {
         assert_eq!(config.chain_id, 1);
         assert_eq!(config.prefix, "api");
         assert_eq!(config.skew, 5);
+        assert_eq!(config.window, 7);
         assert_eq!(config.wallets, 0);
         assert_eq!(config.concurrency, 8);
         assert_eq!(config.clickhouse.database, "aave");
@@ -152,6 +159,7 @@ mod tests {
             ("REPLAY_CHAIN_ID", "8453"),
             ("REPLAY_PREFIX", "gateway"),
             ("REPLAY_SKEW_SECONDS", "30"),
+            ("REPLAY_WINDOW_DAYS", "30"),
             ("REPLAY_WALLETS", "12"),
             ("REPLAY_CONCURRENCY", "32"),
             ("CLICKHOUSE_URL", "http://clickhouse:8123"),
@@ -166,6 +174,7 @@ mod tests {
         assert_eq!(config.chain_id, 8453);
         assert_eq!(config.prefix, "gateway");
         assert_eq!(config.skew, 30);
+        assert_eq!(config.window, 30);
         assert_eq!(config.wallets, 12);
         assert_eq!(config.concurrency, 32);
         assert_eq!(config.clickhouse.url, "http://clickhouse:8123");

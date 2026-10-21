@@ -56,7 +56,7 @@ pub(crate) enum Error {
 /// A difference between the two is a finding in the report, not an error.
 pub(crate) async fn gate() -> Result<Report, Error> {
     let config = Config::from_env()?;
-    let fold = fold::read(config.clickhouse.clone(), config.chain_id).await?;
+    let fold = fold::read(config.clickhouse.clone(), config.chain_id, config.window).await?;
 
     replay(&config, &fold).await
 }
@@ -88,6 +88,45 @@ async fn replay(config: &Config, fold: &Fold) -> Result<Report, Error> {
         return Err(Error::EmptyFold(config.chain_id));
     };
 
+    let listings = corpus::listings(fold, config.chain_id, config.wallets);
+
+    report.note("oracle", &config.oracle);
+    report.note("candidate", &config.candidate);
+    report.note("chain", config.chain_id.to_string());
+    report.note("mount", corpus::mount(&config.prefix));
+    report.note(
+        "fold",
+        format!(
+            "{} wallets, {} positions, {} to {}",
+            fold.wallets.len(),
+            fold.wallets
+                .iter()
+                .map(|wallet| wallet.positions)
+                .sum::<u64>(),
+            instant(fold.earliest),
+            instant(fold.latest),
+        ),
+    );
+    report.note(
+        "selected",
+        match fold.since {
+            0 => "every wallet in the fold".to_owned(),
+            since => format!("wallets touched since {}", instant(since)),
+        },
+    );
+    report.note(
+        "replaying",
+        match config.wallets {
+            0 => format!(
+                "{} wallets, {} listings",
+                fold.wallets.len(),
+                listings.len()
+            ),
+            bounded => format!("the first {bounded} wallets, {} listings", listings.len()),
+        },
+    );
+    report.note("pinned at", format!("{}, and now", instant(fold.latest)));
+
     for (which, base) in [("oracle", &pair.oracle), ("candidate", &pair.candidate)] {
         let answer = client.get(base, "GET", "/health/live").await?;
 
@@ -104,7 +143,6 @@ async fn replay(config: &Config, fold: &Fold) -> Result<Report, Error> {
         one(&client, &pair, &case, &mut report).await?;
     }
 
-    let listings = corpus::listings(fold, config.chain_id, config.wallets);
     report.absorb(walk_all(&client, &pair, config.concurrency, listings).await?);
 
     Ok(report)
@@ -363,6 +401,13 @@ fn text(oracle: &str, candidate: &str) -> Judgement {
 /// The defaults are ports a developer machine often has something else on, and
 /// a wall of findings against a service that is not the oracle is worse than a
 /// refusal. Liveness is the cheapest thing both are known to answer.
+/// Unix seconds as something a reader can place. `time`'s own `Display` for a
+/// date-time is close enough to RFC 3339 for a header line.
+fn instant(seconds: u32) -> String {
+    time::OffsetDateTime::from_unix_timestamp(i64::from(seconds))
+        .map_or_else(|_| seconds.to_string(), |at| at.to_string())
+}
+
 fn answers_liveness(status: u16, body: &str) -> bool {
     status == 200
         && Json::parse(body)
@@ -411,6 +456,7 @@ mod tests {
             chain_id: 1,
             prefix: "api".to_owned(),
             skew: 5,
+            window: 0,
             wallets: 0,
             concurrency: 4,
             clickhouse: clickhouse_client::Config {
@@ -429,7 +475,9 @@ mod tests {
                 spokes: vec!["0x01".to_owned()],
                 positions: 2,
             }],
+            earliest: 1_779_000_000,
             latest: 1_780_000_000,
+            since: 0,
         }
     }
 
@@ -709,7 +757,9 @@ mod tests {
                     positions: 1,
                 },
             ],
+            earliest: 1_779_000_000,
             latest: 1_780_000_000,
+            since: 0,
         };
 
         let report = replay(&config(&oracle, &candidate), &fold).await.unwrap();
@@ -804,7 +854,9 @@ mod tests {
         let service = Stub::start((200, "{}"), &[]).await;
         let empty = Fold {
             wallets: Vec::new(),
+            earliest: 0,
             latest: 0,
+            since: 0,
         };
 
         let refused = replay(&config(&service, &service), &empty)

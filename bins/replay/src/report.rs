@@ -12,6 +12,10 @@ pub(crate) struct Finding {
 
 #[derive(Debug, Default)]
 pub(crate) struct Report {
+    /// What this run was pointed at, so the report stands on its own rather
+    /// than needing the command that produced it.
+    noted: Vec<(&'static str, String)>,
+
     compared: usize,
     findings: Vec<Finding>,
 
@@ -22,6 +26,10 @@ pub(crate) struct Report {
 }
 
 impl Report {
+    pub(crate) fn note(&mut self, what: &'static str, value: impl Into<String>) {
+        self.noted.push((what, value.into()));
+    }
+
     pub(crate) fn compared(&mut self) {
         self.compared += 1;
     }
@@ -48,6 +56,14 @@ impl Report {
 
     pub(crate) fn text(&self) -> String {
         let mut text = String::new();
+
+        if let Some(width) = self.noted.iter().map(|(what, _)| what.len()).max() {
+            for (what, value) in &self.noted {
+                let _ = writeln!(text, "{what:width$}  {value}");
+            }
+
+            let _ = writeln!(text);
+        }
 
         for finding in &self.findings {
             let _ = writeln!(text, "{} — {}", finding.label, finding.target);
@@ -105,6 +121,21 @@ mod tests {
 
         assert!(report.agreed());
         assert_eq!(report.text(), "\n2 requests compared, 0 findings\n");
+    }
+
+    /// A report read a week later has to say what it was pointed at. Aligned
+    /// on the longest label, so the values line up.
+    #[test]
+    fn carries_what_the_run_was_pointed_at() {
+        let mut report = Report::default();
+        report.note("oracle", "http://localhost:3000");
+        report.note("chain", "1");
+        report.compared();
+
+        assert_eq!(
+            report.text(),
+            "oracle  http://localhost:3000\nchain   1\n\n\n1 requests compared, 0 findings\n"
+        );
     }
 
     #[test]

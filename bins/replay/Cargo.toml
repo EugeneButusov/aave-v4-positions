@@ -29,6 +29,9 @@ tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
 time = { version = "0.3.55", features = ["parsing"] }
 
 [dev-dependencies]
+# The real ClickHouse DDL, so the window is tested against the schema the route
+# reads rather than against a table written to match the query.
+migrations.workspace = true
 # A stand-in service on a port the OS picks, so the driving loop, the cursor
 # walk and the client itself are exercised over a real socket. Already the
 # tree's server; this is the one place the harness needs one.

@@ -335,7 +335,9 @@ mod tests {
                     positions: 1,
                 },
             ],
+            earliest: 1_779_000_000,
             latest: 1_780_000_000,
+            since: 0,
         }
     }
 
