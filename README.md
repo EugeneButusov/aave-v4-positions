@@ -38,7 +38,7 @@ assumed.
 - **Enriches** from two sources outside the event log — ERC-20 `symbol()`/`name()` read off the
   token contracts, and USD prices read from the Spoke's own Aave oracle — both stored in Postgres,
   both kept current without anyone running a command.
-- **Serves** it at `GET /api/v1/chains/{chainId}/users/{user}/positions`, keyset-paged, block-stamped
+- **Serves** it at `GET /api/v1/chains/{chain_id}/users/{user}/positions`, keyset-paged, block-stamped
   and documented at `/docs`.
 - **Stays correct while the chain moves**: incremental sync from a durable cursor, an on-demand
   backfill command, and reorg detection over a retained hash chain that repairs the ledger by
@@ -149,7 +149,8 @@ Tear down with `docker compose down`, or `down -v` to drop the indexed data and 
 to a third party. Point it at your own node with `RPC_URLS=https://your-node docker compose up -d`,
 or set `INDEXER_AUTOSTART=false` for probes only. Ports, chain, start block and everything else are
 environment variables — the full table is in
-[Configuration](docs/design-notes.md#configuration), and each service's `.env.example` is annotated.
+[Configuration](docs/design-notes.md#configuration), and both `.env.example` files are annotated:
+[`.env.example`](.env.example) for the Rust binaries, `apps/indexer/.env.example` for the indexer.
 
 ### Backfilling a range
 
@@ -173,17 +174,19 @@ Outside Docker it is `pnpm backfill --from … --to …`.
 
 ```bash
 pnpm install
-cp apps/api/.env.example apps/api/.env && cp apps/indexer/.env.example apps/indexer/.env
+cp .env.example .env && cp apps/indexer/.env.example apps/indexer/.env
 cargo run --release -p migrate                     # schema is its own step, never done at boot
-pnpm dev:indexer                                   # and, in another shell, pnpm dev:api
+pnpm dev:indexer                                   # and, in another shell
+cargo run --release -p api
 ```
 
 Needs Node 24, pnpm 11, Rust 1.96 — `rust-toolchain.toml` pins it and rustup installs it on the
 first `cargo` command — and a ClickHouse and Postgres to point at;
 [Prerequisites](docs/design-notes.md#prerequisites) has the two `docker run` lines. `pnpm check` runs
-format, lint, typecheck and the TypeScript suite: **716 tests across 63 files, in about 17 seconds**.
-It is not the whole gate any more — CI also runs `cargo fmt`, `clippy`, `cargo test --workspace` and
-a release build, so a change under `bins/` or `crates/` passes `pnpm check` and can still fail.
+format, lint, typecheck and the TypeScript suite: **595 tests across 54 files, in about 14 seconds**.
+It covers the indexer and the packages and no longer the API — CI also runs `cargo fmt`, `clippy`,
+`cargo test --workspace` and a release build, so a change under `bins/` or `crates/` passes
+`pnpm check` and can still fail.
 Docker is required for them too — the store specs go against real servers rather than mocks, because
 what they assert is that the SQL executes, and no fake can tell you that.
 
@@ -192,47 +195,58 @@ what they assert is that the SQL executes, and no fake can tell you that.
 One endpoint today, and the shape is deliberate:
 
 ```
-GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
+GET /api/v1/chains/{chain_id}/users/{user}/positions?spoke=&limit=&cursor=&as_of=
 ```
 
-A real response, trimmed to one item — the indexed half, the folded half and both enrichments in the
-same payload:
+A real response at `limit=1` — the indexed half, the folded half and both enrichments in the same
+payload, and every key as the service spells it:
 
 ```jsonc
 {
   "sync": {
-    "lastBlock": 25670682,
-    "updatedAt": "2026-08-03T00:31:11.779Z",
-    "ageSeconds": 2,
+    "last_block": 26241346,
+    "last_block_hash": "0x00d44f7cd97c85a2b24721317ae0de201baac488e0eb4f615960e2e44c27e6d3",
+    "updated_at": "2026-10-21T13:42:51.228768Z",
+    "age_seconds": 8,
     "stale": false,
   },
-  "valuedAt": "2026-08-03T00:31:14.000Z",
-  "pricing": { "updatedAt": "2026-08-03T00:30:20.627Z", "ageSeconds": 53, "stale": false },
+  "valued_at": "2026-10-21T13:42:59Z",
+  "pricing": { "updated_at": "2026-10-21T13:42:38.103275Z", "age_seconds": 21, "stale": false },
   "items": [
     {
-      "chainId": 1,
+      "chain_id": 1,
       "user": "0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8",
       "spoke": "0x94e7a5dcbe816e498b89ab752661904e2f56c485",
-      "reserveId": "0",
-      "suppliedShares": "24.462137244885799974", // indexed: folded from 144 events
-      "usingAsCollateral": true,
-      "events": 144,
+      "reserve_id": "0",
+      "supplied_shares": "23.758871403532405264", // indexed: folded from 547 events
+      "drawn_shares": "0",
+      "premium_shares": "0",
+      "premium_offset_ray": "0",
+      "net_supplied_amount": "23.916721233759015254",
+      "net_borrowed_amount": "-0.000000037006478936",
+      "using_as_collateral": true,
+      "events": 547,
       "asset": {
+        "asset_id": "0",
+        "hub": "0xcca852bc40e560adc3b1cc58ca5b55638ce826c9",
         "underlying": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", // resolved through both ledgers
         "decimals": 18,
         "symbol": "WETH", // enriched: the token's own symbol()
         "name": "Wrapped Ether",
       },
       "value": {
-        "suppliedAmount": "24.600772347039817016", // shares × the Hub index at valuedAt
-        "totalDebt": "0",
-        "drawnIndex": "1.008055395294113139752655573",
-        "priceUsd": "1871.4", // enriched: the Spoke's own oracle
-        "suppliedAmountUsd": "46037.8853702503135637424",
+        "supplied_amount": "23.995180290361125392", // shares × the Hub index at valued_at
+        "drawn_debt": "0",
+        "premium_debt": "0",
+        "total_debt": "0",
+        "drawn_index": "1.013580524327831928982672856",
+        "price_usd": "2466.90661489", // enriched: the Spoke's own oracle
+        "supplied_amount_usd": "59193.86898377001113642954428688",
+        "total_debt_usd": "0",
       },
     },
   ],
-  "nextCursor": "MHg5NGU3YTVkY2JlODE2ZTQ5OGI4OWFiNzUyNjYxOTA0ZTJmNTZjNDg1fDA.ypox2aUS9gUn75PeUxZX6w",
+  "next_cursor": "MHg5NGU3YTVkY2JlODE2ZTQ5OGI4OWFiNzUyNjYxOTA0ZTJmNTZjNDg1fDA.ypox2aUS9gUn75PeUxZX6w",
 }
 ```
 
@@ -240,11 +254,11 @@ same payload:
   `1` is no accrual. Nothing on the wire is in base units, and nothing should be parsed into a float:
   a share balance can carry 21 significant digits and a double keeps 17.
 - **A field is null when the answer is unknown, never zero.** `asset` and `value` are null together
-  when the registry has not resolved a reserve; the `*Usd` fields are null when the oracle has not
+  when the registry has not resolved a reserve; the `*_usd` fields are null when the oracle has not
   priced it.
-- **Three clocks, because there are three sources.** `sync` is how far the indexer got, `valuedAt` is
-  the instant the page's amounts were computed for, and `pricing` is how old the oldest price behind
-  it is. Collapsing them into one would be a number that was never true.
+- **Three clocks, because there are three sources.** `sync` is how far the indexer got, `valued_at`
+  is the instant the page's amounts were computed for, and `pricing` is how old the oldest price
+  behind it is. Collapsing them into one would be a number that was never true.
 - **Cursors are opaque and signed**, valid only for the listing that issued them, so changing a
   filter mid-walk is refused rather than silently resuming somewhere else.
 

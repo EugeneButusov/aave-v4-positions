@@ -14,12 +14,13 @@ v3 intuition.
 ## What is here
 
 The **indexing framework, real event ingestion, and the fold that turns it into positions**. The
-workspace, both services, the test and lint toolchain, the operational shape a Kubernetes deployment
+workspace, both services, the test and lint toolchains, the operational shape a Kubernetes deployment
 expects — and a loop that walks Ethereum mainnet decoding Aave v4 Spoke position events into an
 append-only ClickHouse table, projected into per-wallet balances that survive a reorg without any
 code being told one happened.
 
-**Present:** pnpm workspace, two runnable NestJS services, validated configuration, structured
+**Present:** a pnpm workspace and a Cargo one, a NestJS indexer and a Rust API, validated
+configuration, structured
 logging, liveness/readiness probes, graceful drain, [OpenTelemetry traces, metrics and logs over
 OTLP](#tracing-and-metrics) with a Grafana that `docker compose up` brings up already provisioned,
 OpenAPI docs, Vitest, oxlint + Prettier,
@@ -48,8 +49,11 @@ longer list, in rough order of what comes next.
 ```
 .
 ├── apps/
-│   ├── api/                 read API — indexed and enriched positions
 │   └── indexer/             worker — configuration and wiring, nothing else
+├── bins/
+│   ├── api/                 read API — indexed and enriched positions
+│   └── migrate/             applies both schemas; the only DDL in the system
+├── crates/                  the Rust port; see docs/rust-migration.md
 ├── docs/
 │   └── aave-v4-protocol-analysis.md
 ├── packages/
@@ -73,20 +77,23 @@ longer list, in rough order of what comes next.
 │       ├── events/          ABI bindings, decoders, two append-only event ledgers
 │       └── positions/       the fold over that log, and the store that reads it
 ├── observability/           stack configuration: collector, Grafana, the dashboard
+├── Cargo.toml               the Rust workspace
 ├── pnpm-workspace.yaml      workspace globs + dependency catalog
 ├── tsconfig.base.json       one strict compiler configuration, inherited everywhere
 ├── lefthook.yml             git hooks
 └── vitest.config.mts        aggregates every workspace project into one test run
 ```
 
-Both services are NestJS applications. The API serves HTTP; the indexer is a worker that also
-listens, purely so Kubernetes has a probe target — no business endpoints are mounted on it.
+The API is a Rust binary on axum and the indexer a NestJS application — the first cutover of the
+[migration](rust-migration.md), and the reason the sections below say which language they are about.
+The API serves HTTP; the indexer is a worker that also listens, purely so Kubernetes has a probe
+target — no business endpoints are mounted on it.
 
 **The scope says whether a package knows about Aave.** Everything under `packages/` that does not
 is scoped `@packages` — the directory is the whole of its identity. Anything that _does_ know is
 nested under `packages/aave-positions/` and scoped `@aave-positions`, so the import line says
-whether a module is protocol-aware before you open it. `@aave-v4-positions` stays on the two apps,
-which _are_ the product.
+whether a module is protocol-aware before you open it. `@aave-v4-positions` stays on the app, which
+_is_ the product.
 
 `@packages/token-metadata` is the one place that rule is applied to the _subject_ rather than to
 every line of the implementation, and it is worth saying so rather than letting someone discover it.
@@ -100,10 +107,11 @@ is the weaker case of the two and worth naming as such: it binds `IAaveOracleV4`
 _kind_ of thing as its neighbour — a small fetched dimension with a worker and a Postgres table — and
 keeping the pair together says more about the codebase than keeping the scope pure would.
 
-`@packages/ops` holds the operational concerns both services share: probes, structured logging and
-the shutdown sequence — everything an operator needs and nothing a position needs. The name is the
-boundary. It carries no Aave domain knowledge and would work in any Kubernetes-deployed Nest service,
-so the share maths becomes its own package rather than accumulating here. Wrapping `nestjs-pino`
+`@packages/ops` holds the indexer's operational concerns: probes, structured logging and the shutdown
+sequence — everything an operator needs and nothing a position needs. The name is the boundary. It
+carries no Aave domain knowledge and would work in any Kubernetes-deployed Nest service, so the share
+maths becomes its own package rather than accumulating here. `crates/ops` is the same boundary for the
+API, and the two agree on what a probe answers because that was gated rather than assumed. Wrapping `nestjs-pino`
 there also means no app depends on it directly.
 
 `@packages/clickhouse` is the database layer on the same terms — the client, its Nest module and a
@@ -148,11 +156,12 @@ comes from the packages it wires together, which is what makes the engine reusab
 independently testable. It is no longer the composition point for schema: that moved to
 `bins/migrate` in Phase 0, and applying migrations is not something this process can do at all.
 
-`apps/api` is the same shape on the read side: a controller, a service that maps the domain type onto
-a wire contract, and the request schemas. It owns two things the packages deliberately do not — the
-cursor's wire format, because the key that signs it is this service's configuration, and the decision
-that an unindexed chain is a 404. Everything else it serves comes from `@aave-positions/positions`
-and, for the block a response is true as of, `@packages/indexing`. It writes to neither database.
+`bins/api` is the same shape on the read side, in the other language: a router, the views that map a
+read model onto a wire contract, and what a caller may ask for. It owns two things the crates
+deliberately do not — the cursor's wire format, because the key that signs it is this service's
+configuration, and the decision that an unindexed chain is a 404. Everything else it serves comes
+from `crates/aave-positions` and, for the block a response is true as of, `crates/indexing`. It writes
+to neither database.
 
 `pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
 no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config
@@ -165,9 +174,9 @@ aliases the workspace packages, one entry each, so tests can never exercise a st
 - **Node 24** — enforced by `engines` with `engine-strict` on, so an older runtime fails at install
   rather than at runtime. It is the only version CI runs, so the declaration and the evidence match.
 - **pnpm 11** — `corepack enable` picks up the `packageManager` field automatically.
-- **Rust 1.96**, to apply the schema. `rust-toolchain.toml` pins the exact channel and rustup
-  installs it on the first `cargo` command, so there is nothing to choose. Only the migrator is Rust
-  so far; everything else still builds without it.
+- **Rust 1.96**, for the API and the migrator. `rust-toolchain.toml` pins the exact channel and
+  rustup installs it on the first `cargo` command, so there is nothing to choose. The indexer and the
+  packages still build and test without it.
 - **Docker**, to run the tests. The store specs go against real servers rather than mocks: what they
   assert is that the SQL executes — the collapsing semantics on one side, upsert-and-prune in a single
   data-modifying CTE on the other — and neither is something a fake can tell you. CI runs the same
@@ -182,7 +191,7 @@ aliases the workspace packages, one entry each, so tests can never exercise a st
   ```
 
   `CLICKHOUSE_SKIP_USER_SETUP` and `POSTGRES_HOST_AUTH_METHOD` both drop the password, so the
-  defaults in the vitest configs need no configuration at all.
+  defaults in the vitest configs and in the Rust tests need no configuration at all.
 
 There is no Nest CLI. `pnpm build` is `tsc`, and `pnpm dev:*` is `tsc --watch` plus `node --watch`.
 
@@ -195,8 +204,13 @@ pnpm install
 That also installs the git hooks (via the `prepare` script). Then give each service an environment:
 
 ```bash
-cp apps/api/.env.example apps/api/.env && cp apps/indexer/.env.example apps/indexer/.env
+cp .env.example .env && cp apps/indexer/.env.example apps/indexer/.env
 ```
+
+Two files because there are two readers. The root one is the Rust binaries' — the reader walks up
+from the working directory, so one file at the root serves a `cargo run` from anywhere in the tree —
+and `apps/indexer/` holds the indexer's. Both are annotated line by line; [Configuration](#configuration)
+is the same list as prose.
 
 The indexer needs a ClickHouse to write to (see [Prerequisites](#prerequisites)) with the schema
 applied. It never migrates at boot, so this is a step — and it is a Rust binary, not a Node one:
@@ -205,15 +219,20 @@ applied. It never migrates at boot, so this is a step — and it is a Rust binar
 cargo run --release -p migrate
 ```
 
-Run either service in watch mode:
-
-```bash
-pnpm dev:api
-```
+Run the indexer in watch mode, and the API:
 
 ```bash
 pnpm dev:indexer
 ```
+
+```bash
+cargo run --release -p api
+```
+
+`POSITIONS_CURSOR_SECRET` is the only variable the API refuses to default, which is why the step
+above is a step. Without `API_DOCS_ASSETS` pointing at a `swagger-ui-dist`, `/docs` serves the
+document with no viewer in front of it — which is what a `cargo run` outside the image gets, and is
+why the image copies those three files in.
 
 The API listens on `:3000`, the indexer on `:3001`. Check them:
 
@@ -286,9 +305,10 @@ If 3000 or 3001 are taken:
 API_PORT=4000 INDEXER_PORT=4001 docker compose up --build
 ```
 
-One [`Dockerfile`](../Dockerfile) holds three targets. `runtime` serves both Node services — compose
-passes `APP=api` or `APP=indexer` — and `migrate` is a bare `alpine` carrying the Rust binary and
-nothing else, built by a `rust-build` stage above it.
+One [`Dockerfile`](../Dockerfile) holds three targets. `runtime` is the indexer; `migrate` and `api`
+are bare `alpine` images carrying a Rust binary and nothing else, built by a `rust-build` stage above
+them — `api` plus the three files the documentation's viewer loads, fetched by version and digest
+rather than compiled in, which is measured in [the migration record](rust-migration.md).
 
 The Node half is a multi-stage build: manifests are copied before sources so the dependency layer
 survives a source edit, and `pnpm deploy` collects the app, its built workspace packages and
@@ -297,7 +317,8 @@ nothing else, and runs as the image's unprivileged `node` user.
 
 **Every service names its target.** `runtime` is last so a bare `docker build` still produces a
 service image, but compose says which one it wants regardless — appending a stage must not be able to
-change what an existing service builds, which is exactly what happened once.
+change what an existing service builds, which is exactly what happened once. There are three now:
+`migrate` and `api` are Rust binaries and `runtime` is the indexer.
 
 Two details that exist so the drain actually works in a container:
 
@@ -311,8 +332,8 @@ Two details that exist so the drain actually works in a container:
 
 | command                             | what it does                                 |
 | ----------------------------------- | -------------------------------------------- |
-| `pnpm build`                        | compile both services to `apps/*/dist`       |
-| `pnpm dev:api` / `pnpm dev:indexer` | watch mode                                   |
+| `pnpm build`                        | compile the indexer to `apps/indexer/dist`   |
+| `pnpm dev:indexer`                  | watch mode                                   |
 | `pnpm backfill --from X --to Y`     | push one block range through the processors  |
 | `pnpm test`                         | every project's tests in one run             |
 | `pnpm test:watch` / `pnpm test:cov` | watch mode / V8 coverage                     |
@@ -322,9 +343,15 @@ Two details that exist so the drain actually works in a container:
 | `pnpm check`                        | format, lint, typecheck, test — what CI runs |
 | `pnpm clean`                        | remove build output                          |
 
-Applying the ClickHouse schema is its own command, never something a service does at boot. It is
-the one part of the system already ported to Rust, so it is a `cargo` command rather than a `pnpm`
-one, and it reads the same five environment variables the services do:
+The two Rust binaries are `cargo` commands rather than `pnpm` ones, and both read the root
+`.env.example`'s variables. Serving reads:
+
+```bash
+cargo run --release -p api
+```
+
+Applying the ClickHouse schema is its own command, never something a service does at boot. It reads
+five of the same variables:
 
 ```bash
 cargo run --release -p migrate
@@ -366,32 +393,35 @@ pnpm --filter @aave-v4-positions/indexer price:reserves
 pnpm --filter @aave-v4-positions/indexer price:reserves -- --dry-run
 ```
 
-Scope anything to one service with `pnpm --filter @aave-v4-positions/api <script>`.
+Scope anything to the app with `pnpm --filter @aave-v4-positions/indexer <script>`.
 
 ## Configuration
 
-Every variable is parsed by a Zod schema at boot. An invalid value **aborts the process** rather than
-defaulting silently — a pod that crash-loops on bad config is far easier to diagnose than one quietly
-indexing the wrong chain. Deployed environments inject variables directly; the `.env` file is a
-local-development convenience and is skipped entirely under `NODE_ENV=test`.
+Every variable is parsed once at boot — by a Zod schema in the indexer, by `crates/env` in the API —
+and an invalid value **aborts the process** rather than defaulting silently. A pod that crash-loops on
+bad config is far easier to diagnose than one quietly indexing the wrong chain. Deployed environments
+inject variables directly; the `.env` file is a local-development convenience, skipped entirely under
+`NODE_ENV=test` and under `APP_ENV=production` or `APP_ENV=test`. Which files the API reads is decided
+by that variable and not by how the binary was built, so a case can never pick up a developer's
+`.env`.
 
-**Shared** — `NODE_ENV`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_GRACE_SECONDS`.
+**Shared** — `NODE_ENV` (`APP_ENV` for the API), `LOG_LEVEL`, `LOG_PRETTY`,
+`SHUTDOWN_GRACE_SECONDS`.
 
 **Telemetry** — `OTEL_SDK_DISABLED` (`false`), `OTEL_SERVICE_NAME` (_required when enabled_),
 `OTEL_EXPORTER_OTLP_ENDPOINT` (`http://localhost:4318`), `OTEL_TRACES_SAMPLER`
 (`parentbased_always_on`), `OTEL_TRACES_SAMPLER_ARG`.
 
-In the Node services these are the one group where the paragraph above is **not quite true**, and it
-is worth being exact rather than tidy. The SDK is preloaded with `node --require`, so it reads them
-from `process.env` itself, before Nest — and therefore before Zod — exists. They are declared in both
-schemas anyway, for the two things that still buys: a malformed endpoint aborts the process rather
+In the indexer these are the one group where the paragraph above is **not quite true**, and it is
+worth being exact rather than tidy. The SDK is preloaded with `node --require`, so it reads them from
+`process.env` itself, before Nest — and therefore before Zod — exists. They are declared in its
+schema anyway, for the two things that still buys: a malformed endpoint aborts the process rather
 than being dropped by an exporter nobody is watching, and the contract lives in one place with
 everything else instead of only in a `Dockerfile`. The same ordering is why
 [`start.ts`](../packages/telemetry/src/start.ts) calls `process.loadEnvFile()` itself: without it, an
 `OTEL_*` line in a local `.env` would be the one variable in the file that silently did nothing.
 
-**The Rust service has no such exception**, and the difference is the preload rather than the
-language: telemetry is compiled in, so `main` parses one environment and hands the group down like
+**The API has no such exception**, and the difference is the preload rather than the language: telemetry is compiled in, so `main` parses one environment and hands the group down like
 every other. Standard `OTEL_*` spellings on both sides, no repo-invented `TELEMETRY_ENABLED` — an
 operator who knows OpenTelemetry should not have to learn our names for its variables.
 
@@ -400,8 +430,9 @@ operator who knows OpenTelemetry should not have to learn our names for its vari
 attribute — noticed for the first time during an incident.
 
 **API** — `API_HOST`, `API_PORT` (3000), `API_GLOBAL_PREFIX` (`api`), `API_DOCS_PATH` (`docs`),
-`API_SYNC_STALE_AFTER_SECONDS` (60), `API_PRICE_STALE_AFTER_SECONDS` (300), and
-`POSITIONS_CURSOR_SECRET` — _required_, at least 32 characters, and the same on every replica. It
+`API_DOCS_ASSETS` (`/usr/share/api/docs`), `API_SYNC_STALE_AFTER_SECONDS` (60),
+`API_PRICE_STALE_AFTER_SECONDS` (300), and `POSITIONS_CURSOR_SECRET` — _required_, at least 32
+characters, and the same on every replica. It
 signs pagination cursors, so a default would be a key every deployment shares, and a per-process one
 gives pagination that fails only under load.
 
@@ -455,7 +486,8 @@ table the API reads rather than reaching for a node while answering. Provider ca
 vary, though: measured `eth_getLogs` ranges across public endpoints run from 50 blocks to 10,000, and
 some serve no history at all, which is why the provider list is ordered and the range size adapts.
 
-See each service's `.env.example` for the annotated list.
+Each reader's `.env.example` is the annotated list: [`.env.example`](../.env.example) for the Rust
+binaries, `apps/indexer/.env.example` for the indexer.
 
 ## API documentation
 
@@ -467,36 +499,42 @@ contract that is absent in the environment people actually call is not much of a
 `info.version` is the **API contract version**, deliberately not the package version. A dependency
 bump changes the package and must not imply anything about the shape of the responses.
 
-Two decisions worth knowing about before adding endpoints:
+**A documented path cannot be an unserved one.** The operations arrive with the routers that serve
+them — `utoipa-axum` composes the deployment's own prefix into the path it publishes — so the
+document describes what this process answers rather than what a literal in an attribute claims. The
+probes are the deliberate omission: `ops` calls their paths infrastructure and `config` calls them no
+part of the versioned surface, so publishing them here would contradict both.
 
-**Response types are decorated by hand.** The `@nestjs/swagger` CLI plugin can infer `@ApiProperty`
-from TypeScript types, but it only runs through the Nest CLI build — which this repo no longer uses,
-and which never applied under Vitest anyway, so the generated document would have differed between
-the test suite and the running service. Explicit decorators keep the two identical.
+**The field documentation is the published schema**, because utoipa reads a `///` on a `ToSchema`
+type as the description it ships. That is why [`views/item.rs`](../bins/api/src/positions/views/item.rs)
+and `views/page.rs` are mostly prose and why a maintainer's note never goes there — the budget in
+`CLAUDE.md` says to put it on a `//` line above the item instead.
 
-**A drift guard is part of the test suite.** A route added without `@ApiOkResponse` still routes and
-still appears in the document, but with an empty response and no schema — the contract quietly stops
-describing what the service returns, and nothing else fails.
-[`openapi.e2e-spec.ts`](../apps/api/test/openapi.e2e-spec.ts) walks every operation and fails if any
-lacks a typed success response.
+**A drift guard is part of the test suite.** A route added without a typed success response still
+routes and still appears in the document, but with nothing describing what it returns, and nothing
+else fails. `gives_every_operation_a_typed_success_response` in
+[`docs.rs`](../bins/api/src/docs.rs) walks every operation and refuses that.
 
-**Requests validate with Zod**, through a
-[twelve-line pipe](../apps/api/src/common/zod-validation.pipe.ts) over a schema per request part. The
-choice was left open until there was a real endpoint to decide it against; `class-validator` is the
-more conventional answer, but configuration and CLI arguments already validate with Zod, and one
-idiom beats two for the sake of convention. A malformed query parameter is formatted by the same
-`z.prettifyError` that reports a bad environment variable, so it reads the same way. Request shapes
-are documented with `@ApiQuery`/`@ApiParam` rather than derived from the schemas — generating both
-from one source is a real improvement to make, and not while there is one endpoint.
+Two library behaviours are pinned there too, both found by being wrong first. utoipa reads an
+`Option` as **not required** where serde emits every one of them as `null`, so all fourteen say
+required explicitly — a caller that skips a key it will always be sent is reading the document
+correctly and still breaking. And a schema whose name's last segment is `Value` is silently
+documented as `serde_json::Value`, which had quietly removed eight fields from the contract; the view
+is called `Worth`.
+
+**Requests are parsed by hand, and report every fault at once.**
+[`params.rs`](../bins/api/src/positions/params.rs) reads the query string itself rather than
+deserializing into a struct, because it has to see the keys this endpoint does *not* answer to:
+`?limt=200` is a 400, since the cost of being lenient is a caller who believes it took effect. The
+bounds live in that file as constants and in the derive beside them as literals, and
+`documents_the_bounds_the_parser_enforces` is what stops the two drifting apart.
 
 **Routes are versioned in the URI, and probes are not.** `/api/v1/…`, via
-[`httpSetup`](../apps/api/src/http.setup.ts), which is also the only place the global prefix is applied
-— `main.ts` and the e2e specs all call it, because tests never run `main.ts` and a hand-copied
-mounting drifts silently. It carries one trap worth repeating: **do not pass `defaultVersion`.**
-Nest falls back to it for every controller, and the global-prefix exclude list strips the prefix but
-never a version segment, so setting one moves the probes to `/v1/health/live` and takes the compose
-healthcheck and every deployment manifest with it. Versioned routes opt in with `@Version`, and one
-that forgets is caught by the hard-coded path list in the OpenAPI spec.
+[`router::mount`](../bins/api/src/router.rs), which trims whatever a deployment wrote in
+`API_GLOBAL_PREFIX` and answers `/v1` to a prefix asking for none. `/docs` and `/health/*` are
+mounted outside it, and both fallbacks answer a 404 rather than axum's 405 — the contract does not
+distinguish an unmatched path from an unmatched method, so `POST /health/live` is
+`Cannot POST /health/live`.
 
 ## Schema and migrations
 
@@ -1499,44 +1537,44 @@ What the join does inherit is [the read view's own](#what-it-costs): 17 rows out
 ### The positions endpoint
 
 ```
-GET /api/v1/chains/{chainId}/users/{user}/positions?spoke=&limit=&cursor=&asOf=
+GET /api/v1/chains/{chain_id}/users/{user}/positions?spoke=&limit=&cursor=&as_of=
 ```
 
 ```jsonc
 {
   // How far the indexer has got, and how long ago it got there.
-  "sync": { "lastBlock": 25652535, "lastBlockHash": "0x…", "ageSeconds": 7, "stale": false },
+  "sync": { "last_block": 25652535, "last_block_hash": "0x…", "age_seconds": 7, "stale": false },
   // The instant the amounts below were computed at. A different clock from `sync`.
-  "valuedAt": "2026-07-25T17:20:00.000Z",
+  "valued_at": "2026-07-25T17:20:00Z",
   // A third clock: how current the prices are. Null when nothing here is priced.
-  "pricing": { "updatedAt": "2026-08-02T11:04:17.000Z", "ageSeconds": 41, "stale": false },
+  "pricing": { "updated_at": "2026-08-02T11:04:17.846489Z", "age_seconds": 41, "stale": false },
   "items": [
     {
-      "chainId": 1,
+      "chain_id": 1,
       "user": "0x…",
       "spoke": "0x…",
-      "reserveId": "7",
+      "reserve_id": "7",
       // Stored truth, scaled by the asset's decimals. Null when `asset` is.
-      "suppliedShares": "422166581625087.607993",
-      // What reserveId resolves to, once the registry and the Hub are both read.
-      "asset": { "assetId": "7", "hub": "0x…", "underlying": "0x…", "decimals": 6 },
-      // The shares above in whole tokens, at `valuedAt`. Null together with `asset`.
-      // The *Usd fields come from the Spoke's own oracle, and are dollars.
+      "supplied_shares": "422166581625087.607993",
+      // What reserve_id resolves to, once the registry and the Hub are both read.
+      "asset": { "asset_id": "7", "hub": "0x…", "underlying": "0x…", "decimals": 6 },
+      // The shares above in whole tokens, at `valued_at`. Null together with `asset`.
+      // The *_usd fields come from the Spoke's own oracle, and are dollars.
       "value": {
-        "suppliedAmount": "1000",
-        "totalDebt": "0",
-        "drawnIndex": "1.00113505584681013396716179", // a ray ratio; 1 is no accrual
-        "priceUsd": "0.99971505",
-        "suppliedAmountUsd": "999.71505",
-        "totalDebtUsd": "0",
+        "supplied_amount": "1000",
+        "total_debt": "0",
+        "drawn_index": "1.00113505584681013396716179", // a ray ratio; 1 is no accrual
+        "price_usd": "0.99971505",
+        "supplied_amount_usd": "999.71505",
+        "total_debt_usd": "0",
       },
     },
   ],
-  "nextCursor": null,
+  "next_cursor": null,
 }
 ```
 
-**`chainId` is required and never defaulted.** The service will not answer for a deployment the
+**`chain_id` is required and never defaulted.** The service will not answer for a deployment the
 caller did not name, and a chain it has no cursor row for is a **404** rather than an empty list —
 otherwise "this indexer does not follow Polygon" and "this wallet holds nothing" are the same
 response. The same 404 covers the window between an indexer starting and recording its first block,
@@ -1549,20 +1587,22 @@ That is not an omission to fill in later without thought: §12.3 makes a blended
 worth wrong in the one direction that matters, so anything aggregated has to be aggregated per Spoke.
 
 **Three clocks, and the response names all of them.** Two of them are here; the third arrives with
-prices below. `sync` says how far the indexer has folded; `valuedAt`
+prices below. `sync` says how far the indexer has folded; `valued_at`
 says when the amounts were computed. Conflating them would be easy and wrong — shares advance when
-events land, amounts advance every second whether or not anything happened. `asOf` sets the second
+events land, amounts advance every second whether or not anything happened. `as_of` sets the second
 one and defaults to now, which is the same choice the chain makes; passing it explicitly is what
 makes two identical requests return identical numbers. It is bounded at both ends as a **units
 check**: below the Spoke's genesis nothing exists to value, and above 2100 the caller sent
 milliseconds — unbounded, that would extrapolate the interest index tens of thousands of years and
 return a page of enormous numbers with nothing to say they are wrong.
 
-**All three timestamps go out as ISO 8601**, so `valuedAt` reads like `sync.updatedAt` and
-`pricing.updatedAt` rather than being the one field in the response that is Unix seconds. It is still
+**All three timestamps go out as ISO 8601**, so `valued_at` reads like `sync.updated_at` and
+`pricing.updated_at` rather than being the one field in the response that is Unix seconds. It is still
 seconds inside — that is what the interest arithmetic extrapolates with — and converted at the
-mapping boundary, where the rest of the wire contract is already decided. The **`asOf` query
-parameter stays Unix seconds**, bounded as above, so round-tripping a `valuedAt` back into a request
+mapping boundary, where the rest of the wire contract is already decided. Each carries the fractional
+digits it has and no more: a whole second has none, and a Postgres reading keeps its microseconds
+rather than being truncated to a fixed three. The **`as_of` query
+parameter stays Unix seconds**, bounded as above, so round-tripping a `valued_at` back into a request
 means converting it; the bounds are a units check and an ISO string cannot fail one the way a
 millisecond timestamp can.
 
@@ -1571,8 +1611,8 @@ registry has not seen, or a Hub asset with no interest checkpoint yet. Null rath
 a zero amount cannot be told apart from a real zero balance. The position still appears — its shares
 are real either way.
 
-**Three clocks now, because a price is a third source.** `priceUsd`, `suppliedAmountUsd` and
-`totalDebtUsd` come from the Spoke's own oracle, and `pricing` says how fresh they are — reporting the **oldest**
+**Three clocks now, because a price is a third source.** `price_usd`, `supplied_amount_usd` and
+`total_debt_usd` come from the Spoke's own oracle, and `pricing` says how fresh they are — reporting the **oldest**
 price behind the page, since the question a caller has is how far to trust the worst number in front
 of them. Prices are normally written in one upsert and agree; they diverge exactly when the oracle
 refused a reserve and its last good price was left to age, which is the case worth surfacing.
@@ -1580,7 +1620,7 @@ refused a reserve and its last good price was left to age, which is the case wor
 moved — an hour without an `AnswerUpdated` is ordinary Chainlink behaviour (§7.5).
 
 **Every number arrives scaled, as a decimal string.** Nothing on the wire is in base units: amounts
-are whole tokens, the `*Usd` fields are dollars, and `drawnIndex` and `premiumOffsetRay` are ray
+are whole tokens, the `*Usd` fields are dollars, and `drawn_index` and `premium_offset_ray` are ray
 ratios. Four different scales meet in one response — the asset's decimals, the oracle's 8, §7.1's 26
 and a ray's 27 — and a caller pairing the wrong one with the wrong field is out by ten orders of
 magnitude with nothing to notice, which is reason enough to do it here once rather than in every
@@ -1588,19 +1628,19 @@ client.
 
 **Scaled, but still strings, and the arithmetic still happens in the protocol's unit.** §7.1 computes
 where `1e26` is one dollar (`SpokeUtils.toValue` against `ORACLE_DECIMALS = 8`), and that product is
-divided on the way out rather than its inputs rounded on the way in — so `suppliedAmountUsd` keeps
+divided on the way out rather than its inputs rounded on the way in — so `supplied_amount_usd` keeps
 every digit the contract did and reconciles against `getUserAccountData` exactly. Parsing one of
 these into a float undoes all of it: `422166581625087.607993` has 21 significant digits and a double
-holds 17. `totalDebtUsd` prices `totalDebt`, the rounded token amount actually owed; the health
+holds 17. `total_debt_usd` prices `total_debt`, the rounded token amount actually owed; the health
 factor divides an unrounded ray-scaled debt instead, so when it lands the two will differ in the last
 digits by design.
 
 **A missing scale is null, not a raw integer.** The share fields are scaled by the asset's decimals,
 so when the registry has not resolved the reserve they are null alongside `asset` and `value` — an
 unscaled integer in a field the schema calls decimal would be wrong rather than merely coarse.
-`premiumOffsetRay` survives it, because a ray's 27 is the protocol's constant and not the token's.
+`premium_offset_ray` survives it, because a ray's 27 is the protocol's constant and not the token's.
 
-**An explicit `asOf` is served without prices at all** — `pricing` is null and so are the three
+**An explicit `as_of` is served without prices at all** — `pricing` is null and so are the three
 `*Usd` fields. Amounts are extrapolated to that instant and the stored price is whatever the oracle last
 said, which is now; pricing one against the other is a number that was never true. The read is
 skipped rather than the result discarded. Making a historical query priceable needs a price series
@@ -1608,10 +1648,10 @@ rather than a dimension, which is [what comes next](#not-here-yet).
 
 **Every payload is block-stamped.** §12.6 — amounts and health factors are per-block quantities, and
 a number with no block behind it cannot be checked against anything. `sync` comes from the indexer's
-own cursor row through [`SyncStatusStore`](../packages/indexing/src/indexing/cursor/sync-status-store.ts),
-read-only; the API writes nothing to that database. It rides on every page rather than the first,
+own cursor row through [`SyncStatusStore`](../crates/indexing/src/cursor/sync_status_store.rs), read-only; the API writes
+nothing to that database. It rides on every page rather than the first,
 because a page whose `sync` differs from the previous one is the honest signal that the indexer
-advanced mid-walk. `ageSeconds` is computed by the database that wrote the timestamp, so clock skew
+advanced mid-walk. `age_seconds` is computed by the database that wrote the timestamp, so clock skew
 between hosts cannot report a healthy indexer as stale. `stale` is that age against
 `API_SYNC_STALE_AFTER_SECONDS` — deliberately not the indexer's `INDEXER_STALL_THRESHOLD_MS`, which
 answers a different question: one decides whether to drain traffic from a pod, the other tells a
@@ -1623,7 +1663,7 @@ two things: the cursor becomes a genuinely opaque contract, so its encoding can 
 breaking anyone who hand-rolled one; and a resume point cannot be carried between listings. That
 second one is the real defect a bare signature would leave: unsigned, Alice's page key is a
 well-formed page key in Bob's listing, and his first page would silently start past it. The scope
-signed is `(chainId, user, spoke-filter)` — the **filter**, not the Spoke, tagged `*` when absent,
+signed is `(chain_id, user, spoke-filter)` — the **filter**, not the Spoke, tagged `*` when absent,
 because an all-Spokes resume point is otherwise well-formed inside a narrowed listing and skips
 everything below it. `POSITIONS_CURSOR_SECRET` is required with no default, because a default is a
 key every deployment shares, and it **must be identical across replicas** — a per-process secret
@@ -1632,8 +1672,9 @@ gives pagination that fails only under load.
 The signed string joins every field with one separator, which is safe only while no field can contain
 it: `a|b|c` would otherwise read as both `(a|b, c)` and `(a, b|c)`, and a tag issued for one listing
 would verify against another with the boundary moved. That invariant is not re-checked where the
-signing happens — it is met by the request schema, which parses the wallet and Spoke as anchored
-lower-case addresses before either reaches a signature. Validated once, where it enters.
+signing happens — it is met by the parser, which has turned the wallet and the Spoke into an
+`Address` before either reaches a signature, and an `Address` cannot hold a separator. Validated
+once, where it enters.
 
 `limit` defaults to 50 and caps at 200, as constants rather than configuration: a wallet holds at
 most one position per reserve and the Main Spoke has fourteen, so paging here is a contract formality
@@ -1642,8 +1683,8 @@ rather than a load concern. An unrecognised query parameter is a 400 — `?limt=
 
 **Integer amounts are strings, and the OpenAPI schema says so.** float64 has 53 bits of mantissa and
 share balances run far past it; the failure mode is a few wei of drift that reads as a rounding bug
-rather than the parse error it is. A spec assertion walks `PositionDto` and fails if any share or
-amount is typed `number`.
+rather than the parse error it is. `types_every_share_and_amount_as_a_string` walks the published
+schemas and fails if any share or amount is typed `number`.
 
 ### Verification
 
@@ -1900,8 +1941,8 @@ rather than in SQL, and invisible to the fold. Generalising it changes little.
   are unique per database rather than per directory, so two packages must not both reach for `002` in
   the same one — `each_union_ascends` catches it.
 - **Version** it on the payload, not by forking the route. `/api/v1` is the API contract's version;
-  a dataset additionally publishes its own `updatedAt` and staleness, the way `sync`, `valuedAt` and
-  `pricing` are three separate clocks today, so a caller can tell _which_ input is behind rather than
+  a dataset additionally publishes its own `updated_at` and staleness, the way `sync`, `valued_at`
+  and `pricing` are three separate clocks today, so a caller can tell _which_ input is behind rather than
   being handed one blended freshness number.
 - **Serve** it as its own controller under the same prefix, or as nullable fields composed into an
   existing response — never as a SQL join against the indexer's tables. That is the actual
@@ -1922,7 +1963,9 @@ manifests do not move when the API is versioned.
 SIGTERM lands, which races the endpoints controller — the pod can still be receiving traffic it is no
 longer listening for. Instead
 [`graceful-shutdown.ts`](../packages/ops/src/lifecycle/graceful-shutdown.ts) fails readiness first, holds for
-`SHUTDOWN_GRACE_SECONDS` so the removal propagates, and only then closes.
+`SHUTDOWN_GRACE_SECONDS` so the removal propagates, and only then closes. `crates/ops` does the same
+thing with a shutdown flag the probe reads, and the API's four probe bodies were captured off the
+running service rather than read off a type, which is how they came to match byte for byte.
 
 **Logs are one JSON object per line** (pino), with a request id propagated from `x-request-id` or
 minted per request and echoed back on the response — that header is what makes a log line traceable
@@ -1936,7 +1979,7 @@ LoggingModule.forRootAsync({
   imports: [ConfigModule],
   inject: [ConfigService],
   useFactory: (config: ConfigService<Env, true>) => ({
-    service: 'api',
+    service: 'indexer',
     level: config.get('LOG_LEVEL', { infer: true }),
     pretty: config.get('LOG_PRETTY', { infer: true }),
   }),
@@ -1961,7 +2004,9 @@ HealthModule.forRoot({
 That is the indexer's real registration, verbatim. **Readiness aggregates three checks there and two
 on the API** — the two database probes ship with `@packages/clickhouse` and `@packages/postgres`, so
 a service gets them by importing the client it already needed, and `IndexerHealthIndicator` is the
-only one written for this application.
+only one written for this application. The API's two are a list in
+[`probes.rs`](../bins/api/src/probes.rs) instead, checked with `join!` because a probe that serialises
+them reports the sum of two timeouts.
 
 It is also the one worth describing, because the other two are the obvious thing. It reports down on
 two conditions only: the loop has stopped, or it has made no progress for longer than
@@ -1977,7 +2022,10 @@ the service takes towards bad configuration.
 ### Tracing and metrics
 
 OpenTelemetry, exported over OTLP, for all three signals. `docker compose up` brings up a Grafana
-that already has them.
+that already has them. The two services get there differently and that is the point of saying which:
+the indexer preloads the Node SDK, the API compiles telemetry in and configures the exporters from the
+same environment it parses everything else from. Everything below is the Node half; the Rust half and
+what it costs are in [the migration record](rust-migration.md).
 
 **The SDK is preloaded, not imported.** Every entry point runs
 `node --require @packages/telemetry/start …`, so the require hooks the instrumentations install are in
@@ -2000,9 +2048,9 @@ apply, and the explicit list doubles as a statement of what we believe this proc
 
 |                               | why it is there                                                                                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `instrumentation-http`        | the API's server spans — and **ClickHouse**, whose Node client uses `node:http`                              |
+| `instrumentation-http`        | the probe server's spans — and **ClickHouse**, whose Node client uses `node:http`                            |
 | `instrumentation-undici`      | **viem's RPC calls**, because its transport resolves `fetchFn = options.fetchFn ?? fetch`, i.e. global fetch |
-| `instrumentation-nestjs-core` | turns "the request took 28 ms" into "the controller took 28 ms, of which the store took 27"                  |
+| `instrumentation-nestjs-core` | turns "the dispatch took 28 ms" into which provider and which processor spent it                             |
 | `instrumentation-pino`        | correlation _and_ log shipping — see below                                                                   |
 
 Those first two are the finding worth keeping: **ClickHouse and the chain client need different
@@ -2162,8 +2210,9 @@ the SDK on in one pair and higher in the other. Against a ~55 ms request that hi
 instrumentation is below this measurement's noise floor, and quoting a single number from it would be
 false precision.
 
-Memory is the real cost and it is unambiguous: **+23 MiB RSS** on the API (164.0 against 140.6 MiB),
-for the SDK, four instrumentations and three batch processors.
+Memory is the real cost and it is unambiguous: **+23 MiB RSS**, for the SDK, four instrumentations and
+three batch processors — measured on the Node API (164.0 against 140.6 MiB) while it still existed,
+which is the number the Rust service's +1.4 MiB is worth comparing against.
 
 What is deliberately still missing: alert rules (they need somewhere to route, and there are no
 Kubernetes manifests yet), exemplars linking a metric bucket to a trace, and a production backend —
@@ -2202,7 +2251,7 @@ from ~620ms to ~180ms, and that gap widens with the codebase. It cost the Nest C
 only the `tsc` executable, with no programmatic compiler API until 7.1, so `nest build` and
 `nest start --watch` both refuse to run. Neither was earning its place. `nest build` was `tsc` plus
 `deleteOutDir`, reproduced exactly by `rimraf dist && tsc -p tsconfig.build.json` — verified as an
-identical output file set, with both services booting from it. Dev watch is `tsc --watch` alongside
+identical output file set, with both services booting from it at the time. Dev watch is `tsc --watch` alongside
 `node --watch`.
 
 Dropping `@nestjs/cli` also left **one** TypeScript in the tree. It pinned `typescript: 5.9.3`
@@ -2224,8 +2273,8 @@ metadata missing, `@nestjs/swagger` reports `A circular dependency has been dete
 `noPropertyAccessFromIndexSignature`. Financial arithmetic is the whole point of this service; an
 implicit `any` on a balance is a silent wrong number.
 
-**A pnpm catalog** holds every shared dependency version in `pnpm-workspace.yaml`, so the two services
-cannot drift onto different Nest minors.
+**A pnpm catalog** holds every shared dependency version in `pnpm-workspace.yaml`, so the indexer and
+the packages it wires cannot drift onto different Nest minors.
 
 **Hooks do formatting and lint, and nothing else.** `pre-commit` runs oxlint and Prettier over staged
 files; there is no `pre-push`. Both checks are per-file, fast, and answerable from the working tree

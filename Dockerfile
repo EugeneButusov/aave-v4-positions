@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 
-# Four targets. `migrate` and `api` are Rust binaries — the one that applies the
-# schema and the one that serves reads; `runtime` is either Node service, chosen
-# with APP=api or APP=indexer.
+# Three targets. `migrate` and `api` are Rust binaries — the one that applies the
+# schema and the one that serves reads; `runtime` is the indexer, the one service
+# still on Node.
 #
 # **Every consumer names its target.** `runtime` is last so a bare `docker build`
 # still produces a service image, but compose says which one it wants either way
@@ -96,14 +96,12 @@ ENTRYPOINT ["/usr/local/bin/api"]
 
 # ---------------------------------------------------------------- build ------
 FROM node:${NODE_VERSION}-alpine AS build
-ARG APP
 RUN corepack enable
 WORKDIR /repo
 
 # Manifests first: this layer is cached until a dependency actually changes,
 # so editing source does not re-resolve the whole workspace.
 COPY pnpm-workspace.yaml pnpm-lock.yaml package.json .npmrc ./
-COPY apps/api/package.json ./apps/api/
 COPY apps/indexer/package.json ./apps/indexer/
 COPY packages/aave-positions/events/package.json ./packages/aave-positions/events/
 COPY packages/aave-positions/positions/package.json ./packages/aave-positions/positions/
@@ -124,11 +122,11 @@ COPY tsconfig.base.json tsconfig.json ./
 COPY packages ./packages
 COPY apps ./apps
 
-RUN pnpm run build:packages && pnpm --filter="@aave-v4-positions/${APP}" build
+RUN pnpm run build:packages && pnpm --filter=@aave-v4-positions/indexer build
 
 # Collects the app, its built workspace dependencies and production-only
 # node_modules into one self-contained directory.
-RUN pnpm --filter="@aave-v4-positions/${APP}" --legacy deploy --prod --ignore-scripts /out
+RUN pnpm --filter=@aave-v4-positions/indexer --legacy deploy --prod --ignore-scripts /out
 
 # -------------------------------------------------------------- runtime ------
 FROM node:${NODE_VERSION}-alpine AS runtime

@@ -58,7 +58,7 @@
         "typescript/no-unsafe-member-access": "off",
         "typescript/no-unsafe-argument": "off",
 
-        // Tests narrow library-owned shapes (OpenAPI nodes) to local interfaces on purpose.
+        // Tests narrow library-owned shapes (RawLog, pino and node:http types) on purpose.
         "typescript/no-unsafe-type-assertion": "off",
 
         // supertest's chained .expect(status) IS the assertion; without this the rule

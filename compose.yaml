@@ -92,20 +92,26 @@ services:
       postgres:
         condition: service_healthy
 
+  # The one route, in the port's own spelling: every multi-word key is
+  # snake_case, the instant to value at is `as_of`, and a timestamp carries the
+  # fractional digits it has rather than a fixed three.
+  # `docs/rust-migration.md` carries the rule and the gate that cleared it.
   api:
     build:
       context: .
       dockerfile: Dockerfile
-      target: runtime
-      args:
-        APP: api
-    init: true
+      target: api
     restart: unless-stopped
     # Must exceed SHUTDOWN_GRACE_SECONDS, or Docker SIGKILLs the container
     # mid-drain and the readiness-first shutdown never completes.
     stop_grace_period: 20s
+    # No `init`, unlike `indexer`: node is a poor PID 1 and wants a reaper, while
+    # this is one static binary that spawns nothing and takes SIGTERM itself.
     environment:
-      NODE_ENV: production
+      # Deployed: variables are injected here and a `.env` is not consulted,
+      # whatever ends up on the filesystem. Absent, the binary reads one, which
+      # is what a checkout expects.
+      APP_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # One JSON object per line. `docker compose logs | jq` if you want it
       # pretty — turning it on here would change what a deployment emits.
@@ -117,16 +123,15 @@ services:
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
-      # Read-only from here: the API stamps responses with how far the indexer
-      # got, and writes nothing to this database.
       POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
       # A known value so `docker compose up` works unconfigured. Set your own in
       # any deployment — a shared key is not a signature — and set the SAME one
       # on every replica.
       POSITIONS_CURSOR_SECRET: ${POSITIONS_CURSOR_SECRET:-local-development-cursor-secret-0000}
-      # Read by the SDK preloaded in the CMD, before Nest exists. The service
-      # name matches the `service` tag given to LoggingModule, so a log line and
-      # a span agree about what produced them.
+      API_SYNC_STALE_AFTER_SECONDS: '60'
+      API_PRICE_STALE_AFTER_SECONDS: '300'
+      # Read through this service's own config, not by an SDK ahead of it: the
+      # binary parses one environment and hands telemetry down from it.
       OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
       OTEL_SERVICE_NAME: api
       OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
@@ -135,90 +140,10 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-      # Without this a fresh stack answers 500s from a view that does not exist
-      # yet, for as long as the migration takes.
       migrate:
         condition: service_completed_successfully
     ports:
       - '${API_PORT:-3000}:3000'
-    healthcheck:
-      # The image has no curl, and adding one purely to run a health check is a
-      # poor trade; Node's own fetch is already there.
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 15s
-
-  # The Rust API, beside the Node one rather than instead of it. Phase 2's gate
-  # points both at the same databases and compares what they answer, which needs
-  # both running; it takes `api`'s name and port at cutover, once apps/api is
-  # deleted.
-  #
-  # Serving the same one route, in this port's own spelling: every multi-word key
-  # is snake_case, `asOf` is `as_of`, and a timestamp carries the fractional
-  # digits it has rather than JavaScript's fixed three.
-  # `docs/rust-migration.md` carries the rule and what the gate does about it.
-  api-rust:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: api
-    restart: unless-stopped
-    # Must exceed SHUTDOWN_GRACE_SECONDS, or Docker SIGKILLs the container
-    # mid-drain and the readiness-first shutdown never completes.
-    stop_grace_period: 20s
-    # No `init`. The Node images want a reaper because node is a poor PID 1;
-    # this is one static binary that spawns nothing and takes SIGTERM itself.
-    environment:
-      # Deployed: variables are injected here and a `.env` is not consulted,
-      # whatever ends up on the filesystem. Absent, the binary reads one, which
-      # is what a checkout expects.
-      APP_ENV: production
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      # One JSON object per line, as the Node service emits.
-      LOG_PRETTY: 'false'
-      SHUTDOWN_GRACE_SECONDS: '5'
-      API_HOST: 0.0.0.0
-      API_PORT: '3000'
-      CLICKHOUSE_URL: http://clickhouse:8123
-      CLICKHOUSE_DATABASE: aave
-      CLICKHOUSE_USER: aave
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
-      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
-      # **The same key as `api`**, and that is the point of the default being
-      # shared rather than a second one: while both services run, a cursor
-      # issued by either verifies against the other, which is the sharpest check
-      # there is that the two HMACs agree.
-      POSITIONS_CURSOR_SECRET: ${POSITIONS_CURSOR_SECRET:-local-development-cursor-secret-0000}
-      API_SYNC_STALE_AFTER_SECONDS: '60'
-      API_PRICE_STALE_AFTER_SECONDS: '300'
-      # Read through this service's own config, not by an SDK ahead of it: the
-      # binary parses one environment and hands telemetry down from it.
-      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
-      # **`api-rust`, not `api`, while both run.** Every signal is grouped by
-      # `service.name`, and the two services sharing one would merge the streams
-      # the Phase 2 gate exists to compare. It becomes `api` when this one takes
-      # that name and port.
-      OTEL_SERVICE_NAME: api-rust
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://telemetry:4318
-    depends_on:
-      clickhouse:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    ports:
-      # Not 3001: `indexer` publishes its probes there, and a `docker compose
-      # up` that brings up both fails to bind.
-      - '${API_RUST_PORT:-3002}:3000'
     healthcheck:
       # busybox `wget` is already in the base image, and it exits 1 on a 503 —
       # verified against BusyBox 1.37.0 rather than assumed, because a probe
@@ -234,8 +159,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
-      args:
-        APP: indexer
     init: true
     restart: unless-stopped
     stop_grace_period: 20s
