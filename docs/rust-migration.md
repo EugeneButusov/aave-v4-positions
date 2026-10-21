@@ -52,6 +52,9 @@ numbers can be re-derived rather than trusted — they move as packages are port
 | `packages/clickhouse` | 135 | — | — |
 | **total** | **13,215** | **10,319** | **1,382** |
 
+`apps/api`'s 1,547 and 995 lines are gone as of Phase 2's cutover. The row stays because it is the
+measurement this plan was sized against.
+
 **The 1,382 lines of SQL are not rewritten in Rust.** Schema, materialized views, projections and the
 read views _are_ the fold — not application code, and not a line of TypeScript. Roughly a tenth of
 the system needs no porting at all, and Phase 0 embedded every file into `bins/migrate` without
@@ -307,6 +310,11 @@ corpus is captured and committed before the deletion PR, not after**, and the de
 from the one that adds the Rust service so the two revert independently. Soak with both running
 first.
 
+**Carried out for the API.** The corpus landed as twelve whole-body snapshots in
+[#62](https://github.com/EugeneButusov/aave-v4-positions/pull/62), the deletion is its own PR, and
+both gates were re-run against the two live services on the morning of the deletion rather than
+trusted from the week before.
+
 ## Port notes
 
 Settled decisions, recorded so they are not relitigated mid-migration.
@@ -375,7 +383,7 @@ The third row was 248 and eight when this was written, which counted `totalAsset
 multiply is against `totalAssets + VIRTUAL`, because the ERC-4626 padding is inside the division
 rather than applied after it. One bit, and it is the row with the least to give. All three are now
 assertions rather than prose —
-[`the_three_intermediates_are_the_widths_the_port_notes_record`](../crates/aave-positions/src/valuation.rs)
+[`the_three_intermediates_are_the_widths_the_port_notes_record`](../crates/aave-positions/src/valuation/asset.rs)
 measures each with `bit_len`, so this table cannot drift again.
 
 Nothing overflows on realistic values, and the RAY-scaled aggregate never feeds another multiply —
@@ -566,8 +574,8 @@ This phase must not be rushed; everything downstream inherits it.
 initialises OTLP, the other a probe router and a shutdown flag.
 
 **`HubAssetStore` is not here — it moved to Phase 4**, with `reconcile:hub`, which is its only caller
-anywhere in the workspace. `apps/api` serves one route,
-`GET /v1/chains/:chainId/users/:user/positions`, and never asks for a Hub asset; the position store's
+anywhere in the workspace. `apps/api` served one route,
+`GET /v1/chains/:chainId/users/:user/positions`, and never asked for a Hub asset; the position store's
 own query joins `hub_assets_current` for the dimension it needs. Porting the adapter alongside it
 would have been a public surface with nothing calling it.
 
@@ -745,7 +753,9 @@ this is the one place the type's idiom loses to the wire's.
 gone, so the recorded request/response pairs become the regression suite that replaces it. Deploy the
 Rust API, soak, then delete `apps/api` in its own PR. The remaining `packages/*` stay — the
 TypeScript indexer still needs them, and only the ones it has stopped needing go early, as
-`packages/migrations` did in Phase 0.
+`packages/migrations` did in Phase 0. **All of that has happened**: the service took `api`'s name,
+port and `service.name` in the compose file, and the dashboard's three API panels went back to one
+series each, which is what the PR that widened them said this one would do.
 
 **Landed so far.** [#45](https://github.com/EugeneButusov/aave-v4-positions/pull/45): the
 `PositionStore` port and its ClickHouse adapter, with the port's specs as an executable contract every
@@ -817,7 +827,8 @@ it, which is what a `cargo run` outside the image gets.
 the binary goes 7,072,072 bytes to 12,321,608, and RSS 2.7 MiB to 4.1 MiB against the +23 MiB the
 TypeScript SDK costs. `OTEL_SDK_DISABLED=true` still serves and still logs.
 
-Nothing left. Phase 2 is done, and what follows is the replay harness and the cutover.
+Nothing left to port. The replay harness and the cutover closed it: the TypeScript API is deleted,
+and the Rust one is the only thing serving `/api/v1`.
 
 **The harness itself is a local tool and is deliberately not in this tree.** It exists to find
 differences, and what is worth keeping is the differences it found and the rules it had to be told —
@@ -832,11 +843,17 @@ findings out of 31 on one wallet, naming the key set at the body, at `sync` and 
 settles something the gate would otherwise take on trust: the two key *sequences* differ only in
 spelling, in the same positions, which is the field-order claim this entry makes.
 
-Still outstanding, and each its own increment. The **OpenAPI comparison** is structural and needs
-`$ref` resolution on both documents, because the component *names* differ and the schemas have to be
-walked from each operation's response rather than matched by name. And the **golden corpus** — the
-recorded request/response pairs that replace the oracle once `apps/api` is deleted — is the one that
-has to land before anything is deleted, since it is the only part of this gate that outlives it.
+**Both halves ran clean, and each has a negative control that fails.** Payloads: every one of the
+5,731 wallets in a frozen full fold of 49,627 positions, 46,946 listings at every page size and both
+valuation instants, **52,189 request pairs and 0 findings** in 100 minutes — against a control that
+points the candidate at the oracle, applies the key transform to one side alone, and reports the
+whole key set at the body, at `sync` and at `pricing`. Document: **1 path, 6 parameters, 3 responses,
+98 schema nodes and 0 findings** over twelve declared differences — against seven perturbations of the
+candidate's document, one per class the comparison claims to cover, all seven caught.
+
+**The golden corpus is what outlives this**, and it is the only part of the gate inside the tree:
+twelve whole-body snapshots over the shapes the route serves, so the recorded bytes answer for the
+oracle once it is gone.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 

@@ -8,7 +8,7 @@ import type { Position } from './position';
  *
  * A plain key rather than an opaque token. Signing one so a caller cannot forge
  * or carry it between listings is a property of *publishing* it, not of paging,
- * and it lives with whoever publishes it — for the HTTP API, in `apps/api`.
+ * and it lives with whoever publishes it — for the HTTP API, in `bins/api`.
  * Nothing in this package holds a signing key or knows what a cursor looks like.
  */
 export interface PositionKey {

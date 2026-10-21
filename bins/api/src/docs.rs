@@ -92,6 +92,11 @@ fn page(mount: &str) -> String {
         presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
         layout: "StandaloneLayout",
         deepLinking: true,
+        // By path rather than declaration order, so the page does not reshuffle
+        // when an operation is added.
+        operationsSorter: "alpha",
+        tagsSorter: "alpha",
+        displayRequestDuration: true,
       }});
     </script>
   </body>
@@ -391,6 +396,9 @@ mod tests {
             body.contains(r#"url: "/docs/openapi.json""#),
             "the page does not point at this deployment's document: {body:.200}"
         );
+        for option in [r#"operationsSorter: "alpha""#, r#"tagsSorter: "alpha""#] {
+            assert!(body.contains(option), "{option} is not set: {body:.400}");
+        }
 
         let (status, body) = fetch("/docs/openapi.yaml").await;
         assert_eq!(status, StatusCode::OK);
