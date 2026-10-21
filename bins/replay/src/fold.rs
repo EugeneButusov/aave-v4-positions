@@ -8,6 +8,13 @@ use serde::Deserialize;
 pub(crate) struct Wallet {
     pub(crate) user: String,
     pub(crate) spokes: Vec<String>,
+
+    /// How many rows the fold holds for this wallet. An upper bound on what a
+    /// page can carry — the read view hides a position whose shares have
+    /// netted to zero — and the safe side to be wrong on, because a page size
+    /// counted in needlessly costs one request and one counted out loses a
+    /// page boundary nothing else would walk.
+    pub(crate) positions: u64,
 }
 
 pub(crate) struct Fold {
@@ -22,6 +29,7 @@ pub(crate) struct Fold {
 struct Row {
     user: String,
     spoke: String,
+    positions: u64,
 }
 
 /// # Errors
@@ -33,7 +41,7 @@ pub(crate) async fn read(config: Config, chain_id: u32) -> Result<Fold, clickhou
 
     let rows = client
         .query(
-            "SELECT user, spoke FROM user_positions \
+            "SELECT user, spoke, count() AS positions FROM user_positions \
              WHERE chain_id = {chainId:UInt32} \
              GROUP BY user, spoke ORDER BY user, spoke",
         )
@@ -62,10 +70,14 @@ fn group(rows: Vec<Row>) -> Vec<Wallet> {
 
     for row in rows {
         match wallets.last_mut() {
-            Some(wallet) if wallet.user == row.user => wallet.spokes.push(row.spoke),
+            Some(wallet) if wallet.user == row.user => {
+                wallet.spokes.push(row.spoke);
+                wallet.positions += row.positions;
+            }
             _ => wallets.push(Wallet {
                 user: row.user,
                 spokes: vec![row.spoke],
+                positions: row.positions,
             }),
         }
     }
@@ -77,12 +89,13 @@ fn group(rows: Vec<Row>) -> Vec<Wallet> {
 mod tests {
     use super::{Row, group};
 
-    fn rows(pairs: &[(&str, &str)]) -> Vec<Row> {
+    fn rows(pairs: &[(&str, &str, u64)]) -> Vec<Row> {
         pairs
             .iter()
-            .map(|(user, spoke)| Row {
+            .map(|(user, spoke, positions)| Row {
                 user: (*user).to_owned(),
                 spoke: (*spoke).to_owned(),
+                positions: *positions,
             })
             .collect()
     }
@@ -90,15 +103,17 @@ mod tests {
     #[test]
     fn collects_every_spoke_a_wallet_has_touched() {
         let wallets = group(rows(&[
-            ("0xaa", "0x01"),
-            ("0xaa", "0x02"),
-            ("0xbb", "0x01"),
+            ("0xaa", "0x01", 3),
+            ("0xaa", "0x02", 4),
+            ("0xbb", "0x01", 1),
         ]));
 
         assert_eq!(wallets.len(), 2);
         assert_eq!(wallets[0].user, "0xaa");
         assert_eq!(wallets[0].spokes, ["0x01", "0x02"]);
+        assert_eq!(wallets[0].positions, 7);
         assert_eq!(wallets[1].spokes, ["0x01"]);
+        assert_eq!(wallets[1].positions, 1);
     }
 
     /// The grouping is one pass over an ordered read, so a wallet whose rows
@@ -107,9 +122,9 @@ mod tests {
     #[test]
     fn an_unordered_read_splits_a_wallet() {
         let wallets = group(rows(&[
-            ("0xaa", "0x01"),
-            ("0xbb", "0x01"),
-            ("0xaa", "0x02"),
+            ("0xaa", "0x01", 1),
+            ("0xbb", "0x01", 1),
+            ("0xaa", "0x02", 1),
         ]));
 
         assert_eq!(wallets.len(), 3);

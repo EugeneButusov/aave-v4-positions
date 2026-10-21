@@ -9,6 +9,9 @@ use hyper_util::rt::TokioExecutor;
 
 type Legacy = hyper_util::client::legacy::Client<HttpConnector, Empty<Bytes>>;
 
+/// Cloning shares the connection pool: the inner client is already behind a
+/// handle, so a walker carries a clone rather than a pool of its own.
+#[derive(Clone)]
 pub(crate) struct Client(Legacy);
 
 pub(crate) struct Answer {

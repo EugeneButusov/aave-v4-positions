@@ -33,7 +33,9 @@ time = { version = "0.3.55", features = ["parsing"] }
 # walk and the client itself are exercised over a real socket. Already the
 # tree's server; this is the one place the harness needs one.
 axum = "0.8.9"
-tokio = { version = "1.53.1", features = ["net"] }
+# `net` for the listener, `sync` for the barrier that proves a pair is in
+# flight at once, `time` to bound the wait rather than hang when it is not.
+tokio = { version = "1.53.1", features = ["net", "sync", "time"] }
 
 [lints]
 workspace = true

@@ -15,7 +15,10 @@ const GENESIS: u32 = 1_774_277_159;
 /// 2100-01-01, the ceiling `as_of` takes.
 const MAX_AS_OF: u64 = 4_102_444_800;
 
-const LIMITS: [Option<u32>; 4] = [None, Some(1), Some(7), Some(MAX_LIMIT)];
+/// The sizes worth asking for beside the default one. 1 pages everything, 7 is
+/// an odd size no boundary falls on by luck, and `MAX_LIMIT` is the published
+/// ceiling.
+const LIMITS: [u32; 3] = [1, 7, MAX_LIMIT];
 
 /// Which service a target is spelled for. The only difference is `asOf`
 /// against `as_of`.
@@ -136,7 +139,7 @@ pub(crate) fn listings(fold: &Fold, chain_id: u32, wallets: usize) -> Vec<Listin
     let mut listings = Vec::new();
 
     for wallet in fold.wallets.iter().take(take) {
-        for limit in LIMITS {
+        for limit in page_sizes(wallet.positions) {
             for as_of in instants {
                 listings.push(Listing::new(chain_id, &wallet.user, None, limit, as_of));
             }
@@ -156,6 +159,26 @@ pub(crate) fn listings(fold: &Fold, chain_id: u32, wallets: usize) -> Vec<Listin
     }
 
     listings
+}
+
+/// Which page sizes can tell the two services apart for a wallet this size.
+///
+/// A size at or above the wallet's position count returns the one full page, so
+/// every such size is the same request under another name — a wallet with two
+/// positions is walked at 1 and at the default, where the other two sizes would
+/// be that same single page twice more. The default is always asked for,
+/// because the limit a caller does not name is the one most of them use.
+fn page_sizes(positions: u64) -> Vec<Option<u32>> {
+    let mut sizes = vec![None];
+
+    sizes.extend(
+        LIMITS
+            .into_iter()
+            .filter(|limit| u64::from(*limit) < positions)
+            .map(Some),
+    );
+
+    sizes
 }
 
 /// Where the versioned routes hang, given what a deployment wrote in
@@ -304,10 +327,12 @@ mod tests {
                 Wallet {
                     user: "0xaa".to_owned(),
                     spokes: vec!["0x01".to_owned(), "0x02".to_owned()],
+                    positions: 9,
                 },
                 Wallet {
                     user: "0xbb".to_owned(),
                     spokes: vec!["0x01".to_owned()],
+                    positions: 1,
                 },
             ],
             latest: 1_780_000_000,
@@ -371,18 +396,32 @@ mod tests {
         );
     }
 
-    /// Four page sizes and three instants for the unfiltered listing, then two
-    /// instants per Spoke the wallet has touched.
+    /// Nine positions is paged at the default, at 1 and at 7 — not at 200,
+    /// which returns the same single page as the default. One position is
+    /// paged at the default alone.
     #[test]
-    fn crosses_every_page_size_with_every_instant() {
+    fn crosses_the_useful_page_sizes_with_every_instant() {
         let listings = listings(&fold(), 1, 0);
 
-        assert_eq!(listings.len(), (4 * 3 + 2 * 2) + (4 * 3 + 2));
+        assert_eq!(listings.len(), (3 * 3 + 2 * 2) + (3 + 2));
+    }
+
+    /// A size at or above the wallet's position count is the same request as
+    /// the default one, and this fold's wallets mostly hold one or two.
+    #[test]
+    fn asks_only_for_page_sizes_that_can_page() {
+        assert_eq!(super::page_sizes(1), [None]);
+        assert_eq!(super::page_sizes(2), [None, Some(1)]);
+        assert_eq!(super::page_sizes(8), [None, Some(1), Some(7)]);
+        assert_eq!(
+            super::page_sizes(201),
+            [None, Some(1), Some(7), Some(super::MAX_LIMIT)]
+        );
     }
 
     #[test]
     fn replays_every_wallet_unless_told_how_many() {
-        assert_eq!(listings(&fold(), 1, 1).len(), 4 * 3 + 2 * 2);
+        assert_eq!(listings(&fold(), 1, 1).len(), 3 * 3 + 2 * 2);
         assert_eq!(
             listings(&fold(), 1, 99).len(),
             listings(&fold(), 1, 0).len()

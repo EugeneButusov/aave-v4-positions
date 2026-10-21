@@ -34,6 +34,14 @@ impl Report {
         self.unasserted.push((label.to_owned(), reason));
     }
 
+    /// One walker's report into the whole run's, in the order the corpus put
+    /// the listings rather than the order the walkers finished.
+    pub(crate) fn absorb(&mut self, walked: Self) {
+        self.compared += walked.compared;
+        self.findings.extend(walked.findings);
+        self.unasserted.extend(walked.unasserted);
+    }
+
     pub(crate) fn agreed(&self) -> bool {
         self.findings.is_empty()
     }
@@ -144,6 +152,30 @@ mod tests {
         assert_eq!(
             causes(&Empty),
             "replay: chain 1 has no positions in this fold\n"
+        );
+    }
+
+    #[test]
+    fn merges_what_each_walker_saw_and_keeps_their_order() {
+        let mut whole = Report::default();
+
+        for label in ["first", "second"] {
+            let mut part = Report::default();
+            part.compared();
+            part.found(Finding {
+                label: label.to_owned(),
+                target: "/target".to_owned(),
+                detail: vec!["a: 1 against 2".to_owned()],
+            });
+            whole.absorb(part);
+        }
+
+        let text = whole.text();
+
+        assert!(text.contains("2 requests compared, 2 findings"), "{text}");
+        assert!(
+            text.find("first").unwrap() < text.find("second").unwrap(),
+            "{text}"
         );
     }
 

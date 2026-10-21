@@ -20,6 +20,11 @@ pub(crate) struct Config {
 
     /// How many wallets of the fold to replay. Zero is all of them.
     pub(crate) wallets: usize,
+
+    /// How many listings to walk at once. The pages of one listing are
+    /// sequential whatever this says — each needs the cursor from the page
+    /// before it.
+    pub(crate) concurrency: usize,
     pub(crate) clickhouse: clickhouse_client::Config,
 }
 
@@ -53,6 +58,7 @@ impl Config {
             prefix: env.text("REPLAY_PREFIX", "api"),
             skew: env.seconds("REPLAY_SKEW_SECONDS", 5, 3600)?,
             wallets: number(env, "REPLAY_WALLETS", 0)?,
+            concurrency: concurrency(env)?,
             clickhouse: clickhouse_client::Config {
                 url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
                 database: env.text("CLICKHOUSE_DATABASE", "aave"),
@@ -60,6 +66,18 @@ impl Config {
                 password: env.text("CLICKHOUSE_PASSWORD", ""),
             },
         })
+    }
+}
+
+/// Zero would replay nothing and read as "no limit", which is what zero means
+/// for `REPLAY_WALLETS` two lines up.
+fn concurrency(env: &Env<'_>) -> Result<usize, Error> {
+    match number(env, "REPLAY_CONCURRENCY", 8)? {
+        0 => Err(Error::NotANumber {
+            key: "REPLAY_CONCURRENCY",
+            value: "0".to_owned(),
+        }),
+        walkers => Ok(walkers),
     }
 }
 
@@ -122,6 +140,7 @@ mod tests {
         assert_eq!(config.prefix, "api");
         assert_eq!(config.skew, 5);
         assert_eq!(config.wallets, 0);
+        assert_eq!(config.concurrency, 8);
         assert_eq!(config.clickhouse.database, "aave");
     }
 
@@ -134,6 +153,7 @@ mod tests {
             ("REPLAY_PREFIX", "gateway"),
             ("REPLAY_SKEW_SECONDS", "30"),
             ("REPLAY_WALLETS", "12"),
+            ("REPLAY_CONCURRENCY", "32"),
             ("CLICKHOUSE_URL", "http://clickhouse:8123"),
             ("CLICKHOUSE_DATABASE", "fold"),
             ("CLICKHOUSE_USER", "aave"),
@@ -147,6 +167,7 @@ mod tests {
         assert_eq!(config.prefix, "gateway");
         assert_eq!(config.skew, 30);
         assert_eq!(config.wallets, 12);
+        assert_eq!(config.concurrency, 32);
         assert_eq!(config.clickhouse.url, "http://clickhouse:8123");
         assert_eq!(config.clickhouse.database, "fold");
         assert_eq!(config.clickhouse.user, "aave");
@@ -169,6 +190,22 @@ mod tests {
             Config::read(&Env::new(&vars)).err().map(|refused| refused.to_string()),
             Some(
                 r#"invalid environment configuration: REPLAY_ORACLE_URL: must be a URL, got "3000""#
+                    .to_owned()
+            )
+        );
+    }
+
+    /// Zero walkers would compare nothing while reading like "no limit".
+    #[test]
+    fn no_walkers_at_all_is_refused() {
+        let vars = env(&[("REPLAY_CONCURRENCY", "0")]);
+
+        assert_eq!(
+            Config::read(&Env::new(&vars))
+                .err()
+                .map(|refused| refused.to_string()),
+            Some(
+                r#"invalid environment configuration: REPLAY_CONCURRENCY: must be a whole number, got "0""#
                     .to_owned()
             )
         );

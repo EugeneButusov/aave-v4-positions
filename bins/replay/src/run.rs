@@ -1,5 +1,7 @@
 //! Driving the corpus against both services.
 
+use tokio::task::JoinSet;
+
 use crate::compare::{self, Rules};
 use crate::config::{self, Config};
 use crate::corpus::{self, Body, Case, Dialect, Listing};
@@ -27,6 +29,9 @@ pub(crate) enum Error {
 
     #[error("chain {0} has no positions in this fold, so there is nothing to replay")]
     EmptyFold(u32),
+
+    #[error("a walker did not finish")]
+    Walker(#[source] tokio::task::JoinError),
 
     #[error(
         "the {which} at {base} answered {status} to /health/live, so it is not one of these services"
@@ -56,18 +61,34 @@ pub(crate) async fn gate() -> Result<Report, Error> {
     replay(&config, &fold).await
 }
 
+/// The two services and the slack between them, owned so a walker can carry
+/// them across a task boundary.
+#[derive(Clone)]
+struct Pair {
+    oracle: String,
+    candidate: String,
+    prefix: String,
+    skew: u64,
+}
+
 /// # Errors
 ///
 /// [`Error`] when a service cannot be reached or is not one of these two.
 async fn replay(config: &Config, fold: &Fold) -> Result<Report, Error> {
     let client = Client::new();
+    let pair = Pair {
+        oracle: config.oracle.clone(),
+        candidate: config.candidate.clone(),
+        prefix: config.prefix.clone(),
+        skew: config.skew,
+    };
     let mut report = Report::default();
 
     let Some(first) = fold.wallets.first() else {
         return Err(Error::EmptyFold(config.chain_id));
     };
 
-    for (which, base) in [("oracle", &config.oracle), ("candidate", &config.candidate)] {
+    for (which, base) in [("oracle", &pair.oracle), ("candidate", &pair.candidate)] {
         let answer = client.get(base, "GET", "/health/live").await?;
 
         if !answers_liveness(answer.status, &answer.body) {
@@ -80,28 +101,75 @@ async fn replay(config: &Config, fold: &Fold) -> Result<Report, Error> {
     }
 
     for case in corpus::cases(&config.prefix, config.chain_id, &first.user, fold) {
-        one(&client, config, &case, &mut report).await?;
+        one(&client, &pair, &case, &mut report).await?;
     }
 
-    for listing in corpus::listings(fold, config.chain_id, config.wallets) {
-        walk(&client, config, &listing, &mut report).await?;
+    let listings = corpus::listings(fold, config.chain_id, config.wallets);
+    report.absorb(walk_all(&client, &pair, config.concurrency, listings).await?);
+
+    Ok(report)
+}
+
+/// Every listing, `concurrency` of them in flight at once.
+///
+/// The pages within one listing stay sequential — each needs the cursor from
+/// the page before it — so the fan-out is across listings. Reports are merged
+/// in corpus order rather than completion order, because a report whose lines
+/// move between runs is one nobody can diff.
+async fn walk_all(
+    client: &Client,
+    pair: &Pair,
+    concurrency: usize,
+    listings: Vec<Listing>,
+) -> Result<Report, Error> {
+    let mut queued = listings.into_iter().enumerate();
+    let mut running: JoinSet<(usize, Result<Report, Error>)> = JoinSet::new();
+    let mut walked: Vec<(usize, Report)> = Vec::new();
+
+    loop {
+        while running.len() < concurrency {
+            let Some((at, listing)) = queued.next() else {
+                break;
+            };
+            let client = client.clone();
+            let pair = pair.clone();
+
+            running.spawn(async move {
+                let mut report = Report::default();
+                let outcome = walk(&client, &pair, &listing, &mut report).await;
+
+                (at, outcome.map(|()| report))
+            });
+        }
+
+        let Some(finished) = running.join_next().await else {
+            break;
+        };
+
+        let (at, walker) = finished.map_err(Error::Walker)?;
+        walked.push((at, walker?));
+    }
+
+    walked.sort_by_key(|(at, _)| *at);
+
+    let mut report = Report::default();
+    for (_, walker) in walked {
+        report.absorb(walker);
     }
 
     Ok(report)
 }
 
-async fn one(
-    client: &Client,
-    config: &Config,
-    case: &Case,
-    report: &mut Report,
-) -> Result<(), Error> {
-    let oracle = client
-        .get(&config.oracle, case.method, &case.oracle)
-        .await?;
-    let candidate = client
-        .get(&config.candidate, case.method, &case.candidate)
-        .await?;
+async fn one(client: &Client, pair: &Pair, case: &Case, report: &mut Report) -> Result<(), Error> {
+    // Both at once. They go to different services, so they do not contend —
+    // and asking one after the other puts the whole of one request's latency
+    // between the two readings, which under any concurrency at all drifts the
+    // clocks past the tolerance that exists for the residue.
+    let (oracle, candidate) = tokio::join!(
+        client.get(&pair.oracle, case.method, &case.oracle),
+        client.get(&pair.candidate, case.method, &case.candidate),
+    );
+    let (oracle, candidate) = (oracle?, candidate?);
 
     report.compared();
     judge(
@@ -122,23 +190,21 @@ async fn one(
 /// finding about the signature rather than about the page.
 async fn walk(
     client: &Client,
-    config: &Config,
+    pair: &Pair,
     listing: &Listing,
     report: &mut Report,
 ) -> Result<(), Error> {
-    let body = Body::Json(listing.rules(config.skew));
+    let body = Body::Json(listing.rules(pair.skew));
     let mut cursor: Option<String> = None;
 
     for page in 1..=MAX_PAGES {
-        let target = listing.target(&config.prefix, Dialect::Candidate, cursor.as_deref());
-        let oracle = client
-            .get(
-                &config.oracle,
-                "GET",
-                &listing.target(&config.prefix, Dialect::Oracle, cursor.as_deref()),
-            )
-            .await?;
-        let candidate = client.get(&config.candidate, "GET", &target).await?;
+        let target = listing.target(&pair.prefix, Dialect::Candidate, cursor.as_deref());
+        let theirs = listing.target(&pair.prefix, Dialect::Oracle, cursor.as_deref());
+        let (oracle, candidate) = tokio::join!(
+            client.get(&pair.oracle, "GET", &theirs),
+            client.get(&pair.candidate, "GET", &target),
+        );
+        let (oracle, candidate) = (oracle?, candidate?);
 
         // Two matching 404s are not agreement. The corpus is pointed at a
         // mount neither service serves, and every listing after this one would
@@ -146,7 +212,7 @@ async fn walk(
         if oracle.status == 404 && candidate.status == 404 {
             return Err(Error::NotServed {
                 target,
-                prefix: config.prefix.clone(),
+                prefix: pair.prefix.clone(),
             });
         }
 
@@ -176,7 +242,7 @@ async fn walk(
 
     report.found(Finding {
         label: listing.label(),
-        target: listing.target(&config.prefix, Dialect::Candidate, None),
+        target: listing.target(&pair.prefix, Dialect::Candidate, None),
         detail: vec![format!("still paging after {MAX_PAGES} pages")],
     });
 
@@ -332,7 +398,8 @@ mod tests {
     use crate::test_support::Stub;
 
     use super::{
-        Error, Judgement, answers_liveness, bodies, judge, next_cursor, replay, shared_cursor, walk,
+        Error, Judgement, Pair, answers_liveness, bodies, judge, next_cursor, replay,
+        shared_cursor, walk,
     };
 
     const PAGE: &str = "/api/v1/chains/1/users/0xaa/positions";
@@ -345,6 +412,7 @@ mod tests {
             prefix: "api".to_owned(),
             skew: 5,
             wallets: 0,
+            concurrency: 4,
             clickhouse: clickhouse_client::Config {
                 url: "http://localhost:8123".to_owned(),
                 database: "aave".to_owned(),
@@ -359,6 +427,7 @@ mod tests {
             wallets: vec![Wallet {
                 user: "0xaa".to_owned(),
                 spokes: vec!["0x01".to_owned()],
+                positions: 2,
             }],
             latest: 1_780_000_000,
         }
@@ -367,10 +436,16 @@ mod tests {
     async fn walked(oracle: &Stub, candidate: &Stub) -> Report {
         let mut report = Report::default();
         let configured = config(oracle, candidate);
+        let pair = Pair {
+            oracle: configured.oracle.clone(),
+            candidate: configured.candidate.clone(),
+            prefix: configured.prefix.clone(),
+            skew: configured.skew,
+        };
 
         walk(
             &Client::new(),
-            &configured,
+            &pair,
             &Listing::new(1, "0xaa", None, None, None),
             &mut report,
         )
@@ -598,9 +673,77 @@ mod tests {
 
         assert!(report.agreed(), "{}", report.text());
         assert!(
-            report.text().contains("31 requests compared"),
+            // 17 cases, then a two-position wallet's listings: the default
+            // page size and 1 across three instants, plus its one Spoke
+            // across two.
+            report.text().contains("25 requests compared"),
             "{}",
             report.text()
+        );
+    }
+
+    /// Two walkers, the first held long enough that the second must finish
+    /// before it. The report still lists them in the order the corpus put
+    /// them, because one whose lines move between runs cannot be diffed.
+    #[tokio::test]
+    async fn reports_the_walkers_in_corpus_order_not_completion_order() {
+        let first = "/api/v1/chains/1/users/0xaa/positions";
+
+        let oracle = Stub::slow((200, r#"{"items":[],"nextCursor":null}"#), &[(first, 300)]).await;
+        let candidate = Stub::slow(
+            (200, r#"{"items":[1],"next_cursor":null}"#),
+            &[(first, 300)],
+        )
+        .await;
+
+        let fold = Fold {
+            wallets: vec![
+                Wallet {
+                    user: "0xaa".to_owned(),
+                    spokes: Vec::new(),
+                    positions: 1,
+                },
+                Wallet {
+                    user: "0xbb".to_owned(),
+                    spokes: Vec::new(),
+                    positions: 1,
+                },
+            ],
+            latest: 1_780_000_000,
+        };
+
+        let report = replay(&config(&oracle, &candidate), &fold).await.unwrap();
+        let text = report.text();
+
+        // The *last* line of the first wallet, not the first: two of its three
+        // listings are not the delayed target, so a first-line check passes
+        // on completion order too.
+        assert!(
+            text.rfind("0xaa").unwrap() < text.find("0xbb").unwrap(),
+            "{text}"
+        );
+    }
+
+    /// Deterministic rather than timed: both stubs hold a request at one
+    /// barrier of two, so the pair can only be answered if both are in flight
+    /// at once. Asking one after the other blocks here, and the timeout is
+    /// what reports that rather than hanging.
+    #[tokio::test]
+    async fn asks_both_services_at_the_same_moment() {
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let page = r#"{"items":[],"next_cursor":null}"#;
+        let oracle = Stub::paired((200, page), &barrier).await;
+        let candidate = Stub::paired((200, page), &barrier).await;
+
+        let walked =
+            tokio::time::timeout(Duration::from_secs(5), walked(&oracle, &candidate)).await;
+
+        assert!(
+            walked.is_ok(),
+            "the two requests were not in flight together"
         );
     }
 
