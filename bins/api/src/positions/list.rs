@@ -15,7 +15,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use super::cursor::Scope;
-use super::params::Listing;
+use super::params::{Listing, QueryParameters};
 use super::views::{self, Prices};
 use crate::app::AppState;
 use crate::errors::{ApiError, ErrorEnvelope};
@@ -76,39 +76,8 @@ behind unrelated collateral. Every row names the Spoke it came from.";
             description = "The position owner. Checksummed or lower-case, either matches.",
             example = "0x82d16ff1c724ab72f218a3f7f6dd3e5385ee87e8",
         ),
-        (
-            "spoke" = Option<String>,
-            Query,
-            description = "Narrow to one Spoke. Omit to list every Spoke this wallet has \
-                           touched.",
-            example = "0x94e7a5dcbe816e498b89ab752661904e2f56c485",
-        ),
-        // Literals because the attribute parser takes nothing else, and no
-        // `default` because only `IntoParams` carries one.
-        // `documents_the_bounds_the_parser_enforces` keeps them equal to `params`'.
-        (
-            "limit" = Option<u32>,
-            Query,
-            minimum = 1,
-            maximum = 200,
-            description = "How many positions to return. Defaults to 50.",
-        ),
-        (
-            "cursor" = Option<String>,
-            Query,
-            description = "A `next_cursor` from a previous page, handed back verbatim. Only \
-                           valid for the listing that issued it.",
-        ),
-        (
-            "as_of" = Option<u64>,
-            Query,
-            minimum = 1_774_277_159_u64,
-            maximum = 4_102_444_800_u64,
-            description = "Unix seconds to value the page at. Defaults to now — amounts \
-                           accrue every second and the chain emits nothing while they do, so \
-                           naming the instant is what makes a response reproducible. Echoed \
-                           back as `valued_at`.",
-        ),
+        // `IntoParams` is the only form that publishes a `default`.
+        QueryParameters,
     ),
     responses(
         (status = 200, description = "One page of this wallet's positions.", body = views::Page),

@@ -444,10 +444,10 @@ async fn stamps_a_page_stale_when_the_indexer_has_stopped_advancing() {
 
 #[tokio::test]
 async fn documents_the_bounds_the_parser_enforces() {
-    // The four are written twice — where `params` enforces them and where
-    // `#[utoipa::path]` publishes them, the attribute parser taking a literal
-    // and not a `const`. The default has no key of its own in the inline form,
-    // so it lives in the parameter's prose and is checked there.
+    // The four bounds are written twice — where `params` enforces them and
+    // where `IntoParams` publishes them, the attribute parser taking a literal
+    // and not a `const`. The default is not: `default` takes a function, so
+    // `params::default_limit` reads the constant and this checks it arrived.
     let request = Request::builder()
         .uri("/docs/openapi.json")
         .body(Body::empty())
@@ -475,9 +475,8 @@ async fn documents_the_bounds_the_parser_enforces() {
     assert_eq!(parameter("as_of")["schema"]["minimum"], GENESIS);
     assert_eq!(parameter("as_of")["schema"]["maximum"], MAX_AS_OF);
 
-    let prose = parameter("limit")["description"].to_string();
-    assert!(
-        prose.contains(&DEFAULT_LIMIT.to_string()),
-        "the default went missing from the one place it is published: {prose}"
-    );
+    // What a caller gets by saying nothing. Published as a schema keyword
+    // rather than left to the prose, which is what the predecessor did and
+    // what a schema diff is able to see.
+    assert_eq!(parameter("limit")["schema"]["default"], DEFAULT_LIMIT);
 }
