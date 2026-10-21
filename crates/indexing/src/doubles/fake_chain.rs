@@ -55,6 +55,14 @@ impl FakeChain {
         self.state.lock().unwrap_or_else(|held| held.into_inner())
     }
 
+    pub(crate) fn set_head(&self, head: u64) {
+        self.state().head = head;
+    }
+
+    pub(crate) fn set_chain_id(&self, chain_id: u32) {
+        self.state().chain_id = chain_id;
+    }
+
     /// Everything strictly above `above` now belongs to `branch`.
     pub(crate) fn fork_above(&self, above: u64, branch: u8) {
         self.state().forks.push((above, branch));

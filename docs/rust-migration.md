@@ -885,6 +885,24 @@ hash is its branch and its height, so declaring a fork rewrites every block abov
 and self-consistently. Nothing scripts a verdict — each one is reached from headers the detector
 read, which is what makes the window shapes worth asserting on at all.
 
+The loop's cases then drive it over a *scripted* detector, because what is under test there is the
+loop rather than the chain — plus a handful over the real one, which is the only way to show that
+the loop's ordering and the detector's window agree across a restart.
+
+**Three things came out of writing the loop that this plan had not accounted for**, each an upstream
+fact rather than a judgement:
+
+| found | consequence |
+| --- | --- |
+| `opentelemetry` 0.31 has **no batch observable callback** — one per instrument and nothing spanning several | the "one `snapshot` per collection" property cannot be had by sharing a callback. The snapshot is memoised for a millisecond instead: a collection runs back to back in microseconds, two scrapes are seconds apart, and the window sits three orders of magnitude clear of both |
+| a span event takes its name from the event's **message** when there is one | a reorg is two emissions — the event named `reorg`, and the log line carrying the sentence. One emission cannot be both |
+| `async fn` in a trait is not dyn compatible, so a port is `#[async_trait]`, so a test double behind one cannot also be read by the case that supplied it | one blanket `impl<S: Port> Port for Arc<S>` per port, `#[cfg(test)]`, rather than widening any port to `Arc` for a test's benefit |
+
+The backoff has **no jitter**, which is the first row of the preserved-defect table below and the one
+with a real operational argument against it. It stays, because the gate that will prove this port
+correct measures rows rather than retry timing — and because changing it would be the one difference
+in 3b nobody could attribute.
+
 **Four TypeScript behaviours are reproduced rather than fixed**, because 3b's gate is differential
 and each of these would show up in it as a difference to explain away:
 
