@@ -29,6 +29,48 @@ pub(crate) const MAX_AS_OF: u64 = 4_102_444_800;
 /// The four this endpoint answers to; anything else is a refusal.
 const KNOWN: [&str; 4] = ["spoke", "limit", "cursor", "as_of"];
 
+/// `default` takes a function to call, not a constant to read, so this is what
+/// keeps the published default and the parsed one the same number.
+fn default_limit() -> u32 {
+    DEFAULT_LIMIT
+}
+
+/// The four, for the document.
+///
+/// Never constructed: [`Listing::parse`] reads the query string itself, because
+/// it reports every fault at once and has to see the keys this endpoint does
+/// not answer to, neither of which survives a deserialize into a struct. This
+/// type exists because `IntoParams` is the only form that publishes a
+/// `default`, which the inline `params(...)` attribute cannot express — so a
+/// caller reading the document learns the page size it gets by saying nothing.
+///
+/// It lives beside the parser rather than beside the route for the obvious
+/// reason: the two have to agree, and
+/// `documents_the_bounds_the_parser_enforces` is what says they do.
+#[derive(utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+#[expect(dead_code, reason = "the derive reads the field names, not the values")]
+pub(crate) struct Documented {
+    /// Narrow to one Spoke. Omit to list every Spoke this wallet has touched.
+    #[param(example = "0x94e7a5dcbe816e498b89ab752661904e2f56c485")]
+    spoke: Option<String>,
+
+    /// How many positions to return.
+    #[param(minimum = 1, maximum = 200, default = default_limit)]
+    limit: Option<u32>,
+
+    /// A `next_cursor` from a previous page, handed back verbatim. Only valid
+    /// for the listing that issued it.
+    cursor: Option<String>,
+
+    /// Unix seconds to value the page at. Defaults to now — amounts accrue
+    /// every second and the chain emits nothing while they do, so naming the
+    /// instant is what makes a response reproducible. Echoed back as
+    /// `valued_at`.
+    #[param(minimum = 1_774_277_159_u64, maximum = 4_102_444_800_u64)]
+    as_of: Option<u64>,
+}
+
 pub(crate) struct Listing {
     pub(crate) chain_id: u32,
     pub(crate) user: Address,

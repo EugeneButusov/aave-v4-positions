@@ -677,8 +677,8 @@ would bury whatever a real difference looked like. The comparison is therefore *
 path set under the same key transform, the operation set, each schema's property names, and
 required-and-nullable as a meaning rather than as a spelling.
 
-Four differences beyond the wire rule are the comparator's to be told, and each is a decision rather
-than a gap. **`info.version` is `0.2.0` against `0.1.0`** — twenty-four keys, a query parameter and
+Eight differences beyond the wire rule are the comparator's to be told, and each is a decision rather
+than a gap. Four were predicted; four came out of running the comparison and are at the end. **`info.version` is `0.2.0` against `0.1.0`** — twenty-four keys, a query parameter and
 the timestamp format move, so the two are not one contract, and a version naming two shapes is what
 that field exists to prevent. **The probes are absent from this document**, because `ops` calls their
 paths infrastructure and `config` calls them no part of the versioned surface; publishing them would
@@ -687,6 +687,31 @@ contradict both, so there is one path here where the TypeScript has three. **Eve
 improvement that no JSON parser can see and every schema diff can. And **`error` is required here and
 optional there**: `ApiErrorDto` declares it `@ApiPropertyOptional`, the running service emits it
 every time, and the Rust says what the service does.
+
+The four the comparison found, measured over 98 schema nodes walked from each operation's response:
+
+**The numeric `type` differs, not just its `format`.** Eight nodes — `chain_id`, `events`,
+`asset.decimals`, `sync.last_block`, both `age_seconds` and `status_code` in each envelope — are
+`number` in the TypeScript and `integer` here. The entry above named `format`, which is the weaker
+half of the same improvement.
+
+**Four parameters carry no schema at all on the TypeScript side.** `chain_id`, `user`, `spoke` and
+`cursor` are declared with a description and nothing else, where this document gives each a type.
+Also strictly more than its predecessor, and also invisible to a JSON parser.
+
+**`operationId` is `list` against `PositionsController_list_v1`**, and this one has a consumer: a
+generated client's method name changes with it. It belongs on the breaking-change list beside the
+twenty-four keys and `as_of` rather than being discovered by whoever regenerates a client.
+
+**`info` carries a `license` here and a `contact` there.** Neither document has both, and nothing
+reads either.
+
+One difference was a defect rather than a decision, and is fixed: **the TypeScript published
+`default: 50` for `limit` and this document published it only in prose.** utoipa's inline `params`
+attribute has no `default` keyword — checked against its parser, which takes `Minimum`, `Maximum`,
+`Format` and seventeen others — so the four query parameters are an `IntoParams` struct beside the
+parser they have to agree with. `default` there takes a function rather than a constant, so
+`default_limit()` reads `DEFAULT_LIMIT` and the published number cannot drift from the parsed one.
 
 **Two behaviours are the predecessor's and are pinned by test rather than by comment.** An unmatched
 *method* answers `404`, not axum's default `405` with an `allow` header — Express does not

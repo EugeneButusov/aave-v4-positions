@@ -400,11 +400,12 @@ expression: document().await
             }
           },
           {
-            "description": "How many positions to return. Defaults to 50.",
+            "description": "How many positions to return.",
             "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
+              "default": 50,
               "format": "int32",
               "maximum": 200,
               "minimum": 1,
@@ -412,7 +413,7 @@ expression: document().await
             }
           },
           {
-            "description": "A `next_cursor` from a previous page, handed back verbatim. Only valid for the listing that issued it.",
+            "description": "A `next_cursor` from a previous page, handed back verbatim. Only valid\nfor the listing that issued it.",
             "in": "query",
             "name": "cursor",
             "required": false,
@@ -421,7 +422,7 @@ expression: document().await
             }
           },
           {
-            "description": "Unix seconds to value the page at. Defaults to now — amounts accrue every second and the chain emits nothing while they do, so naming the instant is what makes a response reproducible. Echoed back as `valued_at`.",
+            "description": "Unix seconds to value the page at. Defaults to now — amounts accrue\nevery second and the chain emits nothing while they do, so naming the\ninstant is what makes a response reproducible. Echoed back as\n`valued_at`.",
             "in": "query",
             "name": "as_of",
             "required": false,
