@@ -1,9 +1,13 @@
+//! The cursor in memory. Its conformance run is below, because a double that
+//! disagreed with its port would make every case using it a proof about a
+//! fiction.
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use units::ChainId;
 
-use crate::cursor::{Cursor, CursorStore, Error};
+use super::{Cursor, CursorStore, Error};
 
 /// The cursor, in memory. One row per chain, overwritten in place.
 #[derive(Default)]

@@ -34,4 +34,17 @@ pub enum Error {
         expected: &'static str,
         value: String,
     },
+
+    /// The two refusals a window double can script, apart so a case names the
+    /// write it scripted rather than taking whichever came back — `commit`
+    /// truncates before it appends. The driver variants above are out of
+    /// reach: every `tokio_postgres::Error` constructor is crate-private bar
+    /// one marked `#[doc(hidden)]`.
+    #[cfg(test)]
+    #[error("the window double refused an append")]
+    AppendRefused,
+
+    #[cfg(test)]
+    #[error("the window double refused a truncate")]
+    TruncateRefused,
 }
