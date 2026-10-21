@@ -36,6 +36,13 @@ pub(crate) enum Error {
         base: String,
         status: u16,
     },
+
+    #[error(
+        "neither service serves {target}, so nothing would be compared — \
+         REPLAY_PREFIX is {prefix:?}, and both mount the versioned routes under \
+         whatever API_GLOBAL_PREFIX they were given"
+    )]
+    NotServed { target: String, prefix: String },
 }
 
 /// # Errors
@@ -72,7 +79,7 @@ async fn replay(config: &Config, fold: &Fold) -> Result<Report, Error> {
         }
     }
 
-    for case in corpus::cases(config.chain_id, &first.user, fold) {
+    for case in corpus::cases(&config.prefix, config.chain_id, &first.user, fold) {
         one(&client, config, &case, &mut report).await?;
     }
 
@@ -123,15 +130,25 @@ async fn walk(
     let mut cursor: Option<String> = None;
 
     for page in 1..=MAX_PAGES {
-        let target = listing.target(Dialect::Candidate, cursor.as_deref());
+        let target = listing.target(&config.prefix, Dialect::Candidate, cursor.as_deref());
         let oracle = client
             .get(
                 &config.oracle,
                 "GET",
-                &listing.target(Dialect::Oracle, cursor.as_deref()),
+                &listing.target(&config.prefix, Dialect::Oracle, cursor.as_deref()),
             )
             .await?;
         let candidate = client.get(&config.candidate, "GET", &target).await?;
+
+        // Two matching 404s are not agreement. The corpus is pointed at a
+        // mount neither service serves, and every listing after this one would
+        // "agree" the same way — a gate green over nothing at all.
+        if oracle.status == 404 && candidate.status == 404 {
+            return Err(Error::NotServed {
+                target,
+                prefix: config.prefix.clone(),
+            });
+        }
 
         let label = format!("{} page {page}", listing.label());
         report.compared();
@@ -159,7 +176,7 @@ async fn walk(
 
     report.found(Finding {
         label: listing.label(),
-        target: listing.target(Dialect::Candidate, None),
+        target: listing.target(&config.prefix, Dialect::Candidate, None),
         detail: vec![format!("still paging after {MAX_PAGES} pages")],
     });
 
@@ -318,13 +335,14 @@ mod tests {
         Error, Judgement, answers_liveness, bodies, judge, next_cursor, replay, shared_cursor, walk,
     };
 
-    const PAGE: &str = "/v1/chains/1/users/0xaa/positions";
+    const PAGE: &str = "/api/v1/chains/1/users/0xaa/positions";
 
     fn config(oracle: &Stub, candidate: &Stub) -> Config {
         Config {
             oracle: oracle.base(),
             candidate: candidate.base(),
             chain_id: 1,
+            prefix: "api".to_owned(),
             skew: 5,
             wallets: 0,
             clickhouse: clickhouse_client::Config {
@@ -583,6 +601,26 @@ mod tests {
             report.text().contains("31 requests compared"),
             "{}",
             report.text()
+        );
+    }
+
+    /// What the first real run against the two services found: the corpus was
+    /// asking for `/v1/...` where both mount `/api/v1/...`, so 27 of 45
+    /// requests "agreed" by both answering the same 404.
+    #[tokio::test]
+    async fn refuses_a_listing_neither_service_serves() {
+        let missing = r#"{"message":"Cannot GET /v1/chains/1/users/0xaa/positions","error":"Not Found","status_code":404}"#;
+        let oracle = Stub::start((404, missing), &[]).await;
+        let candidate = Stub::start((404, missing), &[]).await;
+
+        let refused = replay(&config(&oracle, &candidate), &fold())
+            .await
+            .unwrap_err();
+
+        assert!(matches!(refused, Error::NotServed { .. }), "{refused}");
+        assert!(
+            refused.to_string().contains("REPLAY_PREFIX is \"api\""),
+            "{refused}"
         );
     }
 

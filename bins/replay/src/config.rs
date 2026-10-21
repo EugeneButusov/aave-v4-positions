@@ -10,6 +10,10 @@ pub(crate) struct Config {
     pub(crate) candidate: String,
     pub(crate) chain_id: u32,
 
+    /// What both deployments mount the versioned routes under. The probes are
+    /// outside it on either service.
+    pub(crate) prefix: String,
+
     /// How far apart two requests that cannot be issued at the same instant
     /// may leave a clock-derived number.
     pub(crate) skew: u64,
@@ -46,6 +50,7 @@ impl Config {
             oracle: env.url("REPLAY_ORACLE_URL", "http://localhost:3000")?,
             candidate: env.url("REPLAY_CANDIDATE_URL", "http://localhost:3002")?,
             chain_id: number(env, "REPLAY_CHAIN_ID", 1)?,
+            prefix: env.text("REPLAY_PREFIX", "api"),
             skew: env.seconds("REPLAY_SKEW_SECONDS", 5, 3600)?,
             wallets: number(env, "REPLAY_WALLETS", 0)?,
             clickhouse: clickhouse_client::Config {
@@ -114,6 +119,7 @@ mod tests {
         assert_eq!(config.oracle, "http://localhost:3000");
         assert_eq!(config.candidate, "http://localhost:3002");
         assert_eq!(config.chain_id, 1);
+        assert_eq!(config.prefix, "api");
         assert_eq!(config.skew, 5);
         assert_eq!(config.wallets, 0);
         assert_eq!(config.clickhouse.database, "aave");
@@ -125,6 +131,7 @@ mod tests {
             ("REPLAY_ORACLE_URL", "http://node:3000"),
             ("REPLAY_CANDIDATE_URL", "http://rust:3000"),
             ("REPLAY_CHAIN_ID", "8453"),
+            ("REPLAY_PREFIX", "gateway"),
             ("REPLAY_SKEW_SECONDS", "30"),
             ("REPLAY_WALLETS", "12"),
             ("CLICKHOUSE_URL", "http://clickhouse:8123"),
@@ -137,6 +144,7 @@ mod tests {
         assert_eq!(config.oracle, "http://node:3000");
         assert_eq!(config.candidate, "http://rust:3000");
         assert_eq!(config.chain_id, 8453);
+        assert_eq!(config.prefix, "gateway");
         assert_eq!(config.skew, 30);
         assert_eq!(config.wallets, 12);
         assert_eq!(config.clickhouse.url, "http://clickhouse:8123");

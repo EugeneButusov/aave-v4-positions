@@ -72,7 +72,7 @@ impl Listing {
         }
     }
 
-    pub(crate) fn target(&self, dialect: Dialect, cursor: Option<&str>) -> String {
+    pub(crate) fn target(&self, prefix: &str, dialect: Dialect, cursor: Option<&str>) -> String {
         let mut query = String::new();
 
         if let Some(spoke) = &self.spoke {
@@ -88,7 +88,7 @@ impl Listing {
             append(&mut query, "cursor", cursor);
         }
 
-        format!("{}{query}", self.path())
+        format!("{}{query}", self.path(prefix))
     }
 
     /// With `as_of` set, the page's valuation clock is the caller's number and
@@ -114,8 +114,13 @@ impl Listing {
         format!("{} {spoke} limit={limit} as_of={as_of}", self.user)
     }
 
-    fn path(&self) -> String {
-        format!("/v1/chains/{}/users/{}/positions", self.chain_id, self.user)
+    fn path(&self, prefix: &str) -> String {
+        format!(
+            "{}/chains/{}/users/{}/positions",
+            mount(prefix),
+            self.chain_id,
+            self.user
+        )
     }
 }
 
@@ -153,12 +158,23 @@ pub(crate) fn listings(fold: &Fold, chain_id: u32, wallets: usize) -> Vec<Listin
     listings
 }
 
+/// Where the versioned routes hang, given what a deployment wrote in
+/// `API_GLOBAL_PREFIX`. The same arithmetic both services do, because a corpus
+/// pointed at the wrong mount compares two 404s and calls it agreement.
+pub(crate) fn mount(prefix: &str) -> String {
+    match prefix.trim_matches('/') {
+        "" => "/v1".to_owned(),
+        prefix => format!("/{prefix}/v1"),
+    }
+}
+
 /// The probes, the refusals, and the two shapes of unmatched request.
 ///
 /// `user` is a wallet the fold has, so a case that is meant to fail on one
 /// parameter is not also failing on the address.
-pub(crate) fn cases(chain_id: u32, user: &str, fold: &Fold) -> Vec<Case> {
-    let positions = format!("/v1/chains/{chain_id}/users/{user}/positions");
+pub(crate) fn cases(prefix: &str, chain_id: u32, user: &str, fold: &Fold) -> Vec<Case> {
+    let mount = mount(prefix);
+    let positions = format!("{mount}/chains/{chain_id}/users/{user}/positions");
     let milliseconds = u64::from(fold.latest) * 1_000;
 
     let mut cases = vec![
@@ -167,7 +183,7 @@ pub(crate) fn cases(chain_id: u32, user: &str, fold: &Fold) -> Vec<Case> {
         exact(
             "a path neither service serves",
             "GET",
-            "/v1/nothing/here".to_owned(),
+            format!("{mount}/nothing/here"),
         ),
         exact(
             "a method this path does not serve",
@@ -177,18 +193,18 @@ pub(crate) fn cases(chain_id: u32, user: &str, fold: &Fold) -> Vec<Case> {
         exact(
             "a chain nothing has indexed",
             "GET",
-            format!("/v1/chains/987654/users/{user}/positions"),
+            format!("{mount}/chains/987654/users/{user}/positions"),
         ),
     ];
 
     let refusals = [
         (
             "an address that is not one",
-            format!("/v1/chains/{chain_id}/users/0xnot-an-address/positions"),
+            format!("{mount}/chains/{chain_id}/users/0xnot-an-address/positions"),
         ),
         (
             "a chain id that is not a number",
-            format!("/v1/chains/mainnet/users/{user}/positions"),
+            format!("{mount}/chains/mainnet/users/{user}/positions"),
         ),
         ("a limit below the floor", format!("{positions}?limit=0")),
         (
@@ -210,7 +226,7 @@ pub(crate) fn cases(chain_id: u32, user: &str, fold: &Fold) -> Vec<Case> {
         ),
         (
             "two faults in one request",
-            format!("/v1/chains/{chain_id}/users/0xzz/positions?limit=0"),
+            format!("{mount}/chains/{chain_id}/users/0xzz/positions?limit=0"),
         ),
     ];
 
@@ -308,20 +324,20 @@ mod tests {
         let listing = listing(None, Some(50), Some(1_780_000_000));
 
         assert_eq!(
-            listing.target(Dialect::Oracle, None),
-            "/v1/chains/1/users/0xaa/positions?limit=50&asOf=1780000000"
+            listing.target("api", Dialect::Oracle, None),
+            "/api/v1/chains/1/users/0xaa/positions?limit=50&asOf=1780000000"
         );
         assert_eq!(
-            listing.target(Dialect::Candidate, None),
-            "/v1/chains/1/users/0xaa/positions?limit=50&as_of=1780000000"
+            listing.target("api", Dialect::Candidate, None),
+            "/api/v1/chains/1/users/0xaa/positions?limit=50&as_of=1780000000"
         );
     }
 
     #[test]
     fn a_listing_with_nothing_asked_for_carries_no_query() {
         assert_eq!(
-            listing(None, None, None).target(Dialect::Candidate, None),
-            "/v1/chains/1/users/0xaa/positions"
+            listing(None, None, None).target("api", Dialect::Candidate, None),
+            "/api/v1/chains/1/users/0xaa/positions"
         );
     }
 
@@ -331,8 +347,8 @@ mod tests {
     #[test]
     fn a_resumed_page_keeps_the_filters_that_scoped_it() {
         assert_eq!(
-            listing(Some("0x01"), Some(7), None).target(Dialect::Candidate, Some("abc")),
-            "/v1/chains/1/users/0xaa/positions?spoke=0x01&limit=7&cursor=abc"
+            listing(Some("0x01"), Some(7), None).target("api", Dialect::Candidate, Some("abc")),
+            "/api/v1/chains/1/users/0xaa/positions?spoke=0x01&limit=7&cursor=abc"
         );
     }
 
@@ -387,7 +403,7 @@ mod tests {
     /// rest are one target used twice.
     #[test]
     fn the_refusals_that_name_an_instant_are_spelled_for_each_service() {
-        let cases = cases(1, "0xaa", &fold());
+        let cases = cases("api", 1, "0xaa", &fold());
         let instants: Vec<&super::Case> = cases
             .iter()
             .filter(|case| case.label.contains("as_of"))
@@ -400,9 +416,32 @@ mod tests {
         }
     }
 
+    /// The arithmetic both services do, mirrored here. An empty prefix asks
+    /// for none, which is `/v1` and not `//v1`.
+    #[test]
+    fn hangs_the_routes_where_the_deployment_mounts_them() {
+        assert_eq!(super::mount("api"), "/api/v1");
+        assert_eq!(super::mount("/gateway/"), "/gateway/v1");
+        assert_eq!(super::mount(""), "/v1");
+        assert_eq!(super::mount("/"), "/v1");
+    }
+
+    #[test]
+    fn every_versioned_target_carries_the_prefix_and_no_probe_does() {
+        let cases = cases("gateway", 1, "0xaa", &fold());
+
+        for case in &cases {
+            if case.oracle.starts_with("/health") {
+                continue;
+            }
+
+            assert!(case.oracle.starts_with("/gateway/v1/"), "{}", case.oracle);
+        }
+    }
+
     #[test]
     fn asks_both_probes_at_the_paths_neither_versions() {
-        let cases = cases(1, "0xaa", &fold());
+        let cases = cases("api", 1, "0xaa", &fold());
         let probes: Vec<&str> = cases
             .iter()
             .map(|case| case.oracle.as_str())

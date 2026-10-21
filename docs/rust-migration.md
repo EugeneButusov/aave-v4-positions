@@ -629,7 +629,8 @@ no per-key exceptions. That the transform is total is itself the assertion: the 
 agree exactly under it, so a field that is missing, extra or misspelled still fails. Values and key
 *order* are compared exactly — the error envelope still emits `message`, then `error`, then the
 status, which is the order the running service uses and not the order its own DTO class declares.
-Timestamps are compared as instants; validation bodies on status and on which parameters they name.
+Timestamps are compared as instants **at millisecond resolution**; validation bodies on status and
+on which parameters they name.
 
 What that costs is the "any difference is a finding" property, for those two classes only. It is why
 the exception list was meant to stay short, and the trade is being made deliberately rather than
@@ -648,6 +649,21 @@ corpus pins every listing at a fixed instant as well as at none.
 under both services, and `sync` is on every page precisely so a caller can see that happen — so a
 page compared across it is a finding about the clock rather than about either service. Stop the
 indexer, then replay.
+
+**"Compared as instants" was not enough, and the first real run is what said so.** The oracle serves
+`sync.updated_at` as `.987` where this service serves `.987082` — the same reading rendered twice,
+because a JavaScript `Date` truncates the microseconds Postgres stored. Those are not the same
+instant, so the rule this entry carried would have reported every page as a finding. The clocks are
+therefore compared at the finest resolution *both* services can express, which is a millisecond. It
+costs under a millisecond of comparison on three fields and it is exactly the difference the table
+above already declared; comparing any finer only re-finds that declaration.
+
+**And a gate can be green over nothing at all.** That same run had the corpus asking for `/v1/...`
+where both services mount `/api/v1/...`, so 27 of its 45 requests "agreed" by both answering the
+same 404 — the only reason any of them failed is that the 404 body echoes the request target, and
+`asOf` against `as_of` made two of those targets differ. So the harness does the prefix arithmetic
+both services do, and a listing that answers 404 on both sides now stops the run rather than
+counting as agreement.
 
 One further gap is the comparator's to report rather than to forgive: where the oracle's refusal
 names no parameter at all — an unrecognised query key, where Zod says only which key — the parameter

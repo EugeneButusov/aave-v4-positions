@@ -40,9 +40,10 @@ enum Rule {
     Kind,
 }
 
-/// The exceptions, by path. A rule is a whole path rather than a field name,
-/// so one written for `sync.age_seconds` does not forgive a field of that name
-/// somewhere else.
+/// The exceptions, by path. A rule covers its path and everything under it,
+/// with array indices elided — `items[].value` reaches every item's — but it
+/// is a whole path rather than a field name, so one written for
+/// `sync.age_seconds` does not forgive a field of that name somewhere else.
 pub(crate) struct Rules(HashMap<&'static str, Rule>);
 
 impl Rules {
@@ -55,12 +56,20 @@ impl Rules {
     /// A page carries three clocks. `sync` is the indexer's progress and moves
     /// whatever the request asked for; the other two are pinned by `as_of`,
     /// which also nulls `pricing` on both sides.
+    ///
+    /// Without `as_of` the amounts move too. Every number under
+    /// `items[].value` is the shares converted at the instant the request
+    /// arrived, and the Hub index accrues every second, so two requests a
+    /// second apart disagree in the sixth decimal by arithmetic rather than by
+    /// defect. Those leaves are compared by kind here and exactly on the
+    /// pinned listings beside them, which is where the corpus covers them.
     pub(crate) fn page(skew: u64, pinned: bool) -> Self {
         let mut rules = HashMap::from([("sync.age_seconds", Rule::Within(skew))]);
 
         if !pinned {
             rules.insert("valued_at", Rule::Within(skew));
             rules.insert("pricing.age_seconds", Rule::Within(skew));
+            rules.insert("items[].value", Rule::Kind);
         }
 
         Self(rules)
@@ -72,8 +81,18 @@ impl Rules {
         Self(HashMap::from([("uptime_seconds", Rule::Kind)]))
     }
 
+    /// A rule covers its own path and every path under it.
     fn get(&self, path: &str) -> Option<&Rule> {
-        self.0.get(path)
+        let shape = elide_indices(path);
+
+        self.0.iter().find_map(|(at, rule)| {
+            let covered = shape == *at
+                || shape
+                    .strip_prefix(*at)
+                    .is_some_and(|under| under.starts_with('.') || under.starts_with('['));
+
+            covered.then_some(rule)
+        })
     }
 }
 
@@ -110,7 +129,12 @@ pub(crate) fn parameters_named(message: &str) -> BTreeSet<&'static str> {
 }
 
 fn walk(path: &str, oracle: &Json, candidate: &Json, rules: &Rules, found: &mut Vec<Difference>) {
-    if let Some(rule) = rules.get(path) {
+    // A rule bites at the leaves. A container it covers is still walked, so
+    // the keys and the lengths under a forgiven subtree are compared as
+    // everywhere else, and only the values are let go.
+    if !container(oracle, candidate)
+        && let Some(rule) = rules.get(path)
+    {
         if let Some(detail) = rule.check(oracle, candidate) {
             found.push(Difference {
                 path: path.to_owned(),
@@ -172,11 +196,14 @@ fn array(path: &str, left: &[Json], right: &[Json], rules: &Rules, found: &mut V
     }
 }
 
-/// Two instants are compared as instants: one service writes three fractional
-/// digits always, the other writes the digits it has.
+/// Two instants are compared at millisecond resolution. One service writes
+/// three fractional digits always, the other the digits it has — and "as
+/// instants" is not enough for that, because the oracle's clock is a
+/// JavaScript `Date`: it truncates the microseconds Postgres stored, so
+/// `.987` and `.987082` are the same reading rendered twice.
 fn text(path: &str, left: &str, right: &str, found: &mut Vec<Difference>) {
     let detail = match (instant(left), instant(right)) {
-        (Some(ours), Some(theirs)) if ours == theirs => return,
+        (Some(ours), Some(theirs)) if milliseconds(ours) == milliseconds(theirs) => return,
         (Some(ours), Some(theirs)) => format!("{ours} against {theirs}"),
         _ if left == right => return,
         _ => format!("{left:?} against {right:?}"),
@@ -223,8 +250,43 @@ fn within(skew: u64, oracle: &Json, candidate: &Json) -> Option<String> {
     }
 }
 
+fn container(oracle: &Json, candidate: &Json) -> bool {
+    matches!(
+        (oracle, candidate),
+        (Json::Object(_), Json::Object(_)) | (Json::Array(_), Json::Array(_))
+    )
+}
+
+/// `items[3].value` is held to the rule written for `items[].value`.
+fn elide_indices(path: &str) -> String {
+    let mut elided = String::with_capacity(path.len());
+    let mut inside = false;
+
+    for letter in path.chars() {
+        match letter {
+            '[' => {
+                inside = true;
+                elided.push('[');
+            }
+            ']' => {
+                inside = false;
+                elided.push(']');
+            }
+            _ if inside => {}
+            _ => elided.push(letter),
+        }
+    }
+
+    elided
+}
+
 fn instant(text: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(text, &Rfc3339).ok()
+}
+
+/// The finest resolution both services can express.
+fn milliseconds(at: OffsetDateTime) -> i128 {
+    at.unix_timestamp_nanos() / 1_000_000
 }
 
 fn field(path: &str, key: &str) -> String {
@@ -343,6 +405,34 @@ mod tests {
         assert!(found.is_empty(), "{found:?}");
     }
 
+    /// Found by the first real run: the oracle serves `sync.updated_at` as
+    /// `.987` where this service serves `.987082`, which are not the same
+    /// instant and are the same reading. Below a millisecond is the declared
+    /// difference; at or above it is a disagreement.
+    #[test]
+    fn microseconds_the_oracle_cannot_express_are_not_a_difference() {
+        let found = differences(
+            r#"{"sync":{"updated_at":"2026-10-21T00:10:20.987Z"}}"#,
+            r#"{"sync":{"updated_at":"2026-10-21T00:10:20.987082Z"}}"#,
+            &Rules::exact(),
+        );
+
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_millisecond_apart_is_still_a_difference() {
+        assert_eq!(
+            differences(
+                r#"{"updated_at":"2026-10-21T00:10:20.987Z"}"#,
+                r#"{"updated_at":"2026-10-21T00:10:20.988Z"}"#,
+                &Rules::exact(),
+            )
+            .len(),
+            1
+        );
+    }
+
     #[test]
     fn two_instants_a_second_apart_differ() {
         assert_eq!(
@@ -411,6 +501,66 @@ mod tests {
                 &Rules::liveness()
             ),
             [r#"uptime_seconds: 9 against "40000", which are not the same kind"#]
+        );
+    }
+
+    /// Found by the first real run: two requests a second apart value the same
+    /// shares at two instants, and the Hub index accrues in between. The
+    /// pinned listings are where these numbers are compared exactly.
+    #[test]
+    fn an_unpinned_page_does_not_compare_the_amounts_it_accrued() {
+        let oracle = r#"{"items":[{"value":{"suppliedAmount":"26.176362230342528561","drawnIndex":"1.012470843103223313587342741"}}]}"#;
+        let candidate = r#"{"items":[{"value":{"supplied_amount":"26.163253885447656178","drawn_index":"1.012089474900769719452671239"}}]}"#;
+
+        let read = crate::keys::snake_case(json(oracle)).unwrap();
+
+        assert!(compare(&read, &json(candidate), &Rules::page(5, false)).is_empty());
+        assert_eq!(
+            compare(&read, &json(candidate), &Rules::page(5, true)).len(),
+            2
+        );
+    }
+
+    /// The forgiveness reaches the values and stops there: a key missing under
+    /// a forgiven subtree is still a finding, and so is an item count.
+    #[test]
+    fn a_forgiven_subtree_is_still_compared_for_its_shape() {
+        let rules = Rules::page(5, false);
+
+        assert_eq!(
+            compare(
+                &json(r#"{"items":[{"value":{"a":"1","b":"2"}}]}"#),
+                &json(r#"{"items":[{"value":{"a":"9"}}]}"#),
+                &rules,
+            )
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+            [r#"items[0].value: keys ["a", "b"] against ["a"]"#]
+        );
+        assert_eq!(
+            compare(
+                &json(r#"{"items":[{"value":{"a":"1"}},{"value":{"a":"2"}}]}"#),
+                &json(r#"{"items":[{"value":{"a":"9"}}]}"#),
+                &rules,
+            )
+            .len(),
+            1
+        );
+    }
+
+    /// The kind still has to match: a number where a decimal string belongs is
+    /// a defect, not accrual.
+    #[test]
+    fn a_forgiven_leaf_of_another_kind_is_a_finding() {
+        assert_eq!(
+            differences(
+                r#"{"items":[{"value":{"supplied_amount":"26.17"}}]}"#,
+                r#"{"items":[{"value":{"supplied_amount":26.17}}]}"#,
+                &Rules::page(5, false),
+            )
+            .len(),
+            1
         );
     }
 
