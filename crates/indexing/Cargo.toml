@@ -10,6 +10,10 @@ publish.workspace = true
 # doc for why that distinction is load-bearing here rather than incidental.
 alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
 async-trait = "0.1.92"
+# The twelve instruments. `metrics` alone — this crate records nothing else, and
+# the scope name is the binary's to supply so the telemetry crate stays out of
+# the graph here.
+opentelemetry = { version = "0.31.0", default-features = false, features = ["metrics"] }
 postgres.workspace = true
 # The signal handed to a processor. Cooperative rather than dropping its future
 # at whatever await point the cancellation lands on, which here is mid-write.
@@ -25,10 +29,21 @@ tracing = { version = "0.1.42", default-features = false, features = ["std", "at
 # When the indexer last advanced, which reaches the wire as an ISO-8601 string.
 time = "0.3.55"
 
+# The loop sleeps, times itself and races its own drain. `time` so a case can
+# take the test clock rather than a real one.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "macros"] }
+
 [dev-dependencies]
 migrations.workspace = true
+# An in-memory exporter, so the instrument inventory is read back rather than
+# asserted from the source that declares it.
+opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
 refinery-core = { version = "0.9.2", features = ["tokio-postgres"] }
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.1", features = ["macros", "rt", "test-util"] }
+# The span layer, so the iteration and processor spans are read back from an
+# exporter rather than asserted from the source that opens them.
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber = "0.3.23"
 
 [lints]
 workspace = true

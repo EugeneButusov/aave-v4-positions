@@ -1718,6 +1718,8 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "migrations",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "postgres",
  "refinery-core",
  "thiserror",
@@ -1726,6 +1728,8 @@ dependencies = [
  "tokio-postgres",
  "tokio-util",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]

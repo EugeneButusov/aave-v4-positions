@@ -642,6 +642,11 @@ depth. And the cancellation is a `CancellationToken` rather than a signal object
 processor's future instead would cancel it at whatever await point the shutdown lands on, which on
 this path is mid-write.
 
+The Rust loop takes **four** options where this one is handed nine. The other five are read by its
+collaborators rather than by it — the depth is the detector's, the provider list and timeout the
+chain client's, the stall threshold the readiness check's — and sharing one options object across
+all of them is what made the loop look as though it decided any of them.
+
 **The detector owns the shape of the chain.** The loop never computes `head - finalityDepth`; it
 calls `safeHead()` and uses the answer for one thing — **how wide to dispatch**. At or below the
 boundary the blocks are settled, so they go out in ranges, which is what makes a ~932k-block backfill
@@ -794,14 +799,14 @@ outcome protocol, reorg detection, the event processor and the durable state sto
 loop's own failure paths are exercised by tests through scripted fakes rather than by the running
 service.
 
-**Where the Rust port stands.** Everything above that does not touch the chain is ported and
-durable: the cursor, the window, both of their adapters, and the hash-chain detector — the window
-walk, the contiguity restart, the predecessor pull and `bootstrap` vetting the window's top, all
-driven through a chain whose ancestry is derived rather than scripted, so every verdict in those
-cases is one it reached from headers it read. `ChainClient`, `LogReader` and `BlockProcessor` are
-ports with no adapter behind them yet — an adapter for one links a provider and an HTTP transport,
-which `crates/indexing` may not, so they land outside it. The loop and the instruments are what is
-left of the spine. [`docs/rust-migration.md`](rust-migration.md) carries the sequence.
+**Where the Rust port stands.** Everything above that does not touch the chain is ported: the
+cursor, the window, both of their adapters, the hash-chain detector, and now the loop itself —
+range selection and the boundary clamp, the monotonic head, bootstrap, the unwind's ordering, the
+outcome protocol, the backoff, the twelve instruments and the spans. `ChainClient`, `LogReader` and
+`BlockProcessor` are ports with no adapter behind them yet: an adapter for one links a provider and
+an HTTP transport, which `crates/indexing` may not, so they land outside it with the decoders.
+What is left of the spine is `bins/indexer` itself.
+[`docs/rust-migration.md`](rust-migration.md) carries the sequence.
 
 Three limits are worth stating plainly:
 
@@ -2184,6 +2189,16 @@ freeze at its last value — reporting healthy numbers precisely when someone is
 it stopped. One batch callback feeds all seven from a single `snapshot` read, so cursor, head and lag
 cannot disagree inside one scrape.
 
+**The Rust has no batch observable callback to use.** `opentelemetry` 0.31 offers one callback per
+instrument and nothing that spans several, so seven independent reads of a moving loop would publish
+a cursor, a head and a lag from three different moments — and a panel subtracting the first two would
+disagree with the third. The snapshot is memoised instead, on the only axis available: a collection
+runs its callbacks back to back in microseconds and two scrapes are seconds apart, so a
+one-millisecond window gives every gauge in a collection the same read and every collection a fresh
+one. It is three orders of magnitude clear of both scales, and the memo rather than the agreement is
+what a test can hold — during one flush the loop is not moving, so the gauges would agree either
+way.
+
 **What is the loop doing?** `indexer.iterations` by outcome (the retry rate, long before the stall
 alarm), `indexer.iteration.duration`, `indexer.processor.duration` by processor — dispatch is
 sequential, so the slowest processor is the whole loop's latency — `indexer.blocks.indexed`, and
@@ -2213,6 +2228,11 @@ endpoint behind it, stopping the proxy produced exactly one log line —
 `{"provider":"eth.drpc.org","previousProvider":"host.docker.internal:8899","msg":"rpc provider
 failover"}` — and `rpc_client_failovers_total = 1`, while several hundred requests went through
 afterwards.
+
+**A reorg is said twice in the Rust, and that is this stack rather than a choice.** A span event
+takes its name from the event's message when there is one, so a single emission carrying
+`reorg; blocks are stale` would be an event named after the sentence — unqueryable as `reorg`. The
+event and the log line are therefore separate emissions over the same fields.
 
 **Two silences, closed.** A healthy indexer walking empty ranges emitted _nothing_: the loop logged
 nothing per range and the event processors log only when they store something. There is now a `debug`
