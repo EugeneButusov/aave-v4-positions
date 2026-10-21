@@ -1,14 +1,16 @@
-//! The row that says how far the indexer has got.
+//! The row that says how far the indexer has got, read and written.
 
+mod cursor_store;
 mod error;
 mod postgres;
 mod sync_status;
 mod sync_status_store;
 
 #[cfg(test)]
-mod conformance;
+pub(crate) mod conformance;
 
+pub use cursor_store::{Cursor, CursorStore};
 pub use error::Error;
-pub use postgres::PostgresSyncStatusStore;
+pub use postgres::{PostgresCursorStore, PostgresSyncStatusStore};
 pub use sync_status::SyncStatus;
 pub use sync_status_store::SyncStatusStore;
