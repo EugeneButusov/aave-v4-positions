@@ -1,15 +1,15 @@
 //! A migrated schema, a store over it, and the rows put into it.
 //!
-//! **The write path is reproduced here rather than imported**: `CursorStore`,
-//! which owns it, arrives with the loop in Phase 3. It is one `INSERT`, and the
-//! column list is the migration's.
+//! **`given_cursor` writes the row itself rather than going through
+//! [`CursorStore`](crate::cursor::CursorStore)**, which now exists: that port
+//! stamps `updated_at` with the server's `now()`, and these cases need a row
+//! backdated by a stated number of seconds.
 
-use alloy_primitives::B256;
-use postgres::{Pool, build_pool, connection};
-use refinery_core::{Migration, Runner};
+use postgres::{Pool, connection};
 
-use super::PostgresSyncStatusStore;
-use crate::cursor::conformance::{Advanced, Harness};
+use super::{PostgresCursorStore, PostgresSyncStatusStore};
+use crate::cursor::conformance::{Advanced, CursorHarness, Harness};
+use crate::scratch::{lower, scratch};
 
 pub(crate) struct PostgresHarness {
     pool: Pool,
@@ -66,42 +66,42 @@ impl Harness for PostgresHarness {
     }
 }
 
-/// A schema per case, so cases can run at once.
-async fn scratch(prefix: &str, case: &str) -> Pool {
-    let base = std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
-    let schema = format!("{prefix}_{case}");
-
-    let admin = build_pool(&base).unwrap();
-    connection(&admin)
-        .await
-        .unwrap()
-        .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}"
-        ))
-        .await
-        .unwrap();
-
-    let separator = if base.contains('?') { '&' } else { '?' };
-    let pool = build_pool(&format!(
-        "{base}{separator}options=-c%20search_path%3D{schema}"
-    ))
-    .unwrap();
-
-    let set: Vec<Migration> = migrations::POSTGRES
-        .iter()
-        .flat_map(|source| source.files)
-        .map(|embedded| Migration::unapplied(embedded.label, embedded.sql).unwrap())
-        .collect();
-
-    let mut client = connection(&pool).await.unwrap();
-    Runner::new(&set).run_async(&mut **client).await.unwrap();
-    drop(client);
-
-    pool
+pub(crate) struct PostgresCursorHarness {
+    pool: Pool,
+    store: PostgresCursorStore,
 }
 
-/// The spelling the table's `CHECK (last_hash ~ '^0x[0-9a-f]{64}$')` demands.
-fn lower(hash: B256) -> String {
-    format!("{hash:#x}")
+impl CursorHarness for PostgresCursorHarness {
+    type Store = PostgresCursorStore;
+
+    async fn fresh(case: &str) -> Self {
+        let pool = scratch("rust_cursor", case).await;
+
+        Self {
+            store: PostgresCursorStore::new(pool.clone()),
+            pool,
+        }
+    }
+
+    fn store(&self) -> &Self::Store {
+        &self.store
+    }
+}
+
+impl PostgresCursorHarness {
+    /// The same row, through the read port. Which is the point: one table, two
+    /// adapters, and nothing else to keep them in step.
+    pub(crate) fn as_read(&self) -> PostgresSyncStatusStore {
+        PostgresSyncStatusStore::new(self.pool.clone())
+    }
+
+    pub(crate) async fn rows(&self) -> i64 {
+        connection(&self.pool)
+            .await
+            .unwrap()
+            .query_one("SELECT count(*) FROM indexer_cursor", &[])
+            .await
+            .unwrap()
+            .get(0)
+    }
 }

@@ -1724,6 +1724,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-postgres",
+ "tokio-util",
 ]
 
 [[package]]

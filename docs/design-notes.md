@@ -605,30 +605,42 @@ The indexer walks the chain and hands block ranges to registered processors. The
 about block numbers and nothing else — no notion of finality, of what a fork looks like, or of what
 a processor does with a range. Each of those sits behind a port.
 
-**Three seams, all injected at module setup.**
+**Three seams, named in the composition root.** `#[async_trait]` on each, because the root holds
+them as `Box<dyn _>` and a plain `async fn` in a trait is still not dyn compatible.
 
-Every method that could want I/O is `T | Promise<T>`, so an adapter can be synchronous without
-wrapping its answer and the loop `await`s either.
-
-```ts
-interface BlockProcessor {
-  readonly name: string; // what --processors matches, and what labels its span and duration metric
-  // both inclusive [from, to]: index this range / discard this range
-  onBlockRange(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
-  onReorg(from, to, signal): ProcessorOutcome | Promise<ProcessorOutcome>;
+```rust
+trait BlockProcessor {
+    /// what --processors matches, and what labels its span and duration metric
+    fn name(&self) -> &str;
+    /// both inclusive from..=to: index this range / discard this range
+    async fn on_block_range(&self, from: u64, to: u64, cancel: &CancellationToken)
+        -> Result<Outcome, Failure>;
+    async fn on_reorg(&self, from: u64, to: u64, cancel: &CancellationToken)
+        -> Result<Outcome, Failure>;
 }
-interface ReorgDetector {
-  bootstrap(cursor): Promise<ReorgVerdict>; // vet the resume point against the chain
-  safeHead(observedHead): number | Promise<number>; // what is settled
-  inspect(header): ReorgVerdict | Promise<ReorgVerdict>; // continuous | reorg | unrecoverable
-  commit(header): void | Promise<void>;
-  rewindTo(lastValidBlock): void | Promise<void>;
+trait ReorgDetector {
+    /// vet the resume point against the chain
+    async fn bootstrap(&self, cursor: Option<&Cursor>) -> Result<Verdict, Error>;
+    /// what is settled; None means nothing is
+    async fn safe_head(&self, observed_head: u64) -> Result<Option<u64>, Error>;
+    /// Continuous | Reorg { .. } | Unrecoverable { .. }
+    async fn inspect(&self, header: &BlockHeader) -> Result<Verdict, Error>;
+    async fn commit(&self, header: &BlockHeader) -> Result<(), Error>;
+    /// None clears the window
+    async fn rewind_to(&self, last_valid_block: Option<u64>) -> Result<(), Error>;
 }
-interface CursorStore {
-  load(chainId);
-  save(cursor);
+trait CursorStore {
+    async fn load(&self, chain_id: u32) -> Result<Option<Cursor>, Error>;
+    async fn save(&self, cursor: &Cursor) -> Result<(), Error>;
 }
 ```
+
+Two deviations worth naming, both because this is Rust rather than style. `-1` was the sentinel for
+"nothing is settled" and for "clear the window"; here each is an `Option`, since a negative block
+number in a `u64` world is an underflow waiting for the chain that is shorter than the finality
+depth. And the cancellation is a `CancellationToken` rather than a signal object: dropping the
+processor's future instead would cancel it at whatever await point the shutdown lands on, which on
+this path is mid-write.
 
 **The detector owns the shape of the chain.** The loop never computes `head - finalityDepth`; it
 calls `safeHead()` and uses the answer for one thing — **how wide to dispatch**. At or below the
@@ -644,8 +656,8 @@ one header for a thousand blocks, so a backfill asks ~940 questions rather than 
 loop to decide what was worth asking about would have put a finality judgement in the one component
 that is supposed to hold none.
 
-**Processors gate the cursor.** They return `ok` / `retry` / `failed` rather than throwing, and run
-sequentially in registration order, stopping at the first non-`ok`. The cursor advances only when all
+**Processors gate the cursor.** They return `Ok` / `Retry` / `Failed` rather than refusing with an
+error, and run sequentially in registration order, stopping at the first non-`Ok`. The cursor advances only when all
 of them succeeded, and it is saved **last** — it is the single durable commit point, so a crash
 anywhere earlier replays the range rather than skipping it. Unwinding a fork is the one place
 something follows it, and for the same reason: the detector's rewind discards the headers that are
@@ -740,7 +752,8 @@ evidence of the branch that lost — leaving every fork looking one block deep. 
 was durably retained and nothing else, which is why the window sits behind its own port,
 `BlockHeaderStore`, and why the adapter that ships behind it is the Postgres one.
 
-**Provider failover is viem's `fallback`**, tried in list order. Two of its defaults are overridden,
+**Provider failover is viem's `fallback`**, tried in list order — and the one part of this chapter
+with no Rust counterpart yet, because it belongs to the transport rather than to the loop. Two of its defaults are overridden,
 both verified against the 2.55 source rather than the docs: `fallback`'s own `retryCount` goes to 0
 so a total outage surfaces immediately instead of after four full sweeps of the list, and the head is
 clamped monotonically in the loop — viem does not reconcile block height between providers, so
@@ -776,6 +789,13 @@ are pinned by tests built from the literal strings four public endpoints returne
 outcome protocol, reorg detection, the event processor and the durable state stores all work. The
 loop's own failure paths are exercised by tests through scripted fakes rather than by the running
 service.
+
+**Where the Rust port stands.** Everything above that does not touch the chain is ported and
+durable: the cursor, the window, and both of their adapters. `ChainClient`, `LogReader` and
+`BlockProcessor` are ports with no adapter behind them yet — an adapter for one links a provider and
+an HTTP transport, which `crates/indexing` may not, so they land outside it. The loop, the detector
+and the instruments are in flight. [`docs/rust-migration.md`](rust-migration.md) carries the
+sequence.
 
 Three limits are worth stating plainly:
 

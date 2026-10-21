@@ -1,5 +1,5 @@
-//! Reads that carry a span, because the driver opens none: `tokio-postgres`
-//! speaks `log`, not `tracing`.
+//! Statements that carry a span, because the driver opens none:
+//! `tokio-postgres` speaks `log`, not `tracing`.
 
 use tokio_postgres::Row;
 use tokio_postgres::types::ToSql;
@@ -7,9 +7,9 @@ use tokio_postgres::types::ToSql;
 use crate::error::Error;
 use crate::pool::{Pool, connection};
 
-/// A pool whose reads are seen.
+/// A pool whose statements are seen.
 ///
-/// **The connection is taken per read, never held.** `deadpool` checks
+/// **The connection is taken per statement, never held.** `deadpool` checks
 /// `is_closed()` when handing one out, so a held connection fails every request
 /// after a server restart while readiness, asking for a fresh one, still passes.
 pub struct TracedPool(Pool);
@@ -37,6 +37,30 @@ impl TracedPool {
         connection(&self.0)
             .await?
             .query(sql, params)
+            .instrument(span(name, sql))
+            .await
+            .map_err(|source| Error::QueryFailed { source })
+    }
+
+    /// A write, and the rows it changed.
+    ///
+    /// Here rather than reached around through [`connection`], for the reason
+    /// this type exists: an untraced write would be a gap nothing fails over.
+    ///
+    /// # Errors
+    ///
+    /// As [`query`](Self::query).
+    pub async fn execute(
+        &self,
+        name: &'static str,
+        sql: &'static str,
+        params: &[&(dyn ToSql + Sync)],
+    ) -> Result<u64, Error> {
+        use tracing::Instrument as _;
+
+        connection(&self.0)
+            .await?
+            .execute(sql, params)
             .instrument(span(name, sql))
             .await
             .map_err(|source| Error::QueryFailed { source })
