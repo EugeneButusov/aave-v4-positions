@@ -20,5 +20,5 @@ pub type Client = tokio_postgres::Client;
 pub use bigint::Bigint;
 pub use error::Error;
 pub use health::ping;
-pub use pool::{Connection, Pool, build_pool, connection};
+pub use pool::{Connection, Deadline, Limits, Pool, build_pool, connection};
 pub use query::TracedPool;

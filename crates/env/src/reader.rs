@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::IpAddr;
+use std::time::Duration;
 
 use tracing::level_filters::LevelFilter;
 
@@ -150,6 +151,52 @@ impl<'a> Env<'a> {
             _ => Err(Invalid::new(
                 key,
                 &format!("must be 0..={max}, got {value:?}"),
+            )),
+        }
+    }
+
+    /// How many of something this process holds. Parses straight to `usize`,
+    /// so a bounded value needs no conversion back.
+    ///
+    /// # Errors
+    ///
+    /// [`Invalid`] outside `min..=max`.
+    pub fn size(
+        &self,
+        key: &str,
+        default: usize,
+        min: usize,
+        max: usize,
+    ) -> Result<usize, Invalid> {
+        let Some(value) = self.raw(key) else {
+            return Ok(default);
+        };
+
+        match value.parse::<usize>() {
+            Ok(size) if (min..=max).contains(&size) => Ok(size),
+            _ => Err(Invalid::new(
+                key,
+                &format!("must be {min}..={max}, got {value:?}"),
+            )),
+        }
+    }
+
+    /// A deadline. Takes a minimum, which [`Env::seconds`] does not, because a
+    /// deadline of zero is no deadline.
+    ///
+    /// # Errors
+    ///
+    /// [`Invalid`] outside `min..=max`.
+    pub fn millis(&self, key: &str, default: u64, min: u64, max: u64) -> Result<Duration, Invalid> {
+        let Some(value) = self.raw(key) else {
+            return Ok(Duration::from_millis(default));
+        };
+
+        match value.parse::<u64>() {
+            Ok(millis) if (min..=max).contains(&millis) => Ok(Duration::from_millis(millis)),
+            _ => Err(Invalid::new(
+                key,
+                &format!("must be {min}..={max} milliseconds, got {value:?}"),
             )),
         }
     }
@@ -301,6 +348,54 @@ mod tests {
         let seconds = read(&[("GRACE", "0")], |env| env.seconds("GRACE", 10, 300)).unwrap();
 
         assert_eq!(seconds, 0, "zero is a choice");
+    }
+
+    #[test]
+    fn reads_how_many_of_something_to_hold() {
+        let read = |raw: &str| read(&[("MAX", raw)], |env| env.size("MAX", 4, 1, 1_000));
+
+        assert_eq!(read("1").unwrap(), 1);
+        assert_eq!(read("1000").unwrap(), 1_000);
+        assert!(read(" ").is_err(), "whitespace is not a number");
+    }
+
+    #[test]
+    fn refuses_none_of_something_and_more_than_the_ceiling() {
+        let bad = |raw: &str| refusal(&[("MAX", raw)], |env| env.size("MAX", 4, 1, 1_000));
+
+        assert!(bad("0").contains("must be 1..=1000"));
+        assert!(bad("1001").contains("must be 1..=1000"));
+        assert!(bad("-1").contains("must be 1..=1000"));
+    }
+
+    #[test]
+    fn reads_a_deadline_in_milliseconds() {
+        let read = |raw: &str| read(&[("WAIT", raw)], |env| env.millis("WAIT", 250, 1, 30_000));
+
+        assert_eq!(read("1").unwrap(), Duration::from_millis(1));
+        assert_eq!(read("250").unwrap(), Duration::from_millis(250));
+        assert_eq!(read("30000").unwrap(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn defaults_a_deadline_without_the_caller_spelling_a_duration() {
+        let wait = read(&[], |env| env.millis("WAIT", 250, 1, 30_000)).unwrap();
+
+        assert_eq!(wait, Duration::from_millis(250));
+    }
+
+    #[test]
+    fn refuses_a_deadline_of_zero_and_one_past_the_ceiling() {
+        let bad = |raw: &str| refusal(&[("WAIT", raw)], |env| env.millis("WAIT", 250, 1, 30_000));
+
+        assert!(
+            bad("0").contains("must be 1..=30000 milliseconds"),
+            "{}",
+            bad("0")
+        );
+        assert!(bad("30001").contains("must be 1..=30000 milliseconds"));
+        assert!(bad("250ms").contains("must be 1..=30000 milliseconds"));
+        assert!(bad("-1").contains("must be 1..=30000 milliseconds"));
     }
 
     #[test]

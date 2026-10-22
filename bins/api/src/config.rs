@@ -20,6 +20,10 @@ use crate::positions::MIN_SECRET_BYTES;
 /// just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
+/// A units check on every deadline, like the one above. Catches a minute typed
+/// as milliseconds and nothing subtler.
+const MAX_DEADLINE_MS: u64 = 600_000;
+
 /// The six the specification spells, and no name of our own.
 const SAMPLERS: [(&str, Sampling); 6] = [
     ("always_on", Sampling::AlwaysOn),
@@ -53,6 +57,9 @@ pub(crate) struct Config {
     pub(crate) staleness: Staleness,
     pub(crate) clickhouse: clickhouse_client::Config,
     pub(crate) postgres_url: String,
+    pub(crate) postgres_limits: postgres::Limits,
+
+    pub(crate) request_timeout: Duration,
 }
 
 /// How old a number may be before a page says so.
@@ -103,11 +110,31 @@ impl Config {
                 // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no
                 // password, which is how the test and CI instances run.
                 password: env.text("CLICKHOUSE_PASSWORD", ""),
+                max_execution: env.millis(
+                    "CLICKHOUSE_MAX_EXECUTION_MS",
+                    10_000,
+                    1,
+                    MAX_DEADLINE_MS,
+                )?,
             },
             postgres_url: env.url(
                 "POSTGRES_URL",
                 "postgres://postgres@localhost:5432/postgres",
             )?,
+            postgres_limits: postgres::Limits {
+                max_size: env.size("POSTGRES_MAX_CONNECTIONS", 4, 1, 1_000)?,
+                wait: env.millis("POSTGRES_WAIT_MS", 250, 1, MAX_DEADLINE_MS)?,
+                create: env.millis("POSTGRES_CONNECT_MS", 2_000, 1, MAX_DEADLINE_MS)?,
+                recycle: env.millis("POSTGRES_RECYCLE_MS", 1_000, 1, MAX_DEADLINE_MS)?,
+                // Always bounded here; `Unbounded` is a caller's decision.
+                statement: postgres::Deadline::After(env.millis(
+                    "POSTGRES_STATEMENT_MS",
+                    5_000,
+                    1,
+                    MAX_DEADLINE_MS,
+                )?),
+            },
+            request_timeout: env.millis("API_REQUEST_TIMEOUT_MS", 10_000, 1, MAX_DEADLINE_MS)?,
         })
     }
 }

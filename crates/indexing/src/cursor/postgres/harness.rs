@@ -5,7 +5,7 @@
 //! column list is the migration's.
 
 use alloy_primitives::B256;
-use postgres::{Bigint, Pool, build_pool, connection};
+use postgres::{Bigint, Limits, Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use super::PostgresSyncStatusStore;
@@ -68,7 +68,7 @@ async fn scratch(prefix: &str, case: &str) -> Pool {
         .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
     let schema = format!("{prefix}_{case}");
 
-    let admin = build_pool(&base).unwrap();
+    let admin = build_pool(&base, Limits::default()).unwrap();
     connection(&admin)
         .await
         .unwrap()
@@ -79,9 +79,10 @@ async fn scratch(prefix: &str, case: &str) -> Pool {
         .unwrap();
 
     let separator = if base.contains('?') { '&' } else { '?' };
-    let pool = build_pool(&format!(
-        "{base}{separator}options=-c%20search_path%3D{schema}"
-    ))
+    let pool = build_pool(
+        &format!("{base}{separator}options=-c%20search_path%3D{schema}"),
+        Limits::default(),
+    )
     .unwrap();
 
     let set: Vec<Migration> = migrations::POSTGRES

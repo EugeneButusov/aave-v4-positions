@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 /// How to reach ClickHouse.
 ///
 /// Four discrete parts rather than one URL, because that is what the server's
@@ -16,6 +18,10 @@ pub struct Config {
     /// Empty is legitimate: a container started with `CLICKHOUSE_SKIP_USER_SETUP`
     /// has no password, which is how the test and CI instances run.
     pub password: String,
+
+    /// `max_execution_time`. Without it the HTTP connection is the only thing
+    /// that ends a pathological query.
+    pub max_execution: Duration,
 }
 
 /// The client every caller in this workspace should use.
@@ -31,6 +37,16 @@ pub fn build_client(config: Config) -> clickhouse::Client {
         .with_database(config.database)
         .with_user(config.user)
         .with_password(config.password)
+        .with_setting(
+            "max_execution_time",
+            max_execution_seconds(config.max_execution).to_string(),
+        )
+}
+
+/// At least one: `max_execution_time=0` is this server's "no limit", so a
+/// sub-second deadline would remove the one it was asked to set.
+fn max_execution_seconds(limit: Duration) -> u64 {
+    limit.as_secs().max(1)
 }
 
 #[cfg(test)]
@@ -52,6 +68,7 @@ mod tests {
             database: database.to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
+            max_execution: Duration::from_secs(30),
         }
     }
 

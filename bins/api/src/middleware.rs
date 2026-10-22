@@ -7,12 +7,16 @@
 //! request id prefers the trace id, so the span exists before the id is minted.
 
 use std::any::Any;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
+use axum::error_handling::HandleErrorLayer;
 use axum::http::{Request, StatusCode, header};
-use axum::response::Response;
-use tower::ServiceBuilder;
+use axum::response::{IntoResponse, Response};
+use tower::timeout::TimeoutLayer;
+use tower::timeout::error::Elapsed;
+use tower::{BoxError, ServiceBuilder};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::request_id::{
     MakeRequestId, MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
@@ -20,13 +24,13 @@ use tower_http::request_id::{
 
 use crate::requests::Instruments;
 
-pub(crate) fn apply(router: Router) -> Router {
+pub(crate) fn apply(router: Router, timeout: Duration) -> Router {
     let instruments = Instruments::new();
 
     router.layer(
         // The order is the contract: span outermost so the id is minted inside
-        // a traced request, then the header, then its copy onto the way out,
-        // and `CatchPanic` innermost so its 500 travels out through all three.
+        // a traced request and a deadline below is counted like any answer, and
+        // `CatchPanic` innermost so its 500 travels out through all three.
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 instruments,
@@ -34,8 +38,26 @@ pub(crate) fn apply(router: Router) -> Router {
             ))
             .layer(SetRequestIdLayer::x_request_id(Traced))
             .layer(PropagateRequestIdLayer::x_request_id())
+            .layer(HandleErrorLayer::new(refused))
+            .layer(TimeoutLayer::new(timeout))
             .layer(CatchPanicLayer::custom(panicked)),
     )
+}
+
+/// `504` rather than `408`: `408` says the client was too slow to send, and
+/// what elapsed is our own wait on a dependency.
+async fn refused(error: BoxError) -> Response {
+    let (status, detail) = if error.is::<Elapsed>() {
+        (StatusCode::GATEWAY_TIMEOUT, "the request took too long")
+    } else {
+        // Unreachable, and not a panic, so a second layer added here cannot
+        // make it one.
+        (StatusCode::INTERNAL_SERVER_ERROR, "the request failed")
+    };
+
+    tracing::warn!(status = status.as_u16(), detail, "request refused");
+
+    (status, detail).into_response()
 }
 
 /// The trace id when there is one, a fresh UUID when there is not.
@@ -104,7 +126,10 @@ mod tests {
             panic!("a secret only the server should know")
         }
 
-        let boom = apply(Router::new().route("/boom", axum::routing::get(boom)));
+        let boom = apply(
+            Router::new().route("/boom", axum::routing::get(boom)),
+            crate::test_support::app::PATIENT,
+        );
         let request = Request::builder()
             .uri("/boom")
             .header("x-request-id", "carried-through")

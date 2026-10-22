@@ -6,15 +6,13 @@ const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 /// Which chain a row, a cursor or a request belongs to.
 ///
-/// Wider than it looks like it needs to be: deployed chain ids already exceed
-/// `u32` — Palm is `11297108109` — so a narrower type refuses a valid chain as
-/// if the caller had malformed it.
+/// 64 bits because the `bigint` columns it is read from are, and because
+/// EIP-2294 caps chain ids above what `u32` holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChainId(u64);
 
 impl ChainId {
-    /// The lowest chain id there is. Zero is not one: EIP-155 gives it to
-    /// unprotected transactions, and no network claims it.
+    /// Zero is not a chain id: EIP-155 gives it to unprotected transactions.
     pub const MIN: Self = Self(1);
 
     /// EIP-2294's ceiling.
@@ -31,11 +29,8 @@ impl ChainId {
         Ok(Self(value))
     }
 
-    /// A chain id from a literal, where [`ChainId::new`]'s `Result` cannot be
-    /// unwrapped — a `const`, or a test fixture naming the chain it describes.
-    ///
-    /// In a `const` a bad literal fails to compile. Called at run time it
-    /// panics instead, so it takes literals and not arguments.
+    /// For a `const` or a fixture, where [`ChainId::new`]'s `Result` cannot be
+    /// unwrapped. A bad literal fails to compile; called at run time it panics.
     #[must_use]
     #[expect(
         clippy::panic,
@@ -48,8 +43,7 @@ impl ChainId {
         }
     }
 
-    /// The number itself, for arithmetic and for a `const`. A conversion at a
-    /// boundary wants [`u64::from`] instead.
+    /// For arithmetic and `const`s; a boundary wants [`u64::from`].
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
@@ -123,17 +117,12 @@ mod tests {
         assert!(ChainId::new(ChainId::MAX.get()).is_ok());
     }
 
-    /// Pins the footgun its doc names: outside a `const` there is no compiler
-    /// to catch the literal, so it is a panic rather than a silent chain 1.
     #[test]
     #[should_panic(expected = "not a chain id")]
     fn panics_on_a_literal_it_cannot_refuse_at_compile_time() {
         let _ = ChainId::known(0);
     }
 
-    /// The ceiling is EIP-2294's and not a width borrowed from whatever
-    /// happens to store one, so it is asserted rather than left to the doc
-    /// that names it.
     #[test]
     fn stops_where_the_protocol_does() {
         assert_eq!(ChainId::MAX.get(), (1 << 53) - 1);
