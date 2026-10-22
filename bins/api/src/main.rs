@@ -64,7 +64,7 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     // Neither dials, so a database that is briefly down means a process that
     // boots and reports itself not-ready rather than one that crash-loops.
     let clickhouse = clickhouse_client::build_client(config.clickhouse);
-    let postgres = postgres::build_pool(&config.postgres_url)?;
+    let postgres = postgres::build_pool(&config.postgres_url, config.postgres_limits)?;
 
     let shutdown = ShutdownFlag::new();
 
@@ -79,6 +79,7 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
         sync: Box::new(PostgresSyncStatusStore::new(postgres.clone())),
         signer: Signer::new(&config.cursor_secret)?,
         staleness: config.staleness,
+        request_timeout: config.request_timeout,
         prefix: config.prefix,
         docs_path: config.docs_path,
         docs_assets: config.docs_assets,

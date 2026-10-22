@@ -97,6 +97,7 @@ mod tests {
             database: "default".to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
+            max_execution: std::time::Duration::from_secs(30),
         });
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()

@@ -97,6 +97,7 @@ fn config(database: &str) -> Config {
         database: database.to_owned(),
         user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
         password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
+        max_execution: std::time::Duration::from_secs(60),
     }
 }
 

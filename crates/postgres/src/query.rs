@@ -84,6 +84,7 @@ mod tests {
 
     use super::*;
     use crate::build_pool;
+    use crate::pool::Limits;
 
     /// A statement every server has the answer to, so this needs no schema.
     const TABLES: &str =
@@ -155,7 +156,7 @@ mod tests {
         interesting();
         let url = std::env::var("POSTGRES_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
-        let pool = build_pool(&url).unwrap();
+        let pool = build_pool(&url, Limits::default()).unwrap();
         let client = TracedPool::new(pool);
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()

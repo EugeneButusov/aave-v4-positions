@@ -10,7 +10,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use aave_positions::store::{Error as StoreError, PositionPage, PositionQuery, PositionStore};
 use alloy_primitives::{Address, B256};
@@ -49,6 +51,7 @@ fn clickhouse() -> Client {
         database: "default".to_owned(),
         user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
         password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
+        max_execution: Duration::from_secs(60),
     })
 }
 
@@ -56,13 +59,17 @@ pub(crate) fn postgres() -> Pool {
     let url = std::env::var("POSTGRES_URL")
         .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
 
-    ::postgres::build_pool(&url).unwrap()
+    ::postgres::build_pool(&url, ::postgres::Limits::default()).unwrap()
 }
 
 /// Port 1 is reserved and nothing listens on it, so the pool's first dial is
 /// refused — a dependency that is down rather than one that is slow.
 pub(crate) fn unreachable_postgres() -> Pool {
-    ::postgres::build_pool("postgres://postgres@127.0.0.1:1/postgres").unwrap()
+    ::postgres::build_pool(
+        "postgres://postgres@127.0.0.1:1/postgres",
+        ::postgres::Limits::default(),
+    )
+    .unwrap()
 }
 
 pub(crate) fn state(postgres: Pool) -> App {
@@ -83,6 +90,18 @@ pub(crate) struct Stores {
     pub(crate) prices: HashMap<ReserveKey, ReservePrice>,
     pub(crate) staleness: Staleness,
 
+    /// Generous by default, so an ordinary case is not racing the deadline.
+    /// The cases that are about the deadline set it themselves.
+    pub(crate) request_timeout: Duration,
+
+    /// Makes the position store accept the read and never answer it.
+    ///
+    /// The double below answers instantly and the real pool points at port 1,
+    /// so a dependency that is *down* is the only kind this suite could
+    /// express — and down is the easy case. A request against a dependency
+    /// that is merely wedged is what has no deadline to catch it.
+    pub(crate) positions_hang: bool,
+
     /// How many times the price store was asked; the point is the answer `0`,
     /// because an explicit `as_of` skips the read rather than discarding it.
     pub(crate) price_reads: Arc<AtomicUsize>,
@@ -100,10 +119,15 @@ impl Default for Stores {
             labels: HashMap::new(),
             prices: HashMap::new(),
             staleness: STALENESS,
+            request_timeout: PATIENT,
+            positions_hang: false,
             price_reads: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
+
+/// A deadline a case will not reach by accident.
+pub(crate) const PATIENT: Duration = Duration::from_secs(30);
 
 /// A fixed instant, so a body a case asserts whole does not move with the clock.
 /// 2026-07-25T17:20:00Z.
@@ -129,7 +153,10 @@ impl Stores {
             shutdown: ShutdownFlag::new(),
             clickhouse: clickhouse(),
             postgres,
-            positions: Box::new(Positions(self.page)),
+            positions: Box::new(Positions {
+                page: self.page,
+                hang: self.positions_hang,
+            }),
             tokens: Box::new(Labels(self.labels)),
             prices: Box::new(Prices {
                 latest: self.prices,
@@ -138,6 +165,7 @@ impl Stores {
             sync: Box::new(Synced(self.sync)),
             signer: Signer::new(SECRET).expect("HMAC takes a key of any length"),
             staleness: self.staleness,
+            request_timeout: self.request_timeout,
             prefix: "api".to_owned(),
             docs_path: "docs".to_owned(),
             docs_assets: "/usr/share/api/docs".to_owned(),
@@ -149,12 +177,21 @@ impl Stores {
     }
 }
 
-struct Positions(PositionPage);
+struct Positions {
+    page: PositionPage,
+    hang: bool,
+}
 
 #[async_trait::async_trait]
 impl PositionStore for Positions {
     async fn list(&self, _query: &PositionQuery) -> Result<PositionPage, StoreError> {
-        Ok(self.0.clone())
+        if self.hang {
+            // Never resolves. On a paused clock this costs no wall time, and
+            // it is the only way to reach the deadline from inside a handler.
+            std::future::pending::<()>().await;
+        }
+
+        Ok(self.page.clone())
     }
 }
 

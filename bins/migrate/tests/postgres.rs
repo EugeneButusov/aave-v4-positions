@@ -28,7 +28,7 @@ async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
     let base = std::env::var("POSTGRES_URL")
         .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
 
-    let admin = postgres::build_pool(&base).unwrap();
+    let admin = postgres::build_pool(&base, postgres::Limits::default()).unwrap();
     postgres::connection(&admin)
         .await
         .unwrap()
@@ -41,9 +41,10 @@ async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
     // `options` is libpq's and tokio-postgres parses it out of the URL, so no
     // parameter only a test would pass has to reach `crates/postgres`.
     let separator = if base.contains('?') { '&' } else { '?' };
-    let pool = postgres::build_pool(&format!(
-        "{base}{separator}options=-c%20search_path%3D{schema}"
-    ))
+    let pool = postgres::build_pool(
+        &format!("{base}{separator}options=-c%20search_path%3D{schema}"),
+        postgres::Limits::default(),
+    )
     .unwrap();
     let client = postgres::connection(&pool).await.unwrap();
 
@@ -170,7 +171,7 @@ async fn rolls_back_within_a_migration_that_fails_partway() {
 /// in: a URL that will not parse is caught before anything dials.
 #[test]
 fn refuses_a_url_that_will_not_parse_before_it_dials() {
-    let error = postgres::build_pool("not-a-url").unwrap_err();
+    let error = postgres::build_pool("not-a-url", postgres::Limits::default()).unwrap_err();
 
     assert_eq!(error.to_string(), "could not parse the Postgres URL");
     assert!(std::error::Error::source(&error).is_some());
@@ -178,7 +179,11 @@ fn refuses_a_url_that_will_not_parse_before_it_dials() {
 
 #[tokio::test]
 async fn says_it_could_not_connect_when_the_server_will_not_have_us() {
-    let pool = postgres::build_pool("postgres://postgres@127.0.0.1:1/nope").unwrap();
+    let pool = postgres::build_pool(
+        "postgres://postgres@127.0.0.1:1/nope",
+        postgres::Limits::default(),
+    )
+    .unwrap();
 
     let error = postgres::connection(&pool).await.unwrap_err();
 

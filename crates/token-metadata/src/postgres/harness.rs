@@ -6,7 +6,7 @@
 //! `INSERT`, and the column list is the migration's.
 
 use alloy_primitives::Address;
-use postgres::{Bigint, Pool, build_pool, connection};
+use postgres::{Bigint, Limits, Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use super::PostgresTokenMetadataStore;
@@ -28,7 +28,7 @@ impl Harness for PostgresHarness {
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
         let schema = format!("rust_token_metadata_{case}");
 
-        let admin = build_pool(&base).unwrap();
+        let admin = build_pool(&base, Limits::default()).unwrap();
         connection(&admin)
             .await
             .unwrap()
@@ -42,9 +42,10 @@ impl Harness for PostgresHarness {
         // which is what lets a schema be chosen without `crates/postgres`
         // growing a parameter only a test would pass.
         let separator = if base.contains('?') { '&' } else { '?' };
-        let pool = build_pool(&format!(
-            "{base}{separator}options=-c%20search_path%3D{schema}"
-        ))
+        let pool = build_pool(
+            &format!("{base}{separator}options=-c%20search_path%3D{schema}"),
+            Limits::default(),
+        )
         .unwrap();
 
         migrate(&pool).await;
