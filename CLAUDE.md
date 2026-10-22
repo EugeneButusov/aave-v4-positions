@@ -17,9 +17,12 @@ cargo deny check
 ./scripts/binary-boundaries.sh
 ```
 
-The store suites need real servers. `docker compose up -d clickhouse postgres`, then:
+The store suites need real servers, and the readiness cases need a migrated schema in the two
+databases those variables name. `docker compose up -d clickhouse postgres`, then:
 
 ```bash
+CLICKHOUSE_USER=aave CLICKHOUSE_PASSWORD=aave CLICKHOUSE_DATABASE=aave \
+POSTGRES_URL='postgres://aave:aave@localhost:5432/aave' cargo run -p migrate
 CLICKHOUSE_USER=aave CLICKHOUSE_PASSWORD=aave CLICKHOUSE_DATABASE=aave \
 POSTGRES_URL='postgres://aave:aave@localhost:5432/aave' cargo test --workspace
 ```

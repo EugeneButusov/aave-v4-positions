@@ -65,6 +65,11 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     // boots and reports itself not-ready rather than one that crash-loops.
     let clickhouse = clickhouse_client::build_client(config.clickhouse);
     let postgres = postgres::build_pool(&config.postgres_url, config.postgres_limits)?;
+    let probes = probes::dependencies(
+        clickhouse.clone(),
+        &config.postgres_url,
+        config.postgres_limits,
+    )?;
 
     let shutdown = ShutdownFlag::new();
 
@@ -73,18 +78,17 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
     let handler = app::handler(App {
         uptime,
         shutdown: shutdown.clone(),
-        positions: Box::new(ClickHousePositionStore::new(clickhouse.clone())),
+        positions: Box::new(ClickHousePositionStore::new(clickhouse)),
         tokens: Box::new(PostgresTokenMetadataStore::new(postgres.clone())),
         prices: Box::new(PostgresReservePriceStore::new(postgres.clone())),
-        sync: Box::new(PostgresSyncStatusStore::new(postgres.clone())),
+        sync: Box::new(PostgresSyncStatusStore::new(postgres)),
         signer: Signer::new(&config.cursor_secret)?,
         staleness: config.staleness,
         request_timeout: config.request_timeout,
         prefix: config.prefix,
         docs_path: config.docs_path,
         docs_assets: config.docs_assets,
-        clickhouse,
-        postgres,
+        probes,
     });
 
     let address = SocketAddr::new(config.host, config.port);

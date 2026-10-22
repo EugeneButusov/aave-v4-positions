@@ -1,17 +1,38 @@
-/// Reports the fold reachable.
+use crate::error::Error;
+
+/// The relations a caller named that this database does not have.
 ///
-/// A plain `SELECT 1`: this answers "can this process read at all", and
-/// whether the data is right is reconciliation's question (§9).
+/// `CAST` because an empty literal is `Array(Nothing)`, which the server refuses
+/// as a filter rather than reading as no rows.
+const MISSING: &str = "SELECT arrayJoin(CAST(? AS Array(String))) AS want \
+     WHERE want NOT IN (SELECT name FROM system.tables WHERE database = currentDatabase())";
+
+/// Reports the fold reachable, and holding the relations a caller reads.
 ///
-/// Here rather than in the binary serving the probe, because both the API and
-/// the indexer want it.
+/// `SELECT 1` answered the first half alone, so a database that had never been
+/// migrated reported itself ready and then served 500s. A parameterised view is
+/// a row in `system.tables` like any table, which is what lets one query cover
+/// both. Whether the rows are *right* is reconciliation's question (§9).
 ///
 /// # Errors
 ///
-/// Whatever the driver says, which for an unreachable server is the connection
-/// error.
-pub async fn ping(client: &clickhouse::Client) -> Result<(), clickhouse::error::Error> {
-    client.query("SELECT 1").fetch_one::<u8>().await.map(drop)
+/// [`Error::Unreachable`] if the query cannot be run at all,
+/// [`Error::Missing`] naming every relation this database does not have.
+pub async fn ping(client: &clickhouse::Client, relations: &[&str]) -> Result<(), Error> {
+    let missing = client
+        .query(MISSING)
+        .bind(relations)
+        .fetch_all::<String>()
+        .await
+        .map_err(|source| Error::Unreachable { source })?;
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    Err(Error::Missing {
+        missing: missing.join(", "),
+    })
 }
 
 #[cfg(test)]
@@ -88,17 +109,91 @@ mod tests {
         });
     }
 
-    #[tokio::test]
-    async fn a_query_is_a_client_span_of_a_named_system() {
-        interesting();
-        let client = crate::build_client(crate::Config {
+    /// One database per case: `cargo` runs these concurrently against one
+    /// server, and both of them create the same table.
+    async fn with_one_table(name: &str) -> clickhouse::Client {
+        let admin = crate::build_client(config("default"));
+        for statement in [
+            format!("DROP DATABASE IF EXISTS {name} SYNC"),
+            format!("CREATE DATABASE {name}"),
+        ] {
+            admin.query(&statement).execute().await.unwrap();
+        }
+
+        let client = crate::build_client(config(name));
+        client
+            .query("CREATE TABLE widgets (id String) ENGINE = MergeTree ORDER BY id")
+            .execute()
+            .await
+            .unwrap();
+        client
+    }
+
+    fn config(database: &str) -> crate::Config {
+        crate::Config {
             url: std::env::var("CLICKHOUSE_URL")
                 .unwrap_or_else(|_| "http://localhost:8123".to_owned()),
-            database: "default".to_owned(),
+            database: database.to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
             max_execution: std::time::Duration::from_secs(30),
+        }
+    }
+
+    #[tokio::test]
+    async fn takes_a_database_holding_every_relation_it_was_asked_for() {
+        let client = with_one_table("rust_health_present").await;
+
+        ping(&client, &["widgets"]).await.expect("just created");
+    }
+
+    #[tokio::test]
+    async fn names_the_relation_the_migrations_did_not_build() {
+        let client = with_one_table("rust_health_missing").await;
+
+        let refused = ping(&client, &["widgets", "user_positions_as_of"])
+            .await
+            .expect_err("one of the two is not there");
+
+        assert_eq!(
+            refused.to_string(),
+            "the fold is missing user_positions_as_of"
+        );
+    }
+
+    #[tokio::test]
+    async fn asking_for_nothing_still_proves_the_server_answers() {
+        ping(&crate::build_client(config("default")), &[])
+            .await
+            .expect("an empty list is no relations, not a bad query");
+    }
+
+    /// The driver quotes the server's response: an authentication failure, a
+    /// table name, a version string. `/health/ready` is unauthenticated.
+    #[tokio::test]
+    async fn keeps_the_servers_own_words_out_of_the_message() {
+        let client = crate::build_client(crate::Config {
+            password: "not-the-password".to_owned(),
+            ..config("default")
         });
+
+        let refused = ping(&client, &["widgets"])
+            .await
+            .expect_err("a wrong password");
+
+        assert_eq!(refused.to_string(), "could not reach ClickHouse");
+        assert!(
+            std::error::Error::source(&refused)
+                .expect("the cause is kept for the log")
+                .to_string()
+                .contains("Authentication failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_query_is_a_client_span_of_a_named_system() {
+        interesting();
+        let client = crate::build_client(config("default"));
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured)
@@ -106,7 +201,10 @@ mod tests {
             .with_span_events(FmtSpan::CLOSE)
             .finish();
 
-        ping(&client).with_subscriber(subscriber).await.unwrap();
+        ping(&client, &[])
+            .with_subscriber(subscriber)
+            .await
+            .unwrap();
 
         let written = lines.read();
 

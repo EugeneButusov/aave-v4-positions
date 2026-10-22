@@ -45,21 +45,49 @@ const STALENESS: Staleness = Staleness {
     price: 300,
 };
 
-fn clickhouse() -> Client {
-    clickhouse_client::build_client(clickhouse_client::Config {
+/// The same variables `config` reads, so the readiness cases ask the database a
+/// deployment would have migrated rather than one named here.
+fn config() -> clickhouse_client::Config {
+    clickhouse_client::Config {
         url: std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_owned()),
-        database: "default".to_owned(),
+        database: std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "default".to_owned()),
         user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
         password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
         max_execution: Duration::from_secs(60),
+    }
+}
+
+pub(crate) fn clickhouse() -> Client {
+    clickhouse_client::build_client(config())
+}
+
+/// A database of this server's that no migration has reached.
+///
+/// Created rather than named, because the readiness cases run wherever the
+/// suite does and the one database the environment names has been migrated.
+pub(crate) async fn unmigrated_clickhouse() -> Client {
+    let database = "rust_api_unmigrated";
+    let admin = clickhouse();
+    for statement in [
+        format!("DROP DATABASE IF EXISTS {database} SYNC"),
+        format!("CREATE DATABASE {database}"),
+    ] {
+        admin.query(&statement).execute().await.unwrap();
+    }
+
+    clickhouse_client::build_client(clickhouse_client::Config {
+        database: database.to_owned(),
+        ..config()
     })
 }
 
-pub(crate) fn postgres() -> Pool {
-    let url = std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
+pub(crate) fn postgres_url() -> String {
+    std::env::var("POSTGRES_URL")
+        .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned())
+}
 
-    ::postgres::build_pool(&url, ::postgres::Limits::default()).unwrap()
+pub(crate) fn postgres() -> Pool {
+    ::postgres::build_pool(&postgres_url(), ::postgres::Limits::default()).unwrap()
 }
 
 /// Port 1 is reserved and nothing listens on it, so the pool's first dial is
@@ -145,8 +173,10 @@ impl Stores {
         App {
             uptime: Uptime::now(),
             shutdown: ShutdownFlag::new(),
-            clickhouse: clickhouse(),
-            postgres,
+            probes: crate::probes::Dependencies {
+                clickhouse: clickhouse(),
+                postgres,
+            },
             positions: Box::new(Positions {
                 page: self.page,
                 hang: self.positions_hang,

@@ -30,4 +30,9 @@ pub enum Error {
         #[source]
         source: tokio_postgres::Error,
     },
+
+    /// Named, not counted: which relation the migrations did not build is the
+    /// whole answer an operator is looking for.
+    #[error("the state store is missing {missing}")]
+    Missing { missing: String },
 }

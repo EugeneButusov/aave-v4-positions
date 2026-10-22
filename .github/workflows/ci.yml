@@ -157,6 +157,13 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # Readiness asks each database for the relations this process reads, so the
+      # probe cases need a migrated one — the store suites build scratch
+      # databases of their own and never did. Also the only place CI runs the
+      # Postgres half of this binary.
+      - name: Apply both schemas
+        run: cargo run -p migrate
+
       - name: Test
         run: cargo test --workspace
 
@@ -185,6 +192,11 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov@0.9.1
+
+      # As in the job above, and through llvm-cov so the run reuses the
+      # instrumented build rather than making a second uninstrumented one.
+      - name: Apply both schemas
+        run: cargo llvm-cov run -p migrate --no-report
 
       - name: Measure and enforce coverage
         run: >-

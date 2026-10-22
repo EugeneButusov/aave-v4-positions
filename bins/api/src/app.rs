@@ -5,18 +5,15 @@
 //! middleware in that order.
 //!
 //! Handed its dependencies rather than making them: the [`ShutdownFlag`] has
-//! two holders, [`Uptime`] has to be read at the top of `main`, and each client
-//! has a second consumer.
+//! two holders and [`Uptime`] has to be read at the top of `main`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use aave_positions::store::PositionStore;
 use axum::Router;
-use clickhouse_client::clickhouse::Client;
 use indexing::SyncStatusStore;
 use ops::{ShutdownFlag, Uptime};
-use postgres::Pool;
 use prices::ReservePriceStore;
 use token_metadata::TokenMetadataStore;
 use utoipa::OpenApi;
@@ -30,8 +27,9 @@ pub(crate) struct App {
     pub(crate) uptime: Uptime,
     pub(crate) shutdown: ShutdownFlag,
 
-    pub(crate) clickhouse: Client,
-    pub(crate) postgres: Pool,
+    /// Readiness's own connections, which the request path never touches: the
+    /// stores above were handed clones of their own.
+    pub(crate) probes: probes::Dependencies,
 
     /// Four ports, four trait objects, so a case can put a double in front of
     /// the handler without a database.
