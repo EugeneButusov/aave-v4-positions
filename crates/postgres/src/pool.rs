@@ -58,8 +58,10 @@ impl Default for Limits {
 ///
 /// # Errors
 ///
-/// [`Error::BadUrl`] if the URL will not parse, [`Error::PoolFailed`] if the
-/// pool will not build. Neither can be an unreachable server.
+/// [`Error::BadUrl`] if the URL will not parse — including an `sslmode` this
+/// driver does not spell and any `sslrootcert`, both of which it reads as
+/// unknown — and [`Error::PoolFailed`] if the pool will not build. Neither can
+/// be an unreachable server.
 pub fn build_pool(url: &str, limits: Limits) -> Result<Pool, Error> {
     let mut config = url
         .parse::<tokio_postgres::Config>()
@@ -74,7 +76,7 @@ pub fn build_pool(url: &str, limits: Limits) -> Result<Pool, Error> {
     // noticing a server that died silently — which readiness asks about anyway.
     let manager = Manager::from_config(
         config,
-        tokio_postgres::NoTls,
+        crate::tls::connector()?,
         ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         },

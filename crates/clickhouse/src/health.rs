@@ -110,6 +110,26 @@ mod tests {
             .expect("reachable");
     }
 
+    /// Without a TLS feature the driver refuses the scheme before it dials:
+    /// `hyper-util`'s connect error is turned into `Unsupported("invalid URL,
+    /// scheme is not http; … consider enabling `native-tls` or `rustls-tls`")`,
+    /// and that branch is compiled out once one of them is on.
+    #[tokio::test]
+    async fn dials_an_https_url_rather_than_refusing_the_scheme() {
+        let client = crate::build_client(crate::Config {
+            url: "https://127.0.0.1:1".to_owned(),
+            ..config("default")
+        });
+
+        let refused = ping(&client).await.expect_err("port 1 is reserved");
+        let cause = std::error::Error::source(&refused)
+            .expect("the cause is kept for the log")
+            .to_string();
+
+        assert!(!cause.contains("scheme is not http"), "{cause}");
+        assert!(!cause.contains("rustls-tls"), "{cause}");
+    }
+
     /// The driver quotes the server's response: an authentication failure, a
     /// table name, a version string. `/health/ready` is unauthenticated.
     #[tokio::test]

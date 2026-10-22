@@ -59,6 +59,10 @@ ignore = [
 allow = [
   "Apache-2.0",
   "BSD-3-Clause",
+  # Three crates, all under rustls, and `ring`'s is an `AND` rather than an
+  # `OR`: there is no MIT branch to satisfy instead. `ring`, `rustls-webpki`
+  # and `untrusted`.
+  "ISC",
   "MIT",
   "Unicode-3.0",
 ]

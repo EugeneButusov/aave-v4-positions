@@ -505,6 +505,52 @@ walked `source()` straight onto an unauthenticated route, publishing the user, t
 ClickHouse's verbatim response; the chain goes to the log, where the operator reading it is the one
 who already has the pod.
 
+### Database transport, and the silent downgrade that was there instead
+
+`Manager::from_config` was handed `tokio_postgres::NoTls`, and that is not the
+same as "TLS off". `connect_tls.rs:23` reads `SslMode::Prefer if
+!tls.can_connect(…)` and returns the raw stream — so the default `sslmode`
+never sent an `SSLRequest` at all, and the one way to notice was to read the
+driver. `sslmode=require` did fail loudly, at the handshake rather than the
+negotiation. Under postgres.js the same URL mapped onto its `ssl` option, so
+pointing at a managed database was a config change there and a code change here.
+
+Both databases now speak TLS through rustls, with `ring` as the provider and the
+host's own certificate roots:
+[`crates/postgres/src/tls.rs`](../crates/postgres/src/tls.rs) and the
+`rustls-tls-ring` plus `rustls-tls-native-roots` features on the ClickHouse
+driver. One crypto backend and one source of trust across the two, which is the
+reason for naming the features rather than taking the `rustls-tls` bundle — that
+one pulls `aws-lc-rs` and Mozilla's baked-in list. The provider is named in the
+`ClientConfig` rather than resolved from the process default, because rustls
+derives that default from whichever of its crypto features the whole graph
+enables: one future crate pulling it with defaults would add `aws-lc-rs` beside
+`ring` and turn the first connection into a panic.
+
+Nineteen crates join `bins/api`'s graph, nine of them the rustls subtree and the
+rest its platform shims — `security-framework` for the keychain on macOS,
+`x509-cert` and `der` under `rustls-native-certs`. `ISC` joins `deny.toml`'s
+allow list: `ring`'s expression is `Apache-2.0 AND ISC` rather than an `OR`, so
+there is no permitted branch to satisfy instead.
+
+**What this driver will not take.** `sslmode` has three spellings here —
+`disable`, `prefer`, `require` — and `verify-ca` and `verify-full` are a config
+parse error, as is `sslrootcert`, because `config.rs:716` rejects an unknown
+option outright. So a URL copied from a managed provider's console can fail at
+boot naming the variable. `require` verifies the certificate, which makes it
+libpq's `verify-full` rather than its `require`, and a provider with a private
+certificate authority needs a root this service cannot yet be given. Recorded
+rather than fixed: it is a parameter on `build_pool` and the config to thread it
+through, and no deployment here points at a managed database.
+
+The test is a stub server rather than a TLS-capable Postgres, because what is in
+question is this side of the negotiation. It reads the client's first eight
+bytes, answers `S`, and reports the next byte back: `00 00 00 08 04 D2 16 2F`
+then `0x16` is an `SSLRequest` followed by a TLS ClientHello. Putting `NoTls`
+back makes the `SSLRequest` arrive and the ClientHello never follow, which is
+exactly the shape of the defect. Certificate verification is rustls's own and is
+not re-tested; there is no configuration here that could switch it off.
+
 ## Phases
 
 Each is a PR, and each ends with a gate run against the TypeScript implementation. **Cutover is per
