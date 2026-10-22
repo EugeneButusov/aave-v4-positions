@@ -173,10 +173,7 @@ impl Stores {
         App {
             uptime: Uptime::now(),
             shutdown: ShutdownFlag::new(),
-            probes: crate::probes::Dependencies {
-                clickhouse: clickhouse(),
-                postgres,
-            },
+            probes: crate::probes::from_pool(clickhouse(), postgres),
             positions: Box::new(Positions {
                 page: self.page,
                 hang: self.positions_hang,

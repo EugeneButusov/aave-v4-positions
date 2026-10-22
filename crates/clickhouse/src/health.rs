@@ -7,7 +7,7 @@ use crate::error::Error;
 const MISSING: &str = "SELECT arrayJoin(CAST(? AS Array(String))) AS want \
      WHERE want NOT IN (SELECT name FROM system.tables WHERE database = currentDatabase())";
 
-/// Reports the fold reachable, and holding the relations a caller reads.
+/// Reports ClickHouse reachable, and holding the relations a caller reads.
 ///
 /// `SELECT 1` answered the first half alone, so a database that had never been
 /// migrated reported itself ready and then served 500s. A parameterised view is
@@ -151,13 +151,13 @@ mod tests {
     async fn names_the_relation_the_migrations_did_not_build() {
         let client = with_one_table("rust_health_missing").await;
 
-        let refused = ping(&client, &["widgets", "user_positions_as_of"])
+        let refused = ping(&client, &["widgets", "widgets_typo"])
             .await
             .expect_err("one of the two is not there");
 
         assert_eq!(
             refused.to_string(),
-            "the fold is missing user_positions_as_of"
+            "ClickHouse is missing required relations: widgets_typo"
         );
     }
 

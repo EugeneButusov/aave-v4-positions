@@ -27,6 +27,11 @@ const STATUS: &str = "\
     WHERE chain_id = $1 \
     LIMIT 1";
 
+/// Both relations read by [`STATUS`]. The left join is still a dependency: an
+/// unmigrated deployment must not report ready merely because the cursor table
+/// happens to exist.
+const REQUIRED_RELATIONS: &[&str] = &["indexer_cursor", "indexer_block_headers"];
+
 pub struct PostgresSyncStatusStore {
     db: TracedPool,
 }
@@ -37,6 +42,16 @@ impl PostgresSyncStatusStore {
         Self {
             db: TracedPool::new(pool),
         }
+    }
+
+    /// Reports whether this adapter can serve synchronization status.
+    ///
+    /// # Errors
+    ///
+    /// Postgres cannot serve the catalogue query or a relation read by this
+    /// adapter is absent.
+    pub async fn check_readiness(&self) -> Result<(), postgres::Error> {
+        self.db.check_readiness(REQUIRED_RELATIONS).await
     }
 }
 

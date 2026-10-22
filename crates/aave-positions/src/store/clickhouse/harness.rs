@@ -101,6 +101,19 @@ fn config(database: &str) -> Config {
     }
 }
 
+/// A reachable database with none of this adapter's projection installed.
+pub(super) async fn unmigrated_database(name: &str) -> Client {
+    let bootstrap = build_client(config("default"));
+    for statement in [
+        format!("DROP DATABASE IF EXISTS {name} SYNC"),
+        format!("CREATE DATABASE {name}"),
+    ] {
+        bootstrap.query(&statement).execute().await.unwrap();
+    }
+
+    build_client(config(name))
+}
+
 /// A migrated database of the caller's own.
 ///
 /// One per test, not one per file: `cargo` runs these concurrently against one

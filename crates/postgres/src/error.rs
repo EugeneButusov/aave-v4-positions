@@ -33,6 +33,6 @@ pub enum Error {
 
     /// Named, not counted: which relation the migrations did not build is the
     /// whole answer an operator is looking for.
-    #[error("the state store is missing {missing}")]
+    #[error("Postgres is missing required relations: {missing}")]
     Missing { missing: String },
 }

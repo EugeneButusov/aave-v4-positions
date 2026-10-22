@@ -1,4 +1,4 @@
-/// What a readiness check against the fold can fail at.
+/// What a readiness check against ClickHouse can fail at.
 ///
 /// Its own type rather than the driver's, because these messages reach an
 /// unauthenticated body and `clickhouse::error::Error::BadResponse` is the
@@ -13,6 +13,6 @@ pub enum Error {
 
     /// Named, not counted: which object the migrations did not build is the
     /// whole answer an operator is looking for.
-    #[error("the fold is missing {missing}")]
+    #[error("ClickHouse is missing required relations: {missing}")]
     Missing { missing: String },
 }

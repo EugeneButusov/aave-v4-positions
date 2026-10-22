@@ -8,7 +8,7 @@ use crate::pool::{Pool, connection};
 const MISSING: &str = "SELECT name FROM unnest($1::text[]) AS t(name) \
      WHERE to_regclass(t.name) IS NULL";
 
-/// Reports the state store reachable, and holding the relations a caller reads.
+/// Reports Postgres reachable, and holding the relations a caller reads.
 ///
 /// `SELECT 1` answered the first half alone, so a database that had never been
 /// migrated reported itself ready and then served 500s.
@@ -75,7 +75,7 @@ mod tests {
 
         assert_eq!(
             refused.to_string(),
-            "the state store is missing indexer_cursor_typo"
+            "Postgres is missing required relations: indexer_cursor_typo"
         );
     }
 
