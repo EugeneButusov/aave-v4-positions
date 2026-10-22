@@ -4,5 +4,7 @@
 //! here rather than at each boundary that reads one.
 
 mod chain_id;
+mod unix_seconds;
 
 pub use chain_id::{ChainId, NotAChainId};
+pub use unix_seconds::UnixSeconds;

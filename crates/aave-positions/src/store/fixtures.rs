@@ -6,7 +6,7 @@
 //! [`super::clickhouse::harness`].
 
 use alloy_primitives::{Address, address};
-use units::ChainId;
+use units::{ChainId, UnixSeconds};
 
 use super::{PositionPage, PositionQuery};
 
@@ -183,7 +183,8 @@ pub(super) const YEAR: u64 = 365 * 24 * 3600;
 /// 5% per annum, RAY-scaled, as `drawnRate` arrives on `UpdateAsset`.
 pub(super) const FIVE_PERCENT: &str = "50000000000000000000000000";
 
-/// The query every case varies from: this wallet, on this Spoke, now.
+/// The query every case varies from: this wallet, on this Spoke, cut after
+/// every event the fixtures write.
 pub(super) fn ask() -> PositionQuery {
     PositionQuery {
         chain_id: CHAIN_ID,
@@ -191,7 +192,7 @@ pub(super) fn ask() -> PositionQuery {
         spoke: Some(SPOKE),
         limit: 100,
         after: None,
-        as_of: None,
+        cut: UnixSeconds::new(CHECKPOINT_AT + YEAR),
     }
 }
 

@@ -7,7 +7,7 @@
 use postgres::{Bigint, Pool, TracedPool};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
-use units::ChainId;
+use units::{ChainId, UnixSeconds};
 
 use crate::cursor::{Error, SyncStatus, SyncStatusStore};
 
@@ -17,14 +17,21 @@ use crate::cursor::{Error, SyncStatus, SyncStatusStore};
 /// stale. Floored to whole seconds: `EXTRACT` returns microseconds, and six
 /// decimal places on a figure compared against a threshold in tens of seconds
 /// is precision nobody can use and everybody has to read.
+///
+/// **The header is joined rather than read second**, so the height a response is
+/// stamped with and the instant it is cut at are one snapshot. `LEFT`, because
+/// the cursor can name a height whose header row has just been deleted.
 const STATUS: &str = "\
     SELECT \
-        last_block, \
-        last_hash, \
-        updated_at, \
-        floor(EXTRACT(EPOCH FROM (now() - updated_at)))::bigint AS age_seconds \
-    FROM indexer_cursor \
-    WHERE chain_id = $1 \
+        c.last_block, \
+        c.last_hash, \
+        c.updated_at, \
+        floor(EXTRACT(EPOCH FROM (now() - c.updated_at)))::bigint AS age_seconds, \
+        h.block_timestamp \
+    FROM indexer_cursor c \
+    LEFT JOIN indexer_block_headers h \
+           ON h.chain_id = c.chain_id AND h.block_number = c.last_block \
+    WHERE c.chain_id = $1 \
     LIMIT 1";
 
 pub struct PostgresSyncStatusStore {
@@ -76,12 +83,29 @@ fn status(chain_id: ChainId, row: &Row) -> Result<SyncStatus, Error> {
             value: last_hash.to_owned(),
         })?,
         updated_at: row.get::<_, OffsetDateTime>("updated_at"),
+        last_block_timestamp: block_timestamp(row)?,
         // Clamped rather than refused, and the only one of these that is.
         // Negative means the row was written by a clock ahead of the one
         // reading it, and "not stale" is the honest answer to that — unlike a
         // height or a hash, where no answer is better than a plausible one.
         age_seconds: age_seconds.try_into().unwrap_or(0),
     })
+}
+
+/// Refused rather than clamped: a page cut at a negative instant would be
+/// served as fact.
+fn block_timestamp(row: &Row) -> Result<Option<UnixSeconds>, Error> {
+    row.get::<_, Option<i64>>("block_timestamp")
+        .map(|seconds| {
+            u64::try_from(seconds)
+                .map(UnixSeconds::new)
+                .map_err(|_| Error::Malformed {
+                    column: "block_timestamp",
+                    expected: "non-negative",
+                    value: seconds.to_string(),
+                })
+        })
+        .transpose()
 }
 
 #[cfg(test)]
@@ -108,5 +132,8 @@ mod tests {
         reads_only_the_chain_it_was_asked_about,
         ages_the_row_by_the_database_clock,
         reads_a_block_height_past_what_a_double_can_hold,
+        reads_the_timestamp_of_the_block_the_cursor_names,
+        answers_no_timestamp_when_the_window_has_no_header_for_that_height,
+        takes_the_header_of_the_chain_it_was_asked_about,
     }
 }

@@ -4,6 +4,7 @@ use aave_positions::store::{Position, PositionPage};
 use indexing::SyncStatus;
 use serde::Serialize;
 use time::OffsetDateTime;
+use units::UnixSeconds;
 use utoipa::ToSchema;
 
 use super::{Error, Item, Labels, Prices, price_for};
@@ -18,9 +19,10 @@ pub(crate) struct Page {
     sync: Progress,
 
     /// When every amount on this page was computed — one instant for the whole
-    /// page, defaulting to now. Distinct from `sync.last_block`: the shares are
-    /// as far as the indexer has folded, the amounts are those shares valued
-    /// here. The `as_of` query parameter that sets it is Unix seconds.
+    /// page, defaulting to the block timestamp of `sync.last_block` rather than
+    /// to this server's clock. The shares are as far as the indexer has folded;
+    /// the amounts are those shares valued here. The `as_of` query parameter
+    /// that moves it is Unix seconds.
     #[serde(with = "time::serde::rfc3339")]
     valued_at: OffsetDateTime,
 
@@ -43,20 +45,21 @@ pub(crate) struct Page {
 impl Page {
     /// # Errors
     ///
-    /// [`Error`], when a position will not render or the store valued the page
-    /// at a number no date can hold.
+    /// [`Error`], when a position will not render or the cut is a number no
+    /// date can hold.
     pub(crate) fn new(
         sync: &SyncStatus,
+        cut: UnixSeconds,
         page: &PositionPage,
         labels: &Labels,
         prices: &Prices,
         staleness: Staleness,
         next_cursor: Option<String>,
     ) -> Result<Self, Error> {
-        let valued_at = i64::try_from(page.valued_at)
+        let valued_at = i64::try_from(cut.get())
             .ok()
             .and_then(|seconds| OffsetDateTime::from_unix_timestamp(seconds).ok())
-            .ok_or(Error::ValuedAt(page.valued_at))?;
+            .ok_or(Error::ValuedAt(cut.get()))?;
 
         Ok(Self {
             sync: Progress::new(sync, staleness.sync),

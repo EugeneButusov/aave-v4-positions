@@ -7,7 +7,7 @@
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
-use units::ChainId;
+use units::{ChainId, UnixSeconds};
 
 use super::{Error, Position};
 
@@ -39,21 +39,19 @@ pub struct PositionQuery {
     pub limit: u32,
     /// Resume point, already verified by whoever owns the wire format.
     pub after: Option<PositionKey>,
-    /// Unix seconds to value the page at. `None` is now.
+    /// The instant to read and value the page at.
     ///
-    /// Amounts are a per-second quantity (§5), so naming the instant is what
-    /// makes a response reproducible. The shares are as of whatever the indexer
-    /// has folded, which is a different clock — [`PositionPage::valued_at`]
-    /// reports this one so the two are not conflated.
-    pub as_of: Option<u64>,
+    /// Amounts are a per-second quantity (§5). Required, not optional: a store
+    /// with a default here would be reading its own clock.
+    pub cut: UnixSeconds,
 }
 
+/// What came back, and nothing about when: a store echoing
+/// [`PositionQuery::cut`] back is the one place the stamp and the payload can
+/// come to disagree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PositionPage {
     pub items: Vec<Position>,
-    /// Unix seconds every amount on this page was computed at — one instant for
-    /// the whole page, so two positions in it cannot disagree about the time.
-    pub valued_at: u64,
     /// `None` on the last page. Absence is the end, not an empty key.
     pub next: Option<PositionKey>,
 }

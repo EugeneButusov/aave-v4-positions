@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 use time::OffsetDateTime;
-use units::ChainId;
+use units::{ChainId, UnixSeconds};
 
 /// How far the indexer has got on one chain, and how long ago it got there.
 ///
@@ -14,6 +14,12 @@ pub struct SyncStatus {
 
     /// Written by the database's clock.
     pub updated_at: OffsetDateTime,
+
+    /// What the chain said the time was at [`Self::last_block`].
+    ///
+    /// `None` is a height the retention window has no header for, which it
+    /// passes through while the indexer rebuilds the window below a new top.
+    pub last_block_timestamp: Option<UnixSeconds>,
 
     /// Whole seconds since the indexer last advanced, **measured by the
     /// database's own clock**.

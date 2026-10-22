@@ -22,3 +22,7 @@ lefthook-local.yml
 
 # Cargo build output.
 /target/
+
+# `cargo insta`'s pending snapshots. A review artefact: the accepted file is
+# `.snap`, and committing the other one makes the next run's diff a diff of it.
+*.snap.new

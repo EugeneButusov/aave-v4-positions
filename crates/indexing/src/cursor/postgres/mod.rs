@@ -1,7 +1,8 @@
 //! The Postgres implementation of [`SyncStatusStore`](super::SyncStatusStore).
 //!
 //! One query over five columns, so the statement and the row stay in
-//! `sync_status_store` rather than splitting as `aave-positions` does.
+//! `sync_status_store` rather than splitting as `aave-positions` does. Two
+//! tables now, joined there for the reason written on the statement.
 
 #[cfg(test)]
 mod harness;

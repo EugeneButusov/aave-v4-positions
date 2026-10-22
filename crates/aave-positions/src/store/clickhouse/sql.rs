@@ -50,7 +50,7 @@ FROM (
     -- position held then, the collateral flag set then, the reserve listed by
     -- then, and the interest checkpoint in force then: all three views take the
     -- same parameter, and a page is only as point-in-time as its least.
-    FROM user_positions_as_of(cut = {valuedAt:DateTime})
+    FROM user_positions_as_of(cut = {cut:DateTime})
     -- The leading pair of the sorting key, so the scan starts at this
     -- wallet's rows rather than filtering its way to them.
     WHERE chain_id = {chainId:UInt64}
@@ -108,9 +108,9 @@ FROM (
 --
 -- LEFT, because a position must survive a reserve the registry has not
 -- seen. The nulls that produces are reported as nulls rather than zeros.
-LEFT JOIN spoke_reserves_as_of(cut = {valuedAt:DateTime}) AS r
+LEFT JOIN spoke_reserves_as_of(cut = {cut:DateTime}) AS r
     ON r.chain_id = p.chain_id AND r.spoke = p.spoke AND r.reserve_id = p.reserve_id
-LEFT JOIN hub_assets_as_of(cut = {valuedAt:DateTime}) AS a
+LEFT JOIN hub_assets_as_of(cut = {cut:DateTime}) AS a
     ON a.chain_id = r.chain_id AND a.hub = r.hub AND a.asset_id = r.asset_id
 -- Qualified, and it has to be. Unqualified, reserve_id binds to the
 -- toString alias above and sorts the decimal digits as text, putting 13
@@ -171,7 +171,7 @@ mod tests {
             parameters(STATEMENT),
             [
                 // First, because the fold is selected by it.
-                "valuedAt",
+                "cut",
                 "chainId",
                 "user",
                 "afterSpoke",
@@ -211,7 +211,7 @@ mod tests {
     }
 
     /// Distinct names, in the order they first appear: one `param` call covers
-    /// every occurrence, so `valuedAt` belongs in the list once.
+    /// every occurrence, so `cut` belongs in the list once.
     fn parameters(statement: &str) -> Vec<&str> {
         let mut seen = Vec::new();
         for name in statement

@@ -46,8 +46,9 @@ that reads as a rounding bug rather than a parse error.";
         name = "positions",
         description = "Folded from the Spoke event stream, enriched from the Hub and the \
                        reserve registry. Balances are shares; `value` is what they are worth \
-                       at the instant the page names. Every response carries the block it is \
-                       true as of, and the two clocks beside it.",
+                       at the instant the page names. Every response carries the block the \
+                       shares were folded to, the instant the amounts were valued at, and \
+                       how current the prices behind them are.",
     )),
 )]
 pub(crate) struct ApiDoc;

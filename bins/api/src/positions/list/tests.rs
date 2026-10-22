@@ -109,7 +109,6 @@ async fn serves_the_whole_page_in_the_spelling_this_port_publishes() {
     let stores = Stores {
         page: PositionPage {
             items: vec![held()],
-            valued_at: VALUED_AT,
             next: None,
         },
         labels: labelled(),
@@ -168,13 +167,99 @@ async fn a_chain_this_deployment_has_never_indexed_is_a_404_not_an_empty_page() 
 }
 
 #[tokio::test]
+async fn values_a_default_page_at_the_block_timestamp_of_the_head_it_is_stamped_with() {
+    // The defect: this used to be `SystemTime::now()` in the store, so the
+    // stamp moved every second while `sync.last_block` stood still and the two
+    // described different instants.
+    let (status, body) = answer(Stores::default(), "").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#""valued_at":"2026-07-25T17:20:00Z""#),
+        "{body}"
+    );
+    assert!(body.contains(r#""last_block":25652535"#), "{body}");
+}
+
+#[tokio::test]
+async fn refuses_a_default_page_when_the_window_holds_no_header_for_the_indexed_block() {
+    // `commit` truncates the window, appends the new top and then walks down
+    // filling it, and the cursor is saved after all of that — so a height with
+    // no header is a state the indexer passes through. There is no instant to
+    // cut at, and inventing one is the defect.
+    let (status, body) = answer(
+        Stores {
+            sync: Some(SyncStatus {
+                last_block_timestamp: None,
+                ..synced()
+            }),
+            ..Stores::default()
+        },
+        "",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        body,
+        r#"{"message":"chain 1 has no header for block 25652535, which it is indexed to","error":"Not Found","status_code":404}"#
+    );
+}
+
+#[tokio::test]
+async fn refuses_an_instant_the_fold_has_not_reached_yet() {
+    let (status, body) = answer(
+        Stores::default(),
+        &format!("?as_of={}", VALUED_AT.saturating_add(1)),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body,
+        r#"{"message":"as_of 1785000001 is later than block 25652535 that this chain is indexed to","error":"Bad Request","status_code":400}"#
+    );
+}
+
+#[tokio::test]
+async fn takes_the_anchor_itself() {
+    // The boundary: `>` and not `>=`, because the instant the head was mined at
+    // is the one instant the fold is complete for.
+    let (status, body) = answer(Stores::default(), &format!("?as_of={VALUED_AT}")).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains(r#""valued_at":"2026-07-25T17:20:00Z""#),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn serves_a_named_instant_even_with_no_header_to_anchor_it() {
+    // A caller naming its own cut needs no anchor, so the 404 above is the
+    // default path's and not the parameter's.
+    let (status, _) = answer(
+        Stores {
+            sync: Some(SyncStatus {
+                last_block_timestamp: None,
+                ..synced()
+            }),
+            ..Stores::default()
+        },
+        &format!("?as_of={VALUED_AT}"),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn an_explicit_instant_skips_the_price_read_rather_than_discarding_it() {
     // Amounts extrapolate to that instant and prices do not. The counter
     // is what makes it a skip: a discarded result reads `1`.
     let stores = Stores {
         page: PositionPage {
             items: vec![held()],
-            valued_at: 1_780_000_000,
             next: None,
         },
         labels: labelled(),
@@ -209,7 +294,6 @@ async fn the_page_clock_is_the_oldest_price_behind_it_not_the_newest() {
     let stores = Stores {
         page: PositionPage {
             items: vec![held(), elsewhere],
-            valued_at: VALUED_AT,
             next: None,
         },
         labels: labelled(),
@@ -239,7 +323,6 @@ async fn writes_a_subsecond_at_whatever_width_it_takes_to_say_it() {
     let stores = Stores {
         page: PositionPage {
             items: vec![held()],
-            valued_at: VALUED_AT,
             next: None,
         },
         labels: labelled(),
@@ -269,7 +352,6 @@ async fn an_unresolved_reserve_nulls_the_asset_the_value_and_the_shares_together
     let stores = Stores {
         page: PositionPage {
             items: vec![unresolved],
-            valued_at: VALUED_AT,
             next: None,
         },
         ..Stores::default()
@@ -312,7 +394,6 @@ async fn a_hub_that_listed_the_asset_without_checkpointing_it_keeps_the_shares()
     let stores = Stores {
         page: PositionPage {
             items: vec![unvalued],
-            valued_at: VALUED_AT,
             next: None,
         },
         labels: labelled(),
@@ -336,7 +417,6 @@ async fn a_reserve_nobody_has_priced_nulls_the_dollars_and_keeps_the_tokens() {
     let stores = Stores {
         page: PositionPage {
             items: vec![held()],
-            valued_at: VALUED_AT,
             next: None,
         },
         labels: labelled(),
@@ -371,7 +451,6 @@ async fn a_token_with_no_label_and_one_with_no_symbol_both_serve_null() {
         let stores = Stores {
             page: PositionPage {
                 items: vec![held()],
-                valued_at: VALUED_AT,
                 next: None,
             },
             labels,
@@ -393,7 +472,6 @@ async fn takes_back_the_cursor_it_issued_and_only_for_the_listing_it_issued_it_f
     let stores = Stores {
         page: PositionPage {
             items: vec![held()],
-            valued_at: VALUED_AT,
             next: Some(PositionKey {
                 spoke: address(SPOKE),
                 reserve_id: U256::from(7),

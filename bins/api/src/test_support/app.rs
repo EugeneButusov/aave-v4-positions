@@ -28,7 +28,7 @@ use prices::{Error as PriceError, ReserveKey, ReservePrice, ReservePriceStore};
 use time::OffsetDateTime;
 use token_metadata::{Error as LabelError, TokenLabel, TokenMetadataStore};
 use tower::ServiceExt;
-use units::ChainId;
+use units::{ChainId, UnixSeconds};
 
 use crate::app::{self as app, App};
 use crate::config::Staleness;
@@ -117,7 +117,6 @@ impl Default for Stores {
             sync: Some(synced()),
             page: PositionPage {
                 items: Vec::new(),
-                valued_at: VALUED_AT,
                 next: None,
             },
             labels: HashMap::new(),
@@ -133,8 +132,7 @@ impl Default for Stores {
 /// A deadline a case will not reach by accident.
 pub(crate) const PATIENT: Duration = Duration::from_secs(30);
 
-/// A fixed instant, so a body a case asserts whole does not move with the clock.
-/// 2026-07-25T17:20:00Z.
+/// The block timestamp of the height [`synced`] names. 2026-07-25T17:20:00Z.
 pub(crate) const VALUED_AT: u64 = 1_785_000_000;
 
 pub(crate) fn synced() -> SyncStatus {
@@ -146,6 +144,9 @@ pub(crate) fn synced() -> SyncStatus {
             .expect("a literal hash"),
         updated_at: OffsetDateTime::from_unix_timestamp(1_785_000_071)
             .expect("a representable instant"),
+        // The anchor every default page is cut at, so a body a case asserts
+        // whole does not move with the clock.
+        last_block_timestamp: Some(UnixSeconds::new(VALUED_AT)),
         age_seconds: 7,
     }
 }

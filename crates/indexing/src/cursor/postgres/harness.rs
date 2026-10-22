@@ -9,7 +9,7 @@ use postgres::{Bigint, Limits, Pool, build_pool, connection};
 use refinery_core::{Migration, Runner};
 
 use super::PostgresSyncStatusStore;
-use crate::cursor::conformance::{Advanced, Harness};
+use crate::cursor::conformance::{Advanced, Harness, Header};
 
 pub(crate) struct PostgresHarness {
     pool: Pool,
@@ -54,6 +54,29 @@ impl Harness for PostgresHarness {
                             reason = "a test's staleness window, in whole seconds under a minute"
                         )]
                         &(row.aged_seconds as f64),
+                    ],
+                )
+                .await
+                .unwrap();
+        }
+    }
+
+    async fn given_headers(&self, rows: &[Header]) {
+        let client = connection(&self.pool).await.unwrap();
+
+        for row in rows {
+            client
+                .execute(
+                    // `hash` and `parent_hash` are `NOT NULL` with a format
+                    // check, and nothing here reads them.
+                    "INSERT INTO indexer_block_headers \
+                     (chain_id, block_number, hash, parent_hash, block_timestamp) \
+                     VALUES ($1, $2, $3, $3, $4)",
+                    &[
+                        &Bigint(row.chain_id.into()),
+                        &Bigint(row.block_number),
+                        &lower(B256::ZERO),
+                        &Bigint(row.block_timestamp.into()),
                     ],
                 )
                 .await

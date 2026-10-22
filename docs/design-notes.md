@@ -654,6 +654,15 @@ dispatch is **at-least-once per processor per range**, and processors must be id
 analysis already models positions as a fold over an immutable log, so replay is the repair primitive
 (§8, §9.4).
 
+**The cursor and the window it names are not one transaction**, which a reader has to allow for.
+`commit` truncates the window, appends the new top and then walks down filling the run below it —
+up to `finalityDepth` RPC round trips at the tip after a restart — and `save(cursor)` runs only
+after all of it returns. Throughout, the cursor still names a height whose header row has just been
+deleted. So a reader asking "what time was the block at `last_block` mined" must treat the absent
+answer as absent: the Rust API joins the header in the same statement as the cursor and serves a 404
+rather than substituting its own clock. Phase 3's `CursorStore` is where the two writes can become
+one.
+
 A `retry` may set `narrowRange`, which halves the range size — the measured provider caps above are
 why. Retries are unbounded, because an RPC outage should recover on its own; the bound is
 observability, not control, and `/health/ready` fails once the loop has made no progress for

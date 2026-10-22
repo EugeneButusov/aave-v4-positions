@@ -566,6 +566,40 @@ then `0x16` is an `SSLRequest` followed by a TLS ClientHello. Putting `NoTls`
 back makes the `SSLRequest` arrive and the ClientHello never follow, which is
 exactly the shape of the defect. Certificate verification is rustls's own and is
 not re-tested; there is no configuration here that could switch it off.
+### The valuation cut is the fold's clock, not the server's
+
+A page said it was valued at `SystemTime::now()` and stamped with `sync.last_block` in the same
+breath. The two described different instants, and a caller comparing one page against the next saw
+a timestamp that moved every second over shares that had not. Worse at the edges: the page could be
+valued at an instant later than anything the indexer had observed, and the amounts for it were
+extrapolated from the last checkpoint and served as fact.
+
+The cut is now the block timestamp of the height the response is stamped with, joined into
+[`sync_status_store`](../crates/indexing/src/cursor/postgres/sync_status_store.rs)'s single
+statement rather than read second — read separately, a request that straddled two intervals would
+stamp height N and cut at M's timestamp, where one statement under READ COMMITTED makes them one
+snapshot by construction. `PositionQuery.cut` is required and `PositionPage.valued_at` is gone: a
+store with a default would be reading its own clock, and a store echoing its caller's input is the
+last place the stamp and the payload can come to disagree.
+
+The join is `LEFT` and the anchor is an `Option`, because the cursor can outrun the window — see
+"The cursor and the window it names are not one transaction" in `docs/design-notes.md`. A default
+request with no anchor is a 404, reusing the not-found whose documentation already covered the
+window between an indexer starting and recording its first block. Not a 503: `errors.rs` answers
+5xx with fixed text rather than the envelope, so a refusal whose whole value is its message would
+say nothing. A request naming its own instant needs no anchor and is served.
+
+`MAX_AS_OF` stays. It is a units check that runs before any I/O, and the published `maximum` keyword
+has to be a constant, so it is what makes `?as_of=1785000000000` a 400 alongside a bad address. The
+anchor comparison is a second check after the sync read, and `>` rather than `>=`: the instant the
+head was mined at is the one instant the fold is complete for.
+
+[`units::UnixSeconds`](../crates/units/src/unix_seconds.rs) is what stops the two being confused
+again. A tag rather than a bound — every `u64` is a representable instant and what counts as a
+sensible one is each caller's policy — but a block height can no longer be assigned to a cut, which
+is the whole of the defect. No `BlockNumber` beside it: its only arithmetic would be a height minus
+a count, which the newtype would have to permit anyway, so adding it would mix a cleanup into a
+defect fix.
 
 ## Phases
 

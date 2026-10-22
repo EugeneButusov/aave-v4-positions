@@ -11,8 +11,6 @@
 //! Every wide integer is `toString`-ed in SQL: as a number a share balance has
 //! already lost its tail by the time it reaches this process (§7.5).
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
 use clickhouse_client::clickhouse::Client;
@@ -38,17 +36,12 @@ impl ClickHousePositionStore {
 #[async_trait]
 impl PositionStore for ClickHousePositionStore {
     async fn list(&self, query: &PositionQuery) -> Result<PositionPage, Error> {
-        // One instant for the whole page, reported back (§12.6). Read before
-        // the statement because it is what the statement selects by: the clock
-        // taken again afterwards would value a fold cut at another instant.
-        let valued_at = query.as_of.unwrap_or_else(now);
-
         let after = query.after.as_ref();
         let (spoke_from, spoke_to) = sql::spoke_bounds(query.spoke);
         let pending = self
             .client
             .query(sql::STATEMENT)
-            .param("valuedAt", valued_at)
+            .param("cut", query.cut.get())
             .param("chainId", u64::from(query.chain_id))
             .param("user", lower_case(query.user))
             // One more than asked, so the extra row's presence is what says
@@ -75,7 +68,7 @@ impl PositionStore for ClickHousePositionStore {
         let items = rows
             .iter()
             .take(limit)
-            .map(|row| row.to_position(valued_at))
+            .map(|row| row.to_position(query.cut.get()))
             .collect::<Result<Vec<_>, Error>>()?;
 
         let next = full
@@ -86,23 +79,13 @@ impl PositionStore for ClickHousePositionStore {
                 reserve_id: last.reserve_id,
             });
 
-        Ok(PositionPage {
-            items,
-            valued_at,
-            next,
-        })
+        Ok(PositionPage { items, next })
     }
 }
 
 /// Lower-cased, because the fold stores addresses that way.
 fn lower_case(address: Address) -> String {
     address.to_string().to_lowercase()
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
 }
 
 // As in the valuation modules: the arithmetic in a vector is the vector.

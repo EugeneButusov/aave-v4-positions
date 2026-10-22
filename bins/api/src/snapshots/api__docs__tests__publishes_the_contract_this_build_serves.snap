@@ -215,7 +215,7 @@ expression: document().await
             "description": "How current this payload is. Present on every page: amounts are\nper-block quantities, so a sync that differs from the previous page is\nthe signal that the indexer advanced mid-walk."
           },
           "valued_at": {
-            "description": "When every amount on this page was computed — one instant for the whole\npage, defaulting to now. Distinct from `sync.last_block`: the shares are\nas far as the indexer has folded, the amounts are those shares valued\nhere. The `as_of` query parameter that sets it is Unix seconds.",
+            "description": "When every amount on this page was computed — one instant for the whole\npage, defaulting to the block timestamp of `sync.last_block` rather than\nto this server's clock. The shares are as far as the indexer has folded;\nthe amounts are those shares valued here. The `as_of` query parameter\nthat moves it is Unix seconds.",
             "format": "date-time",
             "type": "string"
           }
@@ -364,7 +364,7 @@ expression: document().await
   "paths": {
     "/api/v1/chains/{chain_id}/users/{user}/positions": {
       "get": {
-        "description": "One wallet, on one chain, on one Spoke or on all of them. Ordered by Spoke then reserve, paged by keyset.\n\n**Every number is a decimal string, already scaled.** Amounts are in whole tokens, `price_usd` and the `*_usd` fields are in dollars, and `drawn_index` and `premium_offset_ray` are ray ratios where `1` is no accrual. Nothing on the wire is in base units, so no caller has to know that a Value is `1e26` to the dollar or that a ray is `1e27` — but they are **strings**, and parsing one into a float undoes the point: a share balance of `422166581625087.607993` has 21 significant digits and a double keeps 17. Use a decimal type.\n\n**Balances are shares, not asset amounts.** A share is not a balance: the Hub index accrues every second and emits nothing, so `value` carries the shares converted at `valued_at` and the top-level figures are what the events themselves said. `net_supplied_amount` is a flow — what went in less what came out — and the difference between it and `value.supplied_amount` is interest.\n\n**A field is null when the answer is unknown, never zero.** `asset` and `value` are null together when the registry has not resolved the reserve, and the share fields go with them, because the decimals that scale them live on the asset. The `*_usd` fields are null when the oracle has not priced the reserve, and whenever `as_of` is set. No health factor yet; the derivation is in `docs/aave-v4-protocol-analysis.md`.\n\n**Positions from different Spokes may be listed together but never summed.** Each Spoke is an isolated margin account with its own collateral factors, oracle and health factor, so a total across two of them hides an imminent liquidation behind unrelated collateral. Every row names the Spoke it came from.",
+        "description": "One wallet, on one chain, on one Spoke or on all of them. Ordered by Spoke then reserve, paged by keyset.\n\n**Every number is a decimal string, already scaled.** Amounts are in whole tokens, `price_usd` and the `*_usd` fields are in dollars, and `drawn_index` and `premium_offset_ray` are ray ratios where `1` is no accrual. Nothing on the wire is in base units, so no caller has to know that a Value is `1e26` to the dollar or that a ray is `1e27` — but they are **strings**, and parsing one into a float undoes the point: a share balance of `422166581625087.607993` has 21 significant digits and a double keeps 17. Use a decimal type.\n\n**Balances are shares, not asset amounts.** A share is not a balance: the Hub index accrues every second and emits nothing, so `value` carries the shares converted at `valued_at` and the top-level figures are what the events themselves said. `net_supplied_amount` is a flow — what went in less what came out — and the difference between it and `value.supplied_amount` is interest.\n\n**`valued_at` is a block's clock, not this server's.** By default it is the timestamp of `sync.last_block`, so the page is reproducible and the amounts are not extrapolated past anything that has been observed. It is second-resolution, so on a chain where two blocks share a second the cut is that second rather than that block. Setting `as_of` moves the cut, and an `as_of` later than `sync.last_block`'s timestamp is refused rather than extrapolated.\n\n**A field is null when the answer is unknown, never zero.** `asset` and `value` are null together when the registry has not resolved the reserve, and the share fields go with them, because the decimals that scale them live on the asset. The `*_usd` fields are null when the oracle has not priced the reserve, and whenever `as_of` is set. No health factor yet; the derivation is in `docs/aave-v4-protocol-analysis.md`.\n\n**Positions from different Spokes may be listed together but never summed.** Each Spoke is an isolated margin account with its own collateral factors, oracle and health factor, so a total across two of them hides an imminent liquidation behind unrelated collateral. Every row names the Spoke it came from.",
         "operationId": "list",
         "parameters": [
           {
@@ -423,7 +423,7 @@ expression: document().await
             }
           },
           {
-            "description": "Unix seconds to value the page at. Defaults to now — amounts accrue\nevery second and the chain emits nothing while they do, so naming the\ninstant is what makes a response reproducible. Echoed back as\n`valued_at`.",
+            "description": "Unix seconds to value the page at. Defaults to the block timestamp of\nthe block this chain is indexed to — amounts accrue every second and the\nchain emits nothing while they do, so naming the instant is what makes a\nresponse reproducible. Echoed back as `valued_at`. The bounds published\nhere are a units check; an instant later than the indexed block is\nrefused as well.",
             "in": "query",
             "name": "as_of",
             "required": false,
@@ -454,7 +454,7 @@ expression: document().await
                 }
               }
             },
-            "description": "A malformed address, a limit outside its bounds, an unrecognised query parameter, or a cursor this service did not issue for this listing."
+            "description": "A malformed address, a limit outside its bounds, an unrecognised query parameter, a cursor this service did not issue for this listing, or an `as_of` later than the block this chain is indexed to."
           },
           "404": {
             "content": {
@@ -464,7 +464,7 @@ expression: document().await
                 }
               }
             },
-            "description": "This deployment has never indexed that chain, so it cannot answer for it. Also returned in the window between an indexer starting and recording its first block."
+            "description": "This deployment has never indexed that chain, so it cannot answer for it. Also returned in the window between an indexer starting and recording its first block, and while it holds no header for the block it is indexed to — in both cases there is no instant this service can prove a page at."
           },
           "500": {
             "content": {
@@ -486,7 +486,7 @@ expression: document().await
   },
   "tags": [
     {
-      "description": "Folded from the Spoke event stream, enriched from the Hub and the reserve registry. Balances are shares; `value` is what they are worth at the instant the page names. Every response carries the block it is true as of, and the two clocks beside it.",
+      "description": "Folded from the Spoke event stream, enriched from the Hub and the reserve registry. Balances are shares; `value` is what they are worth at the instant the page names. Every response carries the block the shares were folded to, the instant the amounts were valued at, and how current the prices behind them are.",
       "name": "positions"
     }
   ]

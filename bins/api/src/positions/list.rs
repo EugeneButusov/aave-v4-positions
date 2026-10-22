@@ -42,6 +42,13 @@ converted at `valued_at` and the top-level figures are what the events \
 themselves said. `net_supplied_amount` is a flow — what went in less what came \
 out — and the difference between it and `value.supplied_amount` is interest.
 
+**`valued_at` is a block's clock, not this server's.** By default it is the \
+timestamp of `sync.last_block`, so the page is reproducible and the amounts are \
+not extrapolated past anything that has been observed. It is second-resolution, \
+so on a chain where two blocks share a second the cut is that second rather than \
+that block. Setting `as_of` moves the cut, and an `as_of` later than \
+`sync.last_block`'s timestamp is refused rather than extrapolated.
+
 **A field is null when the answer is unknown, never zero.** `asset` and `value` \
 are null together when the registry has not resolved the reserve, and the share \
 fields go with them, because the decimals that scale them live on the asset. The \
@@ -59,9 +66,10 @@ behind unrelated collateral. Every row names the Spoke it came from.";
 ///
 /// # Errors
 ///
-/// A 404 when this deployment has never indexed the chain, a 400 for a cursor
-/// that does not verify against this listing, and a 500 for anything the stores
-/// or the arithmetic refuse.
+/// A 404 when this deployment has never indexed the chain or holds no header
+/// for the block it is indexed to, a 400 for a cursor that does not verify
+/// against this listing or an `as_of` past that block, and a 500 for anything
+/// the stores or the arithmetic refuse.
 #[utoipa::path(
     get,
     path = "/chains/{chain_id}/users/{user}/positions",
@@ -91,15 +99,18 @@ behind unrelated collateral. Every row names the Spoke it came from.";
         (
             status = 400,
             description = "A malformed address, a limit outside its bounds, an unrecognised \
-                           query parameter, or a cursor this service did not issue for this \
-                           listing.",
+                           query parameter, a cursor this service did not issue for this \
+                           listing, or an `as_of` later than the block this chain is indexed \
+                           to.",
             body = ErrorEnvelope,
         ),
         (
             status = 404,
             description = "This deployment has never indexed that chain, so it cannot answer \
                            for it. Also returned in the window between an indexer starting \
-                           and recording its first block.",
+                           and recording its first block, and while it holds no header for \
+                           the block it is indexed to — in both cases there is no instant \
+                           this service can prove a page at.",
             body = ErrorEnvelope,
         ),
         // Both are `text/plain`, so neither can reuse the envelope the two
@@ -132,6 +143,31 @@ async fn list(
         )));
     };
 
+    // **The cut is the fold's clock, never this process's.** A named instant
+    // past the folded block is refused rather than extrapolated.
+    let cut = match listing.as_of {
+        Some(as_of) => {
+            if sync
+                .last_block_timestamp
+                .is_some_and(|anchor| as_of > anchor)
+            {
+                return Err(ApiError::bad_request(format!(
+                    "as_of {as_of} is later than block {} that this chain is indexed to",
+                    sync.last_block
+                )));
+            }
+            as_of
+        }
+        // A 404 and not a 503: `errors.rs` answers 5xx with fixed text, so a
+        // refusal whose whole value is its message would say nothing.
+        None => sync.last_block_timestamp.ok_or_else(|| {
+            ApiError::not_found(format!(
+                "chain {} has no header for block {}, which it is indexed to",
+                listing.chain_id, sync.last_block
+            ))
+        })?,
+    };
+
     let scope = Scope {
         chain_id: listing.chain_id,
         user: listing.user,
@@ -155,7 +191,7 @@ async fn list(
                 })
             })
             .transpose()?,
-        as_of: listing.as_of,
+        cut,
     };
 
     // Side by side: neither enrichment depends on which positions come back.
@@ -181,6 +217,7 @@ async fn list(
 
     Ok(Json(views::Page::new(
         &sync,
+        cut,
         &page,
         &labels,
         &prices,
