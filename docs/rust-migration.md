@@ -482,6 +482,29 @@ eighteen bytes per thousand rows, against the 1.5 million rows a year `hub_asset
 projected to grow by. `log_index` and `tx_index` stay `UInt32`, because they are genuinely bounded
 and widening them would be a change with no argument behind it.
 
+### Readiness owns connections, not schema integrity
+
+Both probes remain one `SELECT 1`. A recurring healthcheck answers whether the process can serve a
+query now; it does not validate immutable schema. Relation existence would be a weak duplicate of
+the migration runner — it says nothing about columns or checksums — and would couple the API's
+runtime to physical storage names.
+
+Schema is a deployment precondition instead. Compose does not start the API until the one-shot
+`migrate` service succeeds, and CI runs `migrate` before `cargo test`, which also exercises the
+Postgres half of that binary. A deployment outside Compose must preserve the same ordering. Pointing
+the API at an empty or wrong database is a configuration failure to reject in that gate or at
+startup, not a transient condition to rediscover every ten seconds.
+
+Readiness connects through a pool of its own, `max_size: 1`. Holding every connection of a
+request-sized pool and then probing through it answers 503; probing through the separate pool
+answers 200, in the same case. Not `Timeouts::wait_millis(0)`, which deadpool turns into a
+non-blocking `try_acquire` and which reports a busy pool as a down database.
+
+Its body now carries the error's own message and nothing under it. `error_message_with_causes`
+walked `source()` straight onto an unauthenticated route, publishing the user, the database name and
+ClickHouse's verbatim response; the chain goes to the log, where the operator reading it is the one
+who already has the pod.
+
 ## Phases
 
 Each is a PR, and each ends with a gate run against the TypeScript implementation. **Cutover is per

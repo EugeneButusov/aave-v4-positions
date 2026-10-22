@@ -1,17 +1,21 @@
-/// Reports the fold reachable.
+use crate::error::Error;
+
+/// Reports ClickHouse able to serve a query.
 ///
-/// A plain `SELECT 1`: this answers "can this process read at all", and
-/// whether the data is right is reconciliation's question (§9).
-///
-/// Here rather than in the binary serving the probe, because both the API and
-/// the indexer want it.
+/// Schema integrity belongs to the migration gate and data integrity to
+/// reconciliation. Readiness asks only whether this dependency is available
+/// now, and keeps the driver's potentially sensitive response behind [`Error`].
 ///
 /// # Errors
 ///
-/// Whatever the driver says, which for an unreachable server is the connection
-/// error.
-pub async fn ping(client: &clickhouse::Client) -> Result<(), clickhouse::error::Error> {
-    client.query("SELECT 1").fetch_one::<u8>().await.map(drop)
+/// [`Error::Unreachable`] if the query cannot be run.
+pub async fn ping(client: &clickhouse::Client) -> Result<(), Error> {
+    client
+        .query("SELECT 1")
+        .fetch_one::<u8>()
+        .await
+        .map(drop)
+        .map_err(|source| Error::Unreachable { source })
 }
 
 #[cfg(test)]
@@ -88,17 +92,48 @@ mod tests {
         });
     }
 
-    #[tokio::test]
-    async fn a_query_is_a_client_span_of_a_named_system() {
-        interesting();
-        let client = crate::build_client(crate::Config {
+    fn config(database: &str) -> crate::Config {
+        crate::Config {
             url: std::env::var("CLICKHOUSE_URL")
                 .unwrap_or_else(|_| "http://localhost:8123".to_owned()),
-            database: "default".to_owned(),
+            database: database.to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
             max_execution: std::time::Duration::from_secs(30),
+        }
+    }
+
+    #[tokio::test]
+    async fn answers_when_the_server_can_serve_a_query() {
+        ping(&crate::build_client(config("default")))
+            .await
+            .expect("reachable");
+    }
+
+    /// The driver quotes the server's response: an authentication failure, a
+    /// table name, a version string. `/health/ready` is unauthenticated.
+    #[tokio::test]
+    async fn keeps_the_servers_own_words_out_of_the_message() {
+        let client = crate::build_client(crate::Config {
+            password: "not-the-password".to_owned(),
+            ..config("default")
         });
+
+        let refused = ping(&client).await.expect_err("a wrong password");
+
+        assert_eq!(refused.to_string(), "could not reach ClickHouse");
+        assert!(
+            std::error::Error::source(&refused)
+                .expect("the cause is kept for the log")
+                .to_string()
+                .contains("Authentication failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_query_is_a_client_span_of_a_named_system() {
+        interesting();
+        let client = crate::build_client(config("default"));
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured)

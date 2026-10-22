@@ -14,6 +14,9 @@ publish.workspace = true
 # server can be asked about the same trace. Nothing here calls into it — the
 # driver reads the propagator `telemetry` sets.
 clickhouse = { version = "0.15.1", features = ["opentelemetry"] }
+# The readiness error is ours, so that the driver's `Display` — which quotes the
+# server's response verbatim — stays off an unauthenticated body.
+thiserror = "2.0.19"
 
 [dev-dependencies]
 # Reading the driver's span back out of a subscriber, which is what tells the

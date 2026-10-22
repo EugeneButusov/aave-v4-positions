@@ -49,8 +49,9 @@ pub struct CheckResult {
 
 /// Runs one dependency's check and names the answer.
 ///
-/// Carries the whole error chain, because a probe body is often the only place
-/// an operator sees the cause.
+/// The error's own message goes on the wire and its causes go to the log.
+/// Measured, a driver's chain names the database and the user it tried and
+/// quotes the server's response verbatim; `/health/ready` is unauthenticated.
 pub async fn check<E>(name: &'static str, probe: impl Future<Output = Result<(), E>>) -> CheckResult
 where
     E: std::error::Error,
@@ -61,11 +62,19 @@ where
             status: CheckStatus::Up,
             error: None,
         },
-        Err(error) => CheckResult {
-            name,
-            status: CheckStatus::Down,
-            error: Some(error_message_with_causes(&error)),
-        },
+        Err(error) => {
+            tracing::warn!(
+                dependency = name,
+                cause = error_message_with_causes(&error),
+                "a dependency is not ready"
+            );
+
+            CheckResult {
+                name,
+                status: CheckStatus::Down,
+                error: Some(error.to_string()),
+            }
+        }
     }
 }
 
@@ -146,6 +155,20 @@ mod tests {
         assert_eq!(
             json(&result),
             r#"{"name":"clickhouse","status":"down","error":"connection refused"}"#
+        );
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("could not connect to Postgres")]
+    struct Unavailable(#[source] Refused);
+
+    #[tokio::test]
+    async fn keeps_a_drivers_diagnostics_off_an_unauthenticated_body() {
+        let result = check("postgres", async { Err::<(), _>(Unavailable(Refused)) }).await;
+
+        assert_eq!(
+            json(&result),
+            r#"{"name":"postgres","status":"down","error":"could not connect to Postgres"}"#
         );
     }
 

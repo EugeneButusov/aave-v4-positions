@@ -698,6 +698,7 @@ name = "clickhouse-client"
 version = "0.0.0"
 dependencies = [
  "clickhouse",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
