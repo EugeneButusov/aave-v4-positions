@@ -79,8 +79,35 @@ before writing one; put the note on a `//` line above the item instead.
   recalled. Read the dependency's source or compile a probe.
 - **Break every guard on purpose and watch it fail.** A test that passes against broken code is not
   a test. Say which case caught which break.
-- One increment per branch and pull request, pushed without being asked. The PR body is a standalone
-  artefact: what changed, the decisions that need a reason, the cost, and what was verified. The
-  repository squashes from commit messages, so keep those readable too.
+- One increment per branch and pull request, pushed without being asked. **The commit message is
+  the standalone artefact** — it is what the squash puts in history, so the full reasoning, the
+  measurements and the rejected alternatives go there. The PR body is something else; see below.
 - Scaffolding copied a third time is evidence about the API, not about the tests. Fix the API; a
   shared dev-only crate is the last resort. Where the duplication genuinely remains, say why.
+
+## Pull request descriptions
+
+**The body is an invitation to review, not the record of the change.** Its job is to get a careful
+reader to open the diff and look at the right places. A body nobody finishes is worse than a short
+one, because the alternative to reading is approving unread.
+
+**Budget: a screenful — under 25 rendered lines, which is roughly 250 words. No horizontal rules.**
+The first five PRs here averaged 1,000 words, a five-to-seven minute read before anyone could
+approve; that is the failure this section exists to stop. The line count is the real constraint and
+the word count is its proxy, so prefer cutting a whole point to compressing every sentence.
+
+Four parts, in this order, and none of them a wall:
+
+1. **Why you are being asked to look** — one or two sentences. The defect, not the mechanism.
+2. **Where to look** — the two or three places that deserve real attention, with paths. Say which
+   one a reviewer might reasonably disagree with, and put that first. Disagreement should be cheap.
+3. **What might bite** — anything a reader would want to object to and cannot see from the diff: a
+   dropped capability, a widened contract, a residual hazard. One line each.
+4. **Verified** — one line. The gate ran; the numbers that moved.
+
+Not in the body, because they are in the commit message: the mechanism in full, the break table,
+the measurements, the alternatives considered and declined, the things deliberately out of scope.
+Link to the commit for anyone who wants them.
+
+Prose over tables; a table of five rows reads as a form to skim past. No section that exists only
+for completeness — if nothing bites, say nothing instead of writing "None."
