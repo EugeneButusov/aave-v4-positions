@@ -10,9 +10,4 @@ pub enum Error {
         #[source]
         source: clickhouse::error::Error,
     },
-
-    /// Named, not counted: which object the migrations did not build is the
-    /// whole answer an operator is looking for.
-    #[error("ClickHouse is missing required relations: {missing}")]
-    Missing { missing: String },
 }

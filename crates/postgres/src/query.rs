@@ -20,21 +20,6 @@ impl TracedPool {
         Self(pool)
     }
 
-    /// Proves that this pool can serve a query and that the relations used by
-    /// its owner exist.
-    ///
-    /// The relation names stay with the adapter whose SQL reads them; this
-    /// wrapper only gives that adapter access to the generic catalogue check
-    /// without exposing the pool it owns.
-    ///
-    /// # Errors
-    ///
-    /// The pool cannot provide a connection, the catalogue query fails, or at
-    /// least one required relation is absent.
-    pub async fn check_readiness(&self, relations: &[&str]) -> Result<(), Error> {
-        crate::health::ping(&self.0, relations).await
-    }
-
     /// `name` is `{operation} {target}`, given rather than parsed out of `sql`:
     /// parsing it produced a span called `SELECT its` from prose in a comment.
     ///

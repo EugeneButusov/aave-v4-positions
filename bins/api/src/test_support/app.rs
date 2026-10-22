@@ -61,26 +61,6 @@ pub(crate) fn clickhouse() -> Client {
     clickhouse_client::build_client(config())
 }
 
-/// A database of this server's that no migration has reached.
-///
-/// Created rather than named, because the readiness cases run wherever the
-/// suite does and the one database the environment names has been migrated.
-pub(crate) async fn unmigrated_clickhouse() -> Client {
-    let database = "rust_api_unmigrated";
-    let admin = clickhouse();
-    for statement in [
-        format!("DROP DATABASE IF EXISTS {database} SYNC"),
-        format!("CREATE DATABASE {database}"),
-    ] {
-        admin.query(&statement).execute().await.unwrap();
-    }
-
-    clickhouse_client::build_client(clickhouse_client::Config {
-        database: database.to_owned(),
-        ..config()
-    })
-}
-
 pub(crate) fn postgres_url() -> String {
     std::env::var("POSTGRES_URL")
         .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned())

@@ -1,26 +1,19 @@
 //! What a deployment asks of this process, rather than what a caller asks.
 //!
 //! **The dependencies are named here, and that is the whole registry.** `ops`
-//! owns the report and the paths; each store adapter owns what its read model
-//! requires, while this composition root decides which capabilities this
-//! process must have before it receives traffic.
+//! owns the report and the paths; migrations own schema integrity, while this
+//! composition root asks whether the databases can serve a query now.
 
-use aave_positions::store::ClickHousePositionStore;
 use axum::Router;
 use clickhouse_client::clickhouse::Client;
-use indexing::PostgresSyncStatusStore;
 use postgres::{Limits, Pool};
-use prices::PostgresReservePriceStore;
-use token_metadata::PostgresTokenMetadataStore;
 
 use crate::app::AppState;
 
 /// What readiness connects with, which is never what requests connect with.
 pub(crate) struct Dependencies {
-    positions: ClickHousePositionStore,
-    sync: PostgresSyncStatusStore,
-    prices: PostgresReservePriceStore,
-    tokens: PostgresTokenMetadataStore,
+    clickhouse: Client,
+    postgres: Pool,
 }
 
 /// A pool of its own, so request traffic cannot starve the probe.
@@ -57,10 +50,8 @@ pub(crate) fn dependencies(
 /// request pool to prove why production constructs a dedicated one.
 pub(crate) fn from_pool(clickhouse: Client, postgres: Pool) -> Dependencies {
     Dependencies {
-        positions: ClickHousePositionStore::new(clickhouse),
-        sync: PostgresSyncStatusStore::new(postgres.clone()),
-        prices: PostgresReservePriceStore::new(postgres.clone()),
-        tokens: PostgresTokenMetadataStore::new(postgres),
+        clickhouse,
+        postgres,
     }
 }
 
@@ -72,18 +63,12 @@ pub(crate) fn routes(state: AppState) -> Router {
         async move {
             // Side by side: a probe that serialises them reports the sum of
             // two timeouts. `join!` keeps the order the wire contract fixes.
-            let postgres = async {
-                // The readiness pool deliberately has one connection. These
-                // catalogue reads are tiny; sequencing them avoids making one
-                // probe contend with itself for that connection.
-                state.probes.sync.check_readiness().await?;
-                state.probes.prices.check_readiness().await?;
-                state.probes.tokens.check_readiness().await?;
-                Ok::<(), postgres::Error>(())
-            };
             let (clickhouse, postgres) = tokio::join!(
-                ops::check("clickhouse", state.probes.positions.check_readiness()),
-                ops::check("postgres", postgres),
+                ops::check(
+                    "clickhouse",
+                    clickhouse_client::ping(&state.probes.clickhouse)
+                ),
+                ops::check("postgres", ::postgres::ping(&state.probes.postgres)),
             );
             vec![clickhouse, postgres]
         }
@@ -104,8 +89,7 @@ mod tests {
     use super::{Dependencies, dependencies, from_pool};
     use crate::app::{self as app, App};
     use crate::test_support::app::{
-        clickhouse, get, handler, postgres, postgres_url, state, unmigrated_clickhouse,
-        unreachable_postgres,
+        clickhouse, get, handler, postgres, postgres_url, state, unreachable_postgres,
     };
 
     fn ready() -> Request<Body> {
@@ -124,19 +108,6 @@ mod tests {
         assert_eq!(
             body,
             r#"{"status":"ok","checks":[{"name":"clickhouse","status":"up"},{"name":"postgres","status":"up"}]}"#
-        );
-    }
-
-    /// A reachable database can still be unable to serve the positions port.
-    /// Which relations establish that belongs to the adapter, not this test.
-    #[tokio::test]
-    async fn a_reachable_database_without_the_positions_projection_is_not_ready() {
-        let (status, body) = probe(from_pool(unmigrated_clickhouse().await, postgres())).await;
-
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert!(
-            body.contains(r#"{"name":"clickhouse","status":"down","error":"#),
-            "{body}"
         );
     }
 

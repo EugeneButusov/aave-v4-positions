@@ -16,9 +16,6 @@ const LABELS: &str = "\
     FROM token_metadata \
     WHERE chain_id = $1";
 
-/// The relation read by [`LABELS`], owned beside the query that depends on it.
-const REQUIRED_RELATIONS: &[&str] = &["token_metadata"];
-
 pub struct PostgresTokenMetadataStore {
     db: TracedPool,
 }
@@ -32,16 +29,6 @@ impl PostgresTokenMetadataStore {
         Self {
             db: TracedPool::new(pool),
         }
-    }
-
-    /// Reports whether this adapter can serve token metadata.
-    ///
-    /// # Errors
-    ///
-    /// Postgres cannot serve the catalogue query or the metadata relation is
-    /// absent.
-    pub async fn check_readiness(&self) -> Result<(), postgres::Error> {
-        self.db.check_readiness(REQUIRED_RELATIONS).await
     }
 }
 

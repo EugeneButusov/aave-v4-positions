@@ -29,9 +29,6 @@ const LATEST: &str = "\
     FROM reserve_prices \
     WHERE chain_id = $1";
 
-/// The relation read by [`LATEST`], owned beside the query that depends on it.
-const REQUIRED_RELATIONS: &[&str] = &["reserve_prices"];
-
 pub struct PostgresReservePriceStore {
     db: TracedPool,
 }
@@ -42,16 +39,6 @@ impl PostgresReservePriceStore {
         Self {
             db: TracedPool::new(pool),
         }
-    }
-
-    /// Reports whether this adapter can serve reserve prices.
-    ///
-    /// # Errors
-    ///
-    /// Postgres cannot serve the catalogue query or the prices relation is
-    /// absent.
-    pub async fn check_readiness(&self) -> Result<(), postgres::Error> {
-        self.db.check_readiness(REQUIRED_RELATIONS).await
     }
 }
 

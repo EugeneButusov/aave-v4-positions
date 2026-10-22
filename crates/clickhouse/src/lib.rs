@@ -1,6 +1,6 @@
 //! The ClickHouse client this repository uses.
 //!
-//! Connectivity, and the one thing a readiness probe asks past it. Anything
+//! Connectivity, including the sanitized query readiness reports. Anything
 //! that knows what a migration is lives with the binary that applies them.
 
 mod client;

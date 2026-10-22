@@ -1,38 +1,21 @@
 use crate::error::Error;
 
-/// The relations a caller named that this database does not have.
+/// Reports ClickHouse able to serve a query.
 ///
-/// `CAST` because an empty literal is `Array(Nothing)`, which the server refuses
-/// as a filter rather than reading as no rows.
-const MISSING: &str = "SELECT arrayJoin(CAST(? AS Array(String))) AS want \
-     WHERE want NOT IN (SELECT name FROM system.tables WHERE database = currentDatabase())";
-
-/// Reports ClickHouse reachable, and holding the relations a caller reads.
-///
-/// `SELECT 1` answered the first half alone, so a database that had never been
-/// migrated reported itself ready and then served 500s. A parameterised view is
-/// a row in `system.tables` like any table, which is what lets one query cover
-/// both. Whether the rows are *right* is reconciliation's question (§9).
+/// Schema integrity belongs to the migration gate and data integrity to
+/// reconciliation. Readiness asks only whether this dependency is available
+/// now, and keeps the driver's potentially sensitive response behind [`Error`].
 ///
 /// # Errors
 ///
-/// [`Error::Unreachable`] if the query cannot be run at all,
-/// [`Error::Missing`] naming every relation this database does not have.
-pub async fn ping(client: &clickhouse::Client, relations: &[&str]) -> Result<(), Error> {
-    let missing = client
-        .query(MISSING)
-        .bind(relations)
-        .fetch_all::<String>()
+/// [`Error::Unreachable`] if the query cannot be run.
+pub async fn ping(client: &clickhouse::Client) -> Result<(), Error> {
+    client
+        .query("SELECT 1")
+        .fetch_one::<u8>()
         .await
-        .map_err(|source| Error::Unreachable { source })?;
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    Err(Error::Missing {
-        missing: missing.join(", "),
-    })
+        .map(drop)
+        .map_err(|source| Error::Unreachable { source })
 }
 
 #[cfg(test)]
@@ -109,26 +92,6 @@ mod tests {
         });
     }
 
-    /// One database per case: `cargo` runs these concurrently against one
-    /// server, and both of them create the same table.
-    async fn with_one_table(name: &str) -> clickhouse::Client {
-        let admin = crate::build_client(config("default"));
-        for statement in [
-            format!("DROP DATABASE IF EXISTS {name} SYNC"),
-            format!("CREATE DATABASE {name}"),
-        ] {
-            admin.query(&statement).execute().await.unwrap();
-        }
-
-        let client = crate::build_client(config(name));
-        client
-            .query("CREATE TABLE widgets (id String) ENGINE = MergeTree ORDER BY id")
-            .execute()
-            .await
-            .unwrap();
-        client
-    }
-
     fn config(database: &str) -> crate::Config {
         crate::Config {
             url: std::env::var("CLICKHOUSE_URL")
@@ -141,31 +104,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn takes_a_database_holding_every_relation_it_was_asked_for() {
-        let client = with_one_table("rust_health_present").await;
-
-        ping(&client, &["widgets"]).await.expect("just created");
-    }
-
-    #[tokio::test]
-    async fn names_the_relation_the_migrations_did_not_build() {
-        let client = with_one_table("rust_health_missing").await;
-
-        let refused = ping(&client, &["widgets", "widgets_typo"])
+    async fn answers_when_the_server_can_serve_a_query() {
+        ping(&crate::build_client(config("default")))
             .await
-            .expect_err("one of the two is not there");
-
-        assert_eq!(
-            refused.to_string(),
-            "ClickHouse is missing required relations: widgets_typo"
-        );
-    }
-
-    #[tokio::test]
-    async fn asking_for_nothing_still_proves_the_server_answers() {
-        ping(&crate::build_client(config("default")), &[])
-            .await
-            .expect("an empty list is no relations, not a bad query");
+            .expect("reachable");
     }
 
     /// The driver quotes the server's response: an authentication failure, a
@@ -177,9 +119,7 @@ mod tests {
             ..config("default")
         });
 
-        let refused = ping(&client, &["widgets"])
-            .await
-            .expect_err("a wrong password");
+        let refused = ping(&client).await.expect_err("a wrong password");
 
         assert_eq!(refused.to_string(), "could not reach ClickHouse");
         assert!(
@@ -201,10 +141,7 @@ mod tests {
             .with_span_events(FmtSpan::CLOSE)
             .finish();
 
-        ping(&client, &[])
-            .with_subscriber(subscriber)
-            .await
-            .unwrap();
+        ping(&client).with_subscriber(subscriber).await.unwrap();
 
         let written = lines.read();
 

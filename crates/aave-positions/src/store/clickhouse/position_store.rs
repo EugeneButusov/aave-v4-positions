@@ -21,16 +21,6 @@ use super::row::Row;
 use super::sql;
 use crate::store::{Error, PositionKey, PositionPage, PositionQuery, PositionStore};
 
-/// The ClickHouse projection this adapter's query reads.
-///
-/// Kept beside the query rather than in a binary: changing the implementation
-/// of the positions port must carry its readiness contract with it.
-const REQUIRED_RELATIONS: &[&str] = &[
-    "user_positions_as_of",
-    "spoke_reserves_as_of",
-    "hub_assets_as_of",
-];
-
 #[derive(Clone)]
 pub struct ClickHousePositionStore {
     client: Client,
@@ -42,16 +32,6 @@ impl ClickHousePositionStore {
     #[must_use]
     pub fn new(client: Client) -> Self {
         Self { client }
-    }
-
-    /// Reports whether this adapter can serve the positions read model.
-    ///
-    /// # Errors
-    ///
-    /// ClickHouse cannot be reached or the projection this adapter reads has
-    /// not been installed.
-    pub async fn check_readiness(&self) -> Result<(), clickhouse_client::Error> {
-        clickhouse_client::ping(&self.client, REQUIRED_RELATIONS).await
     }
 }
 
@@ -132,9 +112,7 @@ mod tests {
     use clickhouse_client::clickhouse::Client;
 
     use super::ClickHousePositionStore;
-    use crate::store::clickhouse::harness::{
-        append, index, migrated_database, store, unmigrated_database,
-    };
+    use crate::store::clickhouse::harness::{append, index, migrated_database, store};
     use crate::store::conformance::{Harness, Held, Listed, position_store_conformance};
     use crate::store::fixtures::{
         ALICE, At, FIVE_PERCENT, HUB, RAY, ROUTER, T0, add, add_asset, add_reserve, ask, borrow,
@@ -145,24 +123,6 @@ mod tests {
     struct ClickHouseHarness {
         store: ClickHousePositionStore,
         client: Client,
-    }
-
-    #[tokio::test]
-    async fn readiness_requires_the_whole_positions_projection() {
-        let store = ClickHousePositionStore::new(
-            unmigrated_database("rust_positions_readiness_unmigrated").await,
-        );
-
-        let error = store
-            .check_readiness()
-            .await
-            .expect_err("no projection exists");
-
-        assert_eq!(
-            error.to_string(),
-            "ClickHouse is missing required relations: user_positions_as_of, \
-             spoke_reserves_as_of, hub_assets_as_of"
-        );
     }
 
     impl Harness for ClickHouseHarness {

@@ -482,25 +482,18 @@ eighteen bytes per thousand rows, against the 1.5 million rows a year `hub_asset
 projected to grow by. `log_index` and `tx_index` stay `UInt32`, because they are genuinely bounded
 and widening them would be a change with no argument behind it.
 
-### Readiness answers for the schema, not just the socket
+### Readiness owns connections, not schema integrity
 
-Both pings were `SELECT 1`, so a database that was reachable but had never been migrated reported
-itself `up` and the pod then served 500s on every request. Pointing the API's probe at an
-unmigrated ClickHouse database turns a 200 into a 503 now and did not before, which is the whole
-defect in one measurement.
+Both probes remain one `SELECT 1`. A recurring healthcheck answers whether the process can serve a
+query now; it does not validate immutable schema. Relation existence would be a weak duplicate of
+the migration runner — it says nothing about columns or checksums — and would couple the API's
+runtime to physical storage names.
 
-Each `ping` takes the relations its caller reads and names the ones the database does not have —
-[`clickhouse-client`](../crates/clickhouse/src/health.rs) against `system.tables`, where a
-parameterised view is a row like any table, and [`postgres`](../crates/postgres/src/health.rs)
-through `to_regclass`, which resolves `search_path` and answers `NULL` rather than raising. The list
-lives in [`bins/api/src/probes.rs`](../bins/api/src/probes.rs), beside the dependency names it
-already owned. It will not catch a relation that is present with the wrong columns.
-
-The migration ledger was the other candidate and was declined: refinery writes
-`refinery_schema_history`, but the scratch databases the store suites build apply the corpus
-directly with no runner, so no ledger exists in any of them — a readiness check reading one would be
-the only claim here with nowhere to be tested. CI now runs `migrate` before `cargo test` instead,
-which is also the first time the Postgres half of that binary runs there at all.
+Schema is a deployment precondition instead. Compose does not start the API until the one-shot
+`migrate` service succeeds, and CI runs `migrate` before `cargo test`, which also exercises the
+Postgres half of that binary. A deployment outside Compose must preserve the same ordering. Pointing
+the API at an empty or wrong database is a configuration failure to reject in that gate or at
+startup, not a transient condition to rediscover every ten seconds.
 
 Readiness connects through a pool of its own, `max_size: 1`. Holding every connection of a
 request-sized pool and then probing through it answers 503; probing through the separate pool

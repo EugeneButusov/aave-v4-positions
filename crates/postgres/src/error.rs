@@ -30,9 +30,4 @@ pub enum Error {
         #[source]
         source: tokio_postgres::Error,
     },
-
-    /// Named, not counted: which relation the migrations did not build is the
-    /// whole answer an operator is looking for.
-    #[error("Postgres is missing required relations: {missing}")]
-    Missing { missing: String },
 }
