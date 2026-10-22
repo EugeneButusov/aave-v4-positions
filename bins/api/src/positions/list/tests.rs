@@ -14,6 +14,7 @@ use indexing::SyncStatus;
 use prices::{ReserveKey, ReservePrice};
 use time::OffsetDateTime;
 use token_metadata::TokenLabel;
+use units::ChainId;
 
 use crate::positions::params::{DEFAULT_LIMIT, GENESIS, MAX_AS_OF, MAX_LIMIT};
 use crate::test_support::app::{Stores, VALUED_AT, get, synced};
@@ -33,7 +34,7 @@ fn address(hex: &str) -> Address {
 /// 1000 USDC supplied, nothing borrowed, on the Main Spoke's reserve 7.
 fn held() -> Position {
     Position {
-        chain_id: 1,
+        chain_id: ChainId::known(1),
         user: address(ALICE),
         spoke: address(SPOKE),
         reserve_id: U256::from(7),

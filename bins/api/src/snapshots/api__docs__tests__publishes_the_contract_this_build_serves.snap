@@ -89,7 +89,7 @@ expression: document().await
             ]
           },
           "chain_id": {
-            "format": "int32",
+            "format": "int64",
             "minimum": 0,
             "type": "integer"
           },
@@ -374,8 +374,9 @@ expression: document().await
             "name": "chain_id",
             "required": true,
             "schema": {
-              "format": "int32",
-              "minimum": 0,
+              "format": "int64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
               "type": "integer"
             }
           },

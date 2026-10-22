@@ -8,11 +8,12 @@
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, U256, address};
+use units::ChainId;
 
 use crate::{ReserveKey, ReservePrice, ReservePriceStore};
 
-pub(crate) const CHAIN_ID: u32 = 1;
-pub(crate) const OTHER_CHAIN: u32 = 8453;
+pub(crate) const CHAIN_ID: ChainId = ChainId::known(1);
+pub(crate) const OTHER_CHAIN: ChainId = ChainId::known(8453);
 
 pub(crate) const SPOKE: Address = address!("94e7a5dcbe816e498b89ab752661904e2f56c485");
 pub(crate) const SECOND_SPOKE: Address = address!("1111111111111111111111111111111111111111");
@@ -21,7 +22,7 @@ pub(crate) const SECOND_SPOKE: Address = address!("11111111111111111111111111111
 pub(crate) const ONE_DOLLAR: &str = "100000000";
 
 pub(crate) struct Quoted {
-    pub chain_id: u32,
+    pub chain_id: ChainId,
     pub spoke: Address,
     pub reserve_id: u64,
     /// Decimal, so a case can write one wider than a `f64` holds.
@@ -32,7 +33,7 @@ pub(crate) struct Quoted {
 
 impl Quoted {
     fn row(
-        chain_id: u32,
+        chain_id: ChainId,
         spoke: Address,
         reserve_id: u64,
         price: &'static str,
@@ -47,12 +48,12 @@ impl Quoted {
         }
     }
 
-    pub(crate) fn at(chain_id: u32, reserve_id: u64, price: &'static str) -> Self {
+    pub(crate) fn at(chain_id: ChainId, reserve_id: u64, price: &'static str) -> Self {
         Self::row(chain_id, SPOKE, reserve_id, price, 0)
     }
 
     pub(crate) fn on_spoke(
-        chain_id: u32,
+        chain_id: ChainId,
         spoke: Address,
         reserve_id: u64,
         price: &'static str,
@@ -60,7 +61,7 @@ impl Quoted {
         Self::row(chain_id, spoke, reserve_id, price, 0)
     }
 
-    pub(crate) fn aged(chain_id: u32, reserve_id: u64, aged_seconds: u64) -> Self {
+    pub(crate) fn aged(chain_id: ChainId, reserve_id: u64, aged_seconds: u64) -> Self {
         Self::row(chain_id, SPOKE, reserve_id, ONE_DOLLAR, aged_seconds)
     }
 }

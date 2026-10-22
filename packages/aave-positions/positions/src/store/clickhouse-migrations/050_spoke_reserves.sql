@@ -19,7 +19,7 @@
 -- Fourteen rows over all Main Spoke history.
 CREATE TABLE IF NOT EXISTS spoke_reserves
 (
-    chain_id     UInt32,
+    chain_id     UInt64,
     spoke        String,
     reserve_id   UInt256,
     block_number UInt64,

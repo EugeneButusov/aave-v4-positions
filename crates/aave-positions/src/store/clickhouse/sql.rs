@@ -53,7 +53,7 @@ FROM (
     FROM user_positions_as_of(cut = {valuedAt:DateTime})
     -- The leading pair of the sorting key, so the scan starts at this
     -- wallet's rows rather than filtering its way to them.
-    WHERE chain_id = {chainId:UInt32}
+    WHERE chain_id = {chainId:UInt64}
       AND user = {user:String}
       -- Deliberately `!= 0` rather than §12.1's `> 0`. Shares cannot go
       -- negative on chain, so a negative fold is drift, and it should

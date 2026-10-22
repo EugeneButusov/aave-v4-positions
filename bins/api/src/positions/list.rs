@@ -69,7 +69,14 @@ behind unrelated collateral. Every row names the Spoke it came from.";
     summary = "List a wallet's positions",
     description = DESCRIPTION,
     params(
-        ("chain_id" = u32, Path, description = "The chain to read. Required.", example = 1),
+        (
+            "chain_id" = u64,
+            Path,
+            description = "The chain to read. Required.",
+            minimum = 1,
+            maximum = 9_007_199_254_740_991_u64,
+            example = 1,
+        ),
         (
             "user" = String,
             Path,

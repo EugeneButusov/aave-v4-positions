@@ -8,11 +8,12 @@
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, address};
+use units::ChainId;
 
 use crate::{TokenLabel, TokenMetadataStore};
 
-pub(crate) const CHAIN_ID: u32 = 1;
-pub(crate) const OTHER_CHAIN: u32 = 8453;
+pub(crate) const CHAIN_ID: ChainId = ChainId::known(1);
+pub(crate) const OTHER_CHAIN: ChainId = ChainId::known(8453);
 
 /// Stored lower-cased, which the table's own `CHECK` enforces.
 pub(crate) const USDC: Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
@@ -21,7 +22,7 @@ pub(crate) const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756
 pub(crate) const UNASKED: Address = address!("6b175474e89094c44da98b954eedeac495271d0f");
 
 pub(crate) struct Stored {
-    pub chain_id: u32,
+    pub chain_id: ChainId,
     pub token: Address,
     pub symbol: Option<&'static str>,
     pub name: Option<&'static str>,
@@ -29,7 +30,7 @@ pub(crate) struct Stored {
 
 impl Stored {
     fn row(
-        chain_id: u32,
+        chain_id: ChainId,
         token: Address,
         symbol: Option<&'static str>,
         name: Option<&'static str>,
@@ -42,13 +43,13 @@ impl Stored {
         }
     }
 
-    pub(crate) fn labelled(chain_id: u32, token: Address, symbol: &'static str) -> Self {
+    pub(crate) fn labelled(chain_id: ChainId, token: Address, symbol: &'static str) -> Self {
         Self::row(chain_id, token, Some(symbol), Some(symbol))
     }
 
     /// A token that answered, and had nothing to say. Conformant under EIP-20,
     /// where both fields are OPTIONAL.
-    pub(crate) fn mute(chain_id: u32, token: Address) -> Self {
+    pub(crate) fn mute(chain_id: ChainId, token: Address) -> Self {
         Self::row(chain_id, token, None, None)
     }
 }

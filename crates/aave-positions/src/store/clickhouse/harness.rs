@@ -23,7 +23,7 @@ use crate::store::fixtures::{CHAIN_ID, Event};
 /// One row of either ledger; both have the same shape.
 #[derive(clickhouse::Row, Serialize)]
 struct LedgerRow<'a> {
-    chain_id: u32,
+    chain_id: u64,
     address: String,
     block_number: u64,
     log_index: u32,
@@ -67,7 +67,7 @@ pub(super) async fn append(client: &Client, table: &str, events: &[Event]) {
     for event in events {
         insert
             .write(&LedgerRow {
-                chain_id: CHAIN_ID,
+                chain_id: u64::from(CHAIN_ID),
                 address: event.address.to_string().to_lowercase(),
                 block_number: event.at.block,
                 log_index: event.at.log,

@@ -7,6 +7,7 @@
 
 use alloy_primitives::{Address, U256};
 use async_trait::async_trait;
+use units::ChainId;
 
 use super::{Error, Position};
 
@@ -31,7 +32,7 @@ pub struct PositionKey {
 /// behind unrelated collateral; anything that aggregates must do it per Spoke.
 #[derive(Debug, Clone)]
 pub struct PositionQuery {
-    pub chain_id: u32,
+    pub chain_id: ChainId,
     pub user: Address,
     /// `None` lists every Spoke this wallet has touched.
     pub spoke: Option<Address>,

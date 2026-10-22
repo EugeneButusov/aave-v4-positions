@@ -40,7 +40,7 @@
 -- negative addend and the engine needs no notion of one.
 CREATE TABLE IF NOT EXISTS hub_assets
 (
-    chain_id           UInt32,
+    chain_id           UInt64,
     -- The emitting Hub. Asset ids are Hub-scoped, so this is part of the key
     -- rather than a filter — two Hubs both have an asset 7.
     hub                String,

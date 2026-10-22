@@ -3,8 +3,9 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
-use postgres::{Pool, TracedPool};
+use postgres::{Bigint, Pool, TracedPool};
 use tokio_postgres::Row;
+use units::ChainId;
 
 use crate::{Error, TokenLabel, TokenMetadataStore};
 
@@ -33,11 +34,11 @@ impl PostgresTokenMetadataStore {
 
 #[async_trait::async_trait]
 impl TokenMetadataStore for PostgresTokenMetadataStore {
-    async fn labels(&self, chain_id: u32) -> Result<HashMap<Address, TokenLabel>, Error> {
+    async fn labels(&self, chain_id: ChainId) -> Result<HashMap<Address, TokenLabel>, Error> {
         // `bigint`, so the parameter is signed however the port spells it.
         let rows = self
             .db
-            .query("SELECT token_metadata", LABELS, &[&i64::from(chain_id)])
+            .query("SELECT token_metadata", LABELS, &[&Bigint(chain_id.into())])
             .await?;
 
         rows.iter().map(label).collect()

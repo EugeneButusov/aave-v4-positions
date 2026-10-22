@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::Address;
+use units::ChainId;
 
 use crate::errors::ApiError;
 
@@ -72,7 +73,7 @@ pub(crate) struct QueryParameters {
 }
 
 pub(crate) struct Listing {
-    pub(crate) chain_id: u32,
+    pub(crate) chain_id: ChainId,
     pub(crate) user: Address,
     /// `None` lists every Spoke this wallet has touched.
     pub(crate) spoke: Option<Address>,
@@ -92,7 +93,7 @@ impl Listing {
         let mut reading = Reading::new(query);
 
         let listing = Self {
-            chain_id: reading.positive("chain_id", chain_id),
+            chain_id: reading.chain_id("chain_id", chain_id),
             user: reading.address("user", user),
             spoke: reading.optional_address("spoke"),
             limit: reading.bounded("limit", DEFAULT_LIMIT, 1, MAX_LIMIT),
@@ -148,14 +149,13 @@ impl Reading {
         }
     }
 
-    fn positive(&mut self, name: &str, value: &str) -> u32 {
-        match value.parse::<u32>() {
-            Ok(parsed) if parsed > 0 => parsed,
-            _ => {
-                self.reject(format!("{name} must be a positive integer, got {value:?}"));
-                0
-            }
-        }
+    /// [`ChainId::MIN`] on a fault, which never reaches a query because
+    /// [`Reading::finish`] refuses first.
+    fn chain_id(&mut self, name: &str, value: &str) -> ChainId {
+        value.parse().unwrap_or_else(|fault| {
+            self.reject(format!("{name} {fault}, got {value:?}"));
+            ChainId::MIN
+        })
     }
 
     /// [`Address::ZERO`] on a fault, which never reaches a query because
@@ -248,7 +248,7 @@ mod tests {
     fn needs_nothing_but_the_path() {
         let listing = parse("").expect("a bare listing");
 
-        assert_eq!(listing.chain_id, 1);
+        assert_eq!(listing.chain_id, ChainId::known(1));
         assert_eq!(listing.limit, DEFAULT_LIMIT);
         assert_eq!(listing.spoke, None);
         assert_eq!(listing.cursor, None);
@@ -274,10 +274,29 @@ mod tests {
         // `/chains/abc/…` would query a chain that does not exist.
         for chain_id in ["abc", "", "-1", "1.5", "0"] {
             assert!(
-                refused(chain_id, ALICE, "").contains("chain_id must be a positive integer"),
+                refused(chain_id, ALICE, "").contains("chain_id must be 1..="),
                 "{chain_id:?}"
             );
         }
+    }
+
+    /// The width is the point: this one does not fit the type the narrower
+    /// reading used, and it is a chain somebody runs.
+    #[test]
+    fn accepts_palms_chain_id() {
+        let listing = Listing::parse("11297108109", ALICE, "").expect("a deployed chain id");
+
+        assert_eq!(listing.chain_id, ChainId::known(11_297_108_109));
+    }
+
+    #[test]
+    fn refuses_a_chain_id_past_the_protocol_bound() {
+        let past = (ChainId::MAX.get() + 1).to_string();
+
+        assert!(
+            refused(&past, ALICE, "").contains("chain_id must be 1..="),
+            "{past}"
+        );
     }
 
     #[test]
@@ -390,7 +409,7 @@ mod tests {
             message,
             concat!(
                 r#"unrecognized query parameter "limt"; "#,
-                r#"chain_id must be a positive integer, got "0"; "#,
+                r#"chain_id must be 1..=9007199254740991, got "0"; "#,
                 r#"user must be a 20-byte hex address, got "0xnope"; "#,
                 r#"limit must be 1..=200, got "999""#
             )

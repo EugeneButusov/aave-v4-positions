@@ -49,7 +49,7 @@ impl PositionStore for ClickHousePositionStore {
             .client
             .query(sql::STATEMENT)
             .param("valuedAt", valued_at)
-            .param("chainId", query.chain_id)
+            .param("chainId", u64::from(query.chain_id))
             .param("user", lower_case(query.user))
             // One more than asked, so the extra row's presence is what says
             // there is a next page.

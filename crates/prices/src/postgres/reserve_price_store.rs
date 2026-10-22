@@ -3,9 +3,10 @@
 use std::collections::HashMap;
 
 use alloy_primitives::U256;
-use postgres::{Pool, TracedPool};
+use postgres::{Bigint, Pool, TracedPool};
 use time::OffsetDateTime;
 use tokio_postgres::Row;
+use units::ChainId;
 
 use crate::{Error, ReserveKey, ReservePrice, ReservePriceStore};
 
@@ -43,10 +44,10 @@ impl PostgresReservePriceStore {
 
 #[async_trait::async_trait]
 impl ReservePriceStore for PostgresReservePriceStore {
-    async fn latest(&self, chain_id: u32) -> Result<HashMap<ReserveKey, ReservePrice>, Error> {
+    async fn latest(&self, chain_id: ChainId) -> Result<HashMap<ReserveKey, ReservePrice>, Error> {
         let rows = self
             .db
-            .query("SELECT reserve_prices", LATEST, &[&i64::from(chain_id)])
+            .query("SELECT reserve_prices", LATEST, &[&Bigint(chain_id.into())])
             .await?;
 
         rows.iter().map(priced).collect()

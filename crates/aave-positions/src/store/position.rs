@@ -2,6 +2,8 @@
 
 use alloy_primitives::{Address, I256, U256};
 
+use units::ChainId;
+
 use crate::valuation::Valuation;
 
 /// What a reserve refers to, once the registry and the Hub have both been read.
@@ -30,7 +32,7 @@ pub struct PositionAsset {
 /// that drift shows as a wrong number §9 can see rather than a refusal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Position {
-    pub chain_id: u32,
+    pub chain_id: ChainId,
     /// Lower-case. §12.1 keys on the user, never the caller that routed the call.
     pub user: Address,
     /// The Spoke this position lives on. Two Spokes are two independent positions.

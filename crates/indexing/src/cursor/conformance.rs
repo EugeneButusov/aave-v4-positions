@@ -5,18 +5,19 @@
 //! saying how state gets in front of it.
 
 use alloy_primitives::{B256, b256};
+use units::ChainId;
 
 use crate::cursor::{SyncStatus, SyncStatusStore};
 
-pub(crate) const CHAIN_ID: u32 = 1;
-pub(crate) const OTHER_CHAIN: u32 = 8453;
+pub(crate) const CHAIN_ID: ChainId = ChainId::known(1);
+pub(crate) const OTHER_CHAIN: ChainId = ChainId::known(8453);
 
 pub(crate) const HEAD: B256 =
     b256!("abababababababababababababababababababababababababababababababab");
 
 /// One row of `indexer_cursor`, as a case wants to describe it.
 pub(crate) struct Advanced {
-    pub chain_id: u32,
+    pub chain_id: ChainId,
     pub last_block: u64,
     pub last_hash: B256,
     /// How far in the past the database should stamp `updated_at`.
@@ -26,7 +27,7 @@ pub(crate) struct Advanced {
 impl Advanced {
     /// Every field, named once. `aged_seconds` is how far in the past the
     /// database should stamp `updated_at`.
-    pub(crate) fn aged(chain_id: u32, last_block: u64, aged_seconds: u64) -> Self {
+    pub(crate) fn aged(chain_id: ChainId, last_block: u64, aged_seconds: u64) -> Self {
         Self {
             chain_id,
             last_block,
@@ -36,7 +37,7 @@ impl Advanced {
     }
 
     /// The same row, written just now.
-    pub(crate) fn to(chain_id: u32, last_block: u64) -> Self {
+    pub(crate) fn to(chain_id: ChainId, last_block: u64) -> Self {
         Self::aged(chain_id, last_block, 0)
     }
 }
