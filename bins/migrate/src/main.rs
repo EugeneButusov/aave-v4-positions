@@ -15,12 +15,9 @@ use std::time::Duration;
 
 use refinery_core::{AsyncMigrate, Error, Migration, Report, Runner};
 
-/// One connection, and the one caller here that asks for no statement deadline.
-///
-/// DDL on a populated table takes as long as the table is long, so a deadline
-/// would buy a schema half applied rather than a bounded wait. The three that
-/// bound *connecting* stay: an unreachable server is still an unreachable
-/// server. One connection because migrations are sequential by definition.
+/// The one caller that asks for no statement deadline: DDL takes as long as
+/// the table is long, so cutting it off buys a schema half applied. The three
+/// that bound connecting stay.
 const MIGRATING: postgres::Limits = postgres::Limits {
     max_size: 1,
     wait: Duration::from_secs(5),
@@ -184,9 +181,7 @@ impl Settings {
                 // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no
                 // password, which is how the test and CI instances run.
                 password: env.text("CLICKHOUSE_PASSWORD", ""),
-                // Generous: DDL on a populated table takes as long as the
-                // table is long, and a migration cut off partway is worse
-                // than one still running.
+                // Generous, for the reason `MIGRATING` gives.
                 max_execution: Duration::from_secs(600),
             },
             postgres: env.url(

@@ -20,8 +20,8 @@ use crate::positions::MIN_SECRET_BYTES;
 /// just as wrong. The name carries the unit; this only stops the absurd.
 const MAX_STALENESS_SECONDS: u64 = 86_400;
 
-/// A bound on every deadline this service reads, for the same reason: it
-/// catches a minute typed as milliseconds and nothing subtler.
+/// A units check on every deadline, like the one above. Catches a minute typed
+/// as milliseconds and nothing subtler.
 const MAX_DEADLINE_MS: u64 = 600_000;
 
 /// The six the specification spells, and no name of our own.
@@ -59,8 +59,6 @@ pub(crate) struct Config {
     pub(crate) postgres_url: String,
     pub(crate) postgres_limits: postgres::Limits,
 
-    /// What a whole request may take before it is answered rather than waited
-    /// on. The difference between a slow dependency and a dead pod.
     pub(crate) request_timeout: Duration,
 }
 
@@ -128,9 +126,7 @@ impl Config {
                 wait: env.millis("POSTGRES_WAIT_MS", 250, 1, MAX_DEADLINE_MS)?,
                 create: env.millis("POSTGRES_CONNECT_MS", 2_000, 1, MAX_DEADLINE_MS)?,
                 recycle: env.millis("POSTGRES_RECYCLE_MS", 1_000, 1, MAX_DEADLINE_MS)?,
-                // Always bounded from configuration. `Deadline::Unbounded` exists
-                // for a caller that has named it, which is `migrate`, not for a
-                // variable somebody forgot to set.
+                // Always bounded here; `Unbounded` is a caller's decision.
                 statement: postgres::Deadline::After(env.millis(
                     "POSTGRES_STATEMENT_MS",
                     5_000,

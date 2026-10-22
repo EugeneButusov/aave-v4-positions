@@ -155,11 +155,8 @@ impl<'a> Env<'a> {
         }
     }
 
-    /// How many of something this process holds — connections, requests.
-    ///
-    /// Parses straight to `usize` rather than widening and narrowing back:
-    /// bounded by a `usize` maximum, an accepted value fits by construction,
-    /// so there is no conversion left to refuse.
+    /// How many of something this process holds. Parses straight to `usize`,
+    /// so a bounded value needs no conversion back.
     ///
     /// # Errors
     ///
@@ -184,11 +181,8 @@ impl<'a> Env<'a> {
         }
     }
 
-    /// A deadline, where whole seconds are too coarse to say what is meant.
-    ///
-    /// Takes a minimum as well as a maximum, which [`Env::seconds`] does not: a
-    /// deadline of zero is not a short deadline, it is no deadline, and the
-    /// variables that use this are the ones where that difference is the bug.
+    /// A deadline. Takes a minimum, which [`Env::seconds`] does not, because a
+    /// deadline of zero is no deadline.
     ///
     /// # Errors
     ///
@@ -365,8 +359,6 @@ mod tests {
         assert!(read(" ").is_err(), "whitespace is not a number");
     }
 
-    /// Zero connections is not a small pool, and the ceiling is what stops a
-    /// typo claiming the machine.
     #[test]
     fn refuses_none_of_something_and_more_than_the_ceiling() {
         let bad = |raw: &str| refusal(&[("MAX", raw)], |env| env.size("MAX", 4, 1, 1_000));
@@ -392,8 +384,6 @@ mod tests {
         assert_eq!(wait, Duration::from_millis(250));
     }
 
-    /// Unlike [`Env::seconds`], zero is refused rather than taken: these name
-    /// deadlines, and a deadline of zero is no deadline at all.
     #[test]
     fn refuses_a_deadline_of_zero_and_one_past_the_ceiling() {
         let bad = |raw: &str| refusal(&[("WAIT", raw)], |env| env.millis("WAIT", 250, 1, 30_000));

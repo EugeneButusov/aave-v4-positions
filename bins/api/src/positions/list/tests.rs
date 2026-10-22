@@ -520,9 +520,8 @@ mod the_deadline {
             .expect("a well-formed request")
     }
 
-    /// The case the suite could not express before: the store double answered
-    /// instantly and the pool pointed at port 1, so only a dependency that was
-    /// *down* was reachable. Down is the easy case.
+    /// The case the suite could not express: a dependency that is down was the
+    /// only kind reachable, and down is the easy one.
     #[tokio::test(start_paused = true)]
     async fn a_store_that_never_answers_becomes_a_response() {
         let stores = Stores {
@@ -537,8 +536,6 @@ mod the_deadline {
         assert_eq!(body, "the request took too long");
     }
 
-    /// `504` and not `408`: `408` says the caller was too slow to send, and
-    /// nothing here measures that.
     #[tokio::test(start_paused = true)]
     async fn says_the_gateway_timed_out_rather_than_blaming_the_caller() {
         let stores = Stores {
@@ -553,8 +550,6 @@ mod the_deadline {
         assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
     }
 
-    /// The deadline bounds a wedged request and nothing else: a store that
-    /// answers is not waited on.
     #[tokio::test(start_paused = true)]
     async fn a_store_that_answers_is_not_waited_on() {
         let stores = Stores {

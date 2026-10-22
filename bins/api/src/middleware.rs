@@ -29,9 +29,8 @@ pub(crate) fn apply(router: Router, timeout: Duration) -> Router {
 
     router.layer(
         // The order is the contract: span outermost so the id is minted inside
-        // a traced request — and so a deadline below is traced and counted like
-        // any other answer — then the header, then its copy onto the way out,
-        // and `CatchPanic` innermost so its 500 travels out through all three.
+        // a traced request and a deadline below is counted like any answer, and
+        // `CatchPanic` innermost so its 500 travels out through all three.
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 instruments,
@@ -45,18 +44,14 @@ pub(crate) fn apply(router: Router, timeout: Duration) -> Router {
     )
 }
 
-/// What an elapsed deadline is on the wire.
-///
-/// `504` rather than `408`: `408` says the *client* was too slow to send, and
-/// nothing here measures that. What elapsed is our own wait on a dependency,
-/// which is what `504` names.
+/// `504` rather than `408`: `408` says the client was too slow to send, and
+/// what elapsed is our own wait on a dependency.
 async fn refused(error: BoxError) -> Response {
     let (status, detail) = if error.is::<Elapsed>() {
         (StatusCode::GATEWAY_TIMEOUT, "the request took too long")
     } else {
-        // Unreachable: the layer below errors with `Elapsed` and nothing else.
-        // Named rather than unwrapped so a second layer added here cannot turn
-        // this into a panic by arriving.
+        // Unreachable, and not a panic, so a second layer added here cannot
+        // make it one.
         (StatusCode::INTERNAL_SERVER_ERROR, "the request failed")
     };
 

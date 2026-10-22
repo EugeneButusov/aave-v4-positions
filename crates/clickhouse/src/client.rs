@@ -19,9 +19,8 @@ pub struct Config {
     /// has no password, which is how the test and CI instances run.
     pub password: String,
 
-    /// `max_execution_time`, which the server enforces on every query this
-    /// client sends. Without it a pathological query runs until the HTTP
-    /// connection dies, and the connection is the only thing that ends it.
+    /// `max_execution_time`. Without it the HTTP connection is the only thing
+    /// that ends a pathological query.
     pub max_execution: Duration,
 }
 
@@ -38,19 +37,14 @@ pub fn build_client(config: Config) -> clickhouse::Client {
         .with_database(config.database)
         .with_user(config.user)
         .with_password(config.password)
-        // Whole seconds, which is the unit the setting takes. Rounded up, so a
-        // sub-second request is a one-second limit rather than none at all —
-        // zero means unlimited to this server.
         .with_setting(
             "max_execution_time",
             max_execution_seconds(config.max_execution).to_string(),
         )
 }
 
-/// Whole seconds, at least one.
-///
-/// `max_execution_time=0` is this server's spelling of "no limit", so a
-/// deadline that rounds to zero would remove the one it was asked to set.
+/// At least one: `max_execution_time=0` is this server's "no limit", so a
+/// sub-second deadline would remove the one it was asked to set.
 fn max_execution_seconds(limit: Duration) -> u64 {
     limit.as_secs().max(1)
 }

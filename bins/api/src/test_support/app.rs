@@ -90,16 +90,10 @@ pub(crate) struct Stores {
     pub(crate) prices: HashMap<ReserveKey, ReservePrice>,
     pub(crate) staleness: Staleness,
 
-    /// Generous by default, so an ordinary case is not racing the deadline.
-    /// The cases that are about the deadline set it themselves.
     pub(crate) request_timeout: Duration,
 
-    /// Makes the position store accept the read and never answer it.
-    ///
-    /// The double below answers instantly and the real pool points at port 1,
-    /// so a dependency that is *down* is the only kind this suite could
-    /// express — and down is the easy case. A request against a dependency
-    /// that is merely wedged is what has no deadline to catch it.
+    /// Makes the position store accept the read and never answer it, which
+    /// the port-1 pool cannot express: that is a dependency which is *down*.
     pub(crate) positions_hang: bool,
 
     /// How many times the price store was asked; the point is the answer `0`,
@@ -186,8 +180,6 @@ struct Positions {
 impl PositionStore for Positions {
     async fn list(&self, _query: &PositionQuery) -> Result<PositionPage, StoreError> {
         if self.hang {
-            // Never resolves. On a paused clock this costs no wall time, and
-            // it is the only way to reach the deadline from inside a handler.
             std::future::pending::<()>().await;
         }
 

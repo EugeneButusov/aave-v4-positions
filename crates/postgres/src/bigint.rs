@@ -1,19 +1,14 @@
 //! An unsigned number on its way into a `bigint`.
 //!
-//! `bigint` is signed and most of what this deployment stores in one is not —
-//! a height, a chain id, a block timestamp. The narrowing belongs here rather
-//! than in the types that carry those values, because the signedness is this
-//! database's and nothing else's.
+//! The signedness is this database's, so the narrowing lives here rather than
+//! in the domain types that cross it.
 
 use std::error::Error;
 
 use tokio_postgres::types::{IsNull, ToSql, Type, to_sql_checked};
 
-/// A `u64` bound for a `bigint` column.
-///
-/// Refuses past `i64::MAX` rather than wrapping. A cast there is silently
-/// negative, and a negative height or chain id passes every `CHECK` that
-/// expects the column to hold what it was given.
+/// A `u64` bound for a `bigint` column, refusing past `i64::MAX` rather than
+/// wrapping to a negative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bigint(pub u64);
 
@@ -64,9 +59,6 @@ mod tests {
         assert_eq!(encoded(largest), Ok(i64::MAX.to_be_bytes().to_vec()));
     }
 
-    /// The case a cast would get wrong: `u64::MAX as i64` is `-1`, which every
-    /// `CHECK (… >= 0)` on these columns would then refuse for the wrong
-    /// reason, or accept where there is no `CHECK`.
     #[test]
     fn refuses_a_number_a_cast_would_turn_negative() {
         assert!(encoded(i64::MAX.unsigned_abs() + 1).is_err());

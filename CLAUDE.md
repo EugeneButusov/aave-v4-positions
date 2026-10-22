@@ -30,9 +30,16 @@ apply there. A suite that passes only locally is reading something CI will not g
 
 ## Comments
 
+**The code is the explanation. A comment earns its place by saying what the code cannot.**
+
 **Budget: one line per comment, unless it names a specific failure a future edit could bring back.
 One to three lines for a module header.** The whole tree sat at 25% comment lines once and had to
-lose 824 of them; it is at 19% now and that is not a ceiling to grow back into.
+lose 824 of them; it is at 16% now and that is a floor to stay near, not a ceiling to grow back
+into. `grep -cE '^\s*(///|//!|//)'` over `crates bins` is the check.
+
+Before writing one, try the three cheaper fixes: a better name, a smaller function, a type that
+makes the wrong thing unrepresentable. A paragraph explaining a parameter usually means the
+parameter is wrong — a `Deadline` enum beats a comment warning that `None` means unlimited.
 
 Keep a comment when it prevents a real regression — a library or protocol fact that makes
 odd-looking code correct. Drop it when it explains the current shape:
@@ -45,6 +52,11 @@ odd-looking code correct. Drop it when it explains the current shape:
   reintroduce X.
 - A module header does not enumerate its own submodules; the `mod` declarations below already do.
 - Measurements and version-choice rationale belong in the PR body or `docs/`, not in a doc comment.
+- **A descriptive test name is the test's documentation.** A `///` above
+  `refuses_a_chain_id_past_the_protocol_bound` restating that it refuses one is a second copy of
+  the name. Write the doc only where the name cannot carry the _why_.
+- Restating a signature is noise: "takes the config by value", "returns `None` when absent",
+  "infallible" where the type already says so.
 
 **A `///` is not always a comment.** On a type deriving `ToSchema` or `IntoParams` it is the
 published schema description, so a maintainer's note there ships to callers. Check the derives
