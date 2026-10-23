@@ -96,6 +96,7 @@ mod tests {
         crate::Config {
             url: std::env::var("CLICKHOUSE_URL")
                 .unwrap_or_else(|_| "http://localhost:8123".to_owned()),
+            transport_security: crate::TransportSecurity::AllowInsecureHttp,
             database: database.to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
@@ -105,29 +106,9 @@ mod tests {
 
     #[tokio::test]
     async fn answers_when_the_server_can_serve_a_query() {
-        ping(&crate::build_client(config("default")))
+        ping(&crate::build_client(config("default")).unwrap())
             .await
             .expect("reachable");
-    }
-
-    /// Without a TLS feature the driver refuses the scheme before it dials:
-    /// `hyper-util`'s connect error is turned into `Unsupported("invalid URL,
-    /// scheme is not http; … consider enabling `native-tls` or `rustls-tls`")`,
-    /// and that branch is compiled out once one of them is on.
-    #[tokio::test]
-    async fn dials_an_https_url_rather_than_refusing_the_scheme() {
-        let client = crate::build_client(crate::Config {
-            url: "https://127.0.0.1:1".to_owned(),
-            ..config("default")
-        });
-
-        let refused = ping(&client).await.expect_err("port 1 is reserved");
-        let cause = std::error::Error::source(&refused)
-            .expect("the cause is kept for the log")
-            .to_string();
-
-        assert!(!cause.contains("scheme is not http"), "{cause}");
-        assert!(!cause.contains("rustls-tls"), "{cause}");
     }
 
     /// The driver quotes the server's response: an authentication failure, a
@@ -137,7 +118,8 @@ mod tests {
         let client = crate::build_client(crate::Config {
             password: "not-the-password".to_owned(),
             ..config("default")
-        });
+        })
+        .unwrap();
 
         let refused = ping(&client).await.expect_err("a wrong password");
 
@@ -153,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn a_query_is_a_client_span_of_a_named_system() {
         interesting();
-        let client = crate::build_client(config("default"));
+        let client = crate::build_client(config("default")).unwrap();
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured)

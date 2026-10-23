@@ -24,9 +24,15 @@ clickhouse = { version = "0.15.1", features = [
   "rustls-tls-native-roots",
   "rustls-tls-ring",
 ] }
+# The driver's TLS-enabled default constructs its root store even for HTTP.
+# Build the explicitly insecure client with an HTTP-only connector instead.
+hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "tokio"] }
 # The readiness error is ours, so that the driver's `Display` — which quotes the
 # server's response verbatim — stays off an unauthenticated body.
 thiserror = "2.0.19"
+# Parsed here as well as at the environment edge because this crate owns the
+# transport policy and can be called without either binary's config reader.
+url = "2.5.8"
 
 [dev-dependencies]
 # Reading the driver's span back out of a subscriber, which is what tells the

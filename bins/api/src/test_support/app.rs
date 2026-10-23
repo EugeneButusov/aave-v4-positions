@@ -50,6 +50,7 @@ const STALENESS: Staleness = Staleness {
 fn config() -> clickhouse_client::Config {
     clickhouse_client::Config {
         url: std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_owned()),
+        transport_security: clickhouse_client::TransportSecurity::AllowInsecureHttp,
         database: std::env::var("CLICKHOUSE_DATABASE").unwrap_or_else(|_| "default".to_owned()),
         user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
         password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
@@ -58,7 +59,7 @@ fn config() -> clickhouse_client::Config {
 }
 
 pub(crate) fn clickhouse() -> Client {
-    clickhouse_client::build_client(config())
+    clickhouse_client::build_client(config()).unwrap()
 }
 
 pub(crate) fn postgres_url() -> String {

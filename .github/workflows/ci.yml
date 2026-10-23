@@ -101,6 +101,8 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
 
     services: *databases
 
@@ -175,6 +177,8 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
 
     services: *databases
 

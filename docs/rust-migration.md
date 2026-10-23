@@ -527,6 +527,12 @@ derives that default from whichever of its crypto features the whole graph
 enables: one future crate pulling it with defaults would add `aws-lc-rs` beside
 `ring` and turn the first connection into a panic.
 
+ClickHouse requires `https://` by default. Plain `http://` is accepted only
+when the caller explicitly selects `AllowInsecureHttp`; the local `.env`,
+Compose stack and CI do so because their isolated ClickHouse server exposes no
+TLS port. This is construction policy, tested in `client.rs`, not readiness:
+`health.rs` only asks whether the already-built client can serve a query.
+
 Nineteen crates join `bins/api`'s graph, nine of them the rustls subtree and the
 rest its platform shims — `security-framework` for the keychain on macOS,
 `x509-cert` and `der` under `rustls-native-certs`. `ISC` joins `deny.toml`'s
@@ -538,10 +544,11 @@ there is no permitted branch to satisfy instead.
 parse error, as is `sslrootcert`, because `config.rs:716` rejects an unknown
 option outright. So a URL copied from a managed provider's console can fail at
 boot naming the variable. `require` verifies the certificate, which makes it
-libpq's `verify-full` rather than its `require`, and a provider with a private
-certificate authority needs a root this service cannot yet be given. Recorded
-rather than fixed: it is a parameter on `build_pool` and the config to thread it
-through, and no deployment here points at a managed database.
+libpq's `verify-full` rather than its `require`. `sslrootcert` is not a driver
+option; both database clients read `SSL_CERT_FILE` through
+`rustls-native-certs`, so a deployment can point that process-wide setting at a
+private CA bundle. When set, it replaces rather than supplements the host's
+roots.
 
 The test is a stub server rather than a TLS-capable Postgres, because what is in
 question is this side of the negotiation. It reads the client's first eight

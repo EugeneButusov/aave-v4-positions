@@ -82,6 +82,7 @@ services:
     restart: 'no'
     environment:
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
@@ -120,6 +121,7 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: '3000'
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
