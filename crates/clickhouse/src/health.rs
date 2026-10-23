@@ -20,6 +20,8 @@ pub async fn ping(client: &clickhouse::Client) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Read as _;
+    use std::net::TcpListener;
     use std::sync::mpsc;
 
     use tracing::instrument::WithSubscriber as _;
@@ -128,6 +130,26 @@ mod tests {
 
         assert!(!cause.contains("scheme is not http"), "{cause}");
         assert!(!cause.contains("rustls-tls"), "{cause}");
+    }
+
+    #[tokio::test]
+    async fn uses_plain_http_when_the_url_asks_for_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut opening = [0; 5];
+            stream.read_exact(&mut opening).unwrap();
+            opening
+        });
+        let client = crate::build_client(crate::Config {
+            url: format!("http://{address}"),
+            ..config("default")
+        });
+
+        let _ = ping(&client).await;
+
+        assert_eq!(server.join().unwrap(), *b"POST ");
     }
 
     /// The driver quotes the server's response: an authentication failure, a
