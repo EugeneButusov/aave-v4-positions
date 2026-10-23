@@ -14,42 +14,16 @@
 
 use refinery_core::{Migration, Runner};
 
-/// A schema per test, not per file: `cargo` runs these concurrently and they
-/// assert on the exact set of tables, which is how the first version failed.
-fn schema(test: &str) -> String {
-    format!("rust_migrate_{test}")
-}
-
 /// Dropped and recreated, so each test starts from nothing — the ledger would
 /// otherwise carry state between runs. The pool comes back with the connection
 /// so the caller keeps it alive for the length of the test.
 async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
-    let schema = schema(test);
-    let base = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
-        "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
-    });
-
-    let admin = postgres::build_pool(&base, postgres::Limits::default()).unwrap();
-    postgres::connection(&admin)
-        .await
-        .unwrap()
-        .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}"
-        ))
-        .await
-        .unwrap();
-
-    // `options` is libpq's and tokio-postgres parses it out of the URL, so no
-    // parameter only a test would pass has to reach `crates/postgres`.
-    let separator = if base.contains('?') { '&' } else { '?' };
-    let pool = postgres::build_pool(
-        &format!("{base}{separator}options=-c%20search_path%3D{schema}"),
-        postgres::Limits::default(),
-    )
-    .unwrap();
+    // `empty`, not `migrated`: applying the corpus is the thing under test.
+    let scratch = test_db::Scratch::empty("rust_migrate", test).await;
+    let pool = scratch.pool().clone();
     let client = postgres::connection(&pool).await.unwrap();
 
-    (pool, client, schema)
+    (pool, client, scratch.schema().to_owned())
 }
 
 async fn tables(client: &postgres::Client, schema: &str) -> Vec<String> {

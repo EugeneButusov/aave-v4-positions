@@ -5,8 +5,8 @@
 //! is the migration's.
 
 use alloy_primitives::Address;
-use postgres::{Bigint, Limits, Pool, build_pool, connection};
-use refinery_core::{Migration, Runner};
+use postgres::{Bigint, Pool, connection};
+use test_db::Scratch;
 
 use super::PostgresReservePriceStore;
 use crate::conformance::{Harness, Quoted};
@@ -20,7 +20,7 @@ impl Harness for PostgresHarness {
     type Store = PostgresReservePriceStore;
 
     async fn fresh(case: &str) -> Self {
-        let pool = scratch("rust_prices", case).await;
+        let pool = Scratch::migrated("rust_prices", case).await.pool().clone();
 
         Self {
             store: PostgresReservePriceStore::new(pool.clone()),
@@ -61,45 +61,6 @@ impl Harness for PostgresHarness {
                 .unwrap();
         }
     }
-}
-
-/// A schema per case, so cases can run at once. Shared with the other stores'
-/// harnesses in shape but not in code — each names its own prefix, and a crate
-/// that exported this would be a test-support crate nothing else wants yet.
-async fn scratch(prefix: &str, case: &str) -> Pool {
-    let base = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
-        "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
-    });
-    let schema = format!("{prefix}_{case}");
-
-    let admin = build_pool(&base, Limits::default()).unwrap();
-    connection(&admin)
-        .await
-        .unwrap()
-        .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}"
-        ))
-        .await
-        .unwrap();
-
-    let separator = if base.contains('?') { '&' } else { '?' };
-    let pool = build_pool(
-        &format!("{base}{separator}options=-c%20search_path%3D{schema}"),
-        Limits::default(),
-    )
-    .unwrap();
-
-    let set: Vec<Migration> = migrations::POSTGRES
-        .iter()
-        .flat_map(|source| source.files)
-        .map(|embedded| Migration::unapplied(embedded.label, embedded.sql).unwrap())
-        .collect();
-
-    let mut client = connection(&pool).await.unwrap();
-    Runner::new(&set).run_async(&mut **client).await.unwrap();
-    drop(client);
-
-    pool
 }
 
 /// The spelling the table's `CHECK (spoke ~ '^0x[0-9a-f]{40}$')` demands.

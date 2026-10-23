@@ -86,7 +86,7 @@ mod tests {
         leaves_out_a_chain_it_was_not_asked_about,
         keeps_a_token_that_answered_with_no_symbol,
         omits_a_token_with_no_row,
-        answers_a_checksummed_address_from_a_lower_cased_row,
+        checksums_a_lower_cased_row,
         is_empty_for_a_chain_nobody_has_enriched,
     }
 }

@@ -95,6 +95,7 @@ crates/
   clickhouse/               client   ← package `clickhouse-client`
   postgres/                 connect
   migrations/               every `.sql` this deployment applies, embedded
+  test-db/                  a migrated schema per case   ← new, dev-only
   indexing/                 loop, ports + alloy adapters, reorg, cursor, backfill
   aave-events/              decoders, two append-only ledgers
   aave-positions/           folds, read stores, valuation (the math)
@@ -107,9 +108,10 @@ bins/
   indexer/                  tokio worker + probe server + five CLIs
 ```
 
-Fourteen crates against eleven packages. `aave-abi` is one addition, and exists because of Risk 1.
+Fifteen crates against eleven packages. `aave-abi` is one addition, and exists because of Risk 1.
+`crates/test-db` is another, and the note below says why it is a crate rather than a module.
 
-`crates/migrations` is the other, and it came back. Phase 0 folded the corpus into `bins/migrate`
+`crates/migrations` is the third, and it came back. Phase 0 folded the corpus into `bins/migrate`
 on the grounds that nothing else would ever name a `Migration`. That holds only while the migrator
 is the sole reader, and it stops holding at the first store spec that wants a migrated database —
 at which point the schema exists twice: embedded in the binary, and read off the same directories
@@ -572,6 +574,40 @@ not re-tested; there is no configuration here that could switch it off.
 Each is a PR, and each ends with a gate run against the TypeScript implementation. **Cutover is per
 service** — the Rust API goes to production and the TypeScript API is deleted before indexer work
 finishes, rather than one switch at the end.
+
+### One migrated schema per case, in one place
+
+Four harnesses had grown the same twenty lines — read `POSTGRES_URL`, drop and create a schema,
+build a second pool carrying `options=-c search_path=…`, apply the corpus. `crates/prices` wrote the
+rule on its own copy: *"a crate that exported this would be a test-support crate nothing else wants
+yet."* The fourth copy is where *yet* expired.
+
+It is a crate rather than a module because neither candidate owner can hold it. `crates/postgres` is
+connectivity and must not learn the schema; `crates/migrations` is "a corpus, not a runner" and has
+no dependencies at all, which is the point of it. [crates.io settles the same question the same
+way](https://github.com/rust-lang/crates.io/tree/main/crates/crates_io_test_db) — `crates_io_test_db`
+is its own crate — and it is a dev-dependency everywhere it appears, so no binary links it and
+`scripts/binary-boundaries.sh` has nothing to say about it.
+
+**The corpus is replayed, not run through refinery.** crates.io captures its template schema with
+`pg_dump` and replays the DDL per test, *"sidestepping the per-test migration-framework overhead"*.
+Ours needs no capture step: `migrations::POSTGRES` is already embedded SQL and every file ends in a
+semicolon, so one `batch_execute` of the concatenation does it. The ledger refinery would keep is a
+deployment's record and a schema built for one case has nothing to record — `bins/migrate`'s own
+suite still drives refinery, over `Scratch::empty`, because applying the corpus is what it tests.
+
+**What was not taken from crates.io: `Drop` for teardown.** Theirs drops the schema in `Drop`, which
+works because diesel is synchronous. `tokio-postgres` is not, and `Handle::block_on` from a `Drop`
+inside a `#[tokio::test]` panics with *"Cannot start a runtime from within a runtime"* — measured.
+Immediate cleanup would cost a second, synchronous Postgres client with its own TLS story, for a
+local database that `docker compose down -v` resets. So the `DROP SCHEMA IF EXISTS` stays where it
+was, ahead of the create, and a schema lives until its case next runs.
+
+**The 63-byte guard found a live defect.** `Scratch` refuses a schema name past
+`max_identifier_length`, because Postgres truncates one silently and two names that truncate equal
+are one schema whose cases interfere. `rust_token_metadata_answers_a_checksummed_address_from_a_lower_cased_row`
+is 72 bytes and has been truncated on every run since it was written; it is
+`checksums_a_lower_cased_row` now, at 47.
 
 ### Phase 0 — foundations
 

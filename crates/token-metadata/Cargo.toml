@@ -21,6 +21,7 @@ tokio-postgres = "0.7.18"
 thiserror = "2.0.19"
 
 [dev-dependencies]
+test-db.workspace = true
 # The schema `bins/migrate` applies, so a spec's database is the deployment's.
 migrations.workspace = true
 # Applies that corpus to a scratch schema. The migrator's own dependency, used

@@ -6,8 +6,8 @@
 //! `INSERT`, and the column list is the migration's.
 
 use alloy_primitives::Address;
-use postgres::{Bigint, Limits, Pool, build_pool, connection};
-use refinery_core::{Migration, Runner};
+use postgres::{Bigint, Pool, connection};
+use test_db::Scratch;
 
 use super::PostgresTokenMetadataStore;
 use crate::conformance::{Harness, Stored};
@@ -24,32 +24,10 @@ impl Harness for PostgresHarness {
     /// they assert on the rows that exist, so a shared one has them creating
     /// and dropping each other's fixtures.
     async fn fresh(case: &str) -> Self {
-        let base = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
-            "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
-        });
-        let schema = format!("rust_token_metadata_{case}");
-
-        let admin = build_pool(&base, Limits::default()).unwrap();
-        connection(&admin)
+        let pool = Scratch::migrated("rust_token_metadata", case)
             .await
-            .unwrap()
-            .batch_execute(&format!(
-                "DROP SCHEMA IF EXISTS {schema} CASCADE; CREATE SCHEMA {schema}"
-            ))
-            .await
-            .unwrap();
-
-        // `options` is libpq's, and tokio-postgres parses it out of the URL —
-        // which is what lets a schema be chosen without `crates/postgres`
-        // growing a parameter only a test would pass.
-        let separator = if base.contains('?') { '&' } else { '?' };
-        let pool = build_pool(
-            &format!("{base}{separator}options=-c%20search_path%3D{schema}"),
-            Limits::default(),
-        )
-        .unwrap();
-
-        migrate(&pool).await;
+            .pool()
+            .clone();
 
         Self {
             store: PostgresTokenMetadataStore::new(pool.clone()),
@@ -85,19 +63,6 @@ impl Harness for PostgresHarness {
                 .unwrap();
         }
     }
-}
-
-/// The schema `bins/migrate` applies, so a case's database is the deployment's
-/// rather than a second reading of the same directories.
-async fn migrate(pool: &Pool) {
-    let set: Vec<Migration> = migrations::POSTGRES
-        .iter()
-        .flat_map(|source| source.files)
-        .map(|embedded| Migration::unapplied(embedded.label, embedded.sql).unwrap())
-        .collect();
-
-    let mut client = connection(pool).await.unwrap();
-    Runner::new(&set).run_async(&mut **client).await.unwrap();
 }
 
 fn lower(address: Address) -> String {
