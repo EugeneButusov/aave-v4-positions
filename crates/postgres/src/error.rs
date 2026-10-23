@@ -30,4 +30,9 @@ pub enum Error {
         #[source]
         source: tokio_postgres::Error,
     },
+    #[error("the TLS provider supports no safe protocol version")]
+    NoTlsVersions {
+        #[source]
+        source: rustls::Error,
+    },
 }

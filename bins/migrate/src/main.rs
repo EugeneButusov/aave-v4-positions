@@ -107,7 +107,9 @@ async fn run() -> Result<(), Failed> {
         postgres,
     } = Settings::from_env()?;
 
-    let mut target = clickhouse::ClickHouse(clickhouse_client::build_client(clickhouse));
+    let client = clickhouse_client::build_client(clickhouse)
+        .map_err(|error| Failed::at("clickhouse", error))?;
+    let mut target = clickhouse::ClickHouse(client);
     apply("clickhouse", migrations::CLICKHOUSE, &mut target).await?;
 
     // The pool is the only way this workspace connects to Postgres; one
@@ -176,6 +178,11 @@ impl Settings {
         Ok(Self {
             clickhouse: clickhouse_client::Config {
                 url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
+                transport_security: if env.flag("CLICKHOUSE_ALLOW_INSECURE_HTTP", false)? {
+                    clickhouse_client::TransportSecurity::AllowInsecureHttp
+                } else {
+                    clickhouse_client::TransportSecurity::RequireTls
+                },
                 database: env.text("CLICKHOUSE_DATABASE", "default"),
                 user: env.text("CLICKHOUSE_USER", "default"),
                 // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no

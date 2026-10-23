@@ -94,6 +94,7 @@ pub(super) async fn append(client: &Client, table: &str, events: &[Event]) {
 fn config(database: &str) -> Config {
     Config {
         url: std::env::var("CLICKHOUSE_URL").unwrap_or_else(|_| "http://localhost:8123".to_owned()),
+        transport_security: clickhouse_client::TransportSecurity::AllowInsecureHttp,
         database: database.to_owned(),
         user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
         password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
@@ -113,7 +114,7 @@ fn config(database: &str) -> Config {
 /// `SYNC`, because an Atomic database's drop otherwise reclaims its metadata
 /// 480 seconds later, which a suite re-run every few minutes outpaces.
 pub(super) async fn migrated_database(name: &str) -> Client {
-    let bootstrap = build_client(config("default"));
+    let bootstrap = build_client(config("default")).unwrap();
     bootstrap
         .query(&format!("DROP DATABASE IF EXISTS {name} SYNC"))
         .execute()
@@ -127,7 +128,7 @@ pub(super) async fn migrated_database(name: &str) -> Client {
 
     // The corpus `bins/migrate` applies, in its order, rather than a second
     // reading of the directories. No runner: the database is empty.
-    let client = build_client(config(name));
+    let client = build_client(config(name)).unwrap();
     for embedded in migrations::CLICKHOUSE
         .iter()
         .flat_map(|source| source.files)

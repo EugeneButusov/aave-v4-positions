@@ -32,10 +32,9 @@ mod tests {
     }
 
     fn served() -> Pool {
-        pool(
-            &std::env::var("POSTGRES_URL")
-                .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned()),
-        )
+        pool(&std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
+            "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
+        }))
     }
 
     #[tokio::test]

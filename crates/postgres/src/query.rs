@@ -154,8 +154,9 @@ mod tests {
     #[tokio::test]
     async fn a_read_is_one_client_span_naming_what_it_read() {
         interesting();
-        let url = std::env::var("POSTGRES_URL")
-            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
+        let url = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
+            "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
+        });
         let pool = build_pool(&url, Limits::default()).unwrap();
         let client = TracedPool::new(pool);
         let (captured, lines) = Captured::new();
