@@ -90,7 +90,8 @@ pub(crate) struct Progress {
     age_seconds: u64,
 
     /// Whether `age_seconds` has passed this deployment's threshold. A stale
-    /// response is still served: the numbers were true as of `last_block`.
+    /// response is still served: the shares were folded as of `last_block`, and
+    /// `valued_at` says which instant they were valued at.
     stale: bool,
 }
 

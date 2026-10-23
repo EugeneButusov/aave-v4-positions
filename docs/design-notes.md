@@ -160,8 +160,8 @@ independently testable. It is no longer the composition point for schema: that m
 read model onto a wire contract, and what a caller may ask for. It owns two things the crates
 deliberately do not — the cursor's wire format, because the key that signs it is this service's
 configuration, and the decision that an unindexed chain is a 404. Everything else it serves comes
-from `crates/aave-positions` and, for the block a response is true as of, `crates/indexing`. It writes
-to neither database.
+from `crates/aave-positions` and, for the block a response's shares were folded to, `crates/indexing`.
+It writes to neither database.
 
 `pnpm -r` walks the workspace in topological order, so each package builds before its consumers with
 no extra wiring. Consumers deliberately read **source** instead of `dist`: every vitest config
@@ -1522,6 +1522,22 @@ shares times an index extrapolated to the head block. Naming it is what makes a
 response reproducible and what lets reconciliation pin both sides to one block.
 The shares are as of whatever the indexer has folded, which is a different clock;
 reporting `valuedAt` keeps the two from being silently conflated.
+
+**An `asOf` past the last folded block is the point, not a defect.** The index
+accrues every second and the chain emits nothing while it does, so extrapolating
+forward from the last checkpoint is answerable arithmetic, and "what will this
+position be worth" is a question worth answering. A review read the forward case
+as serving a projection as fact; three things make it honest instead. An explicit
+`asOf` is served with **no prices at all**, so `pricing` and every `*_usd` field
+are null rather than pairing a future amount with a price read now. `valuedAt`
+echoes the instant used, so the page can be asked for again. And `MAX_AS_OF`
+bounds the absurd before any I/O, which is a units check rather than a policy.
+
+Anchoring the default cut to the committed head's block timestamp was tried and
+declined: it would pair a past cut with present prices on **every** default
+response, which is the mismatch the rule above exists to avoid. Cutting at now
+means the amounts and the prices are read at the same instant, and the only
+clock a caller has to reconcile is the one `sync` publishes.
 
 **Two `LEFT JOIN`s, where the collateral flag got a `UNION ALL`** — and the two
 cases differ structurally rather than by preference. `UNION ALL` earns its place
