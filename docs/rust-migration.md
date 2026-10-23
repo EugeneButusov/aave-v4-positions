@@ -96,7 +96,7 @@ crates/
   postgres/                 connect
   migrations/               every `.sql` this deployment applies, embedded
   test-db/                  a migrated schema per case   ← new, dev-only
-  indexing/                 loop, ports + alloy adapters, reorg, cursor, backfill
+  indexing/                 loop, ports, reorg, cursor, backfill — no chain
   aave-events/              decoders, two append-only ledgers
   aave-positions/           folds, read stores, valuation (the math)
   token-metadata/           enrichment: ERC-20 symbol/name
@@ -110,6 +110,10 @@ bins/
 
 Fifteen crates against eleven packages. `aave-abi` is one addition, and exists because of Risk 1.
 `crates/test-db` is another, and the note below says why it is a crate rather than a module.
+
+The `indexing/` line lost its alloy adapters: the ports, the loop and the durable stores are inside
+that crate and the adapters are not, for the reason four paragraphs below. Phase 3a is where that
+split was cashed in.
 
 `crates/migrations` is the third, and it came back. Phase 0 folded the corpus into `bins/migrate`
 on the grounds that nothing else would ever name a `Migration`. That holds only while the migrator
@@ -243,7 +247,7 @@ graph exactly, so they stay `[[bin]]` targets of `bins/indexer`.
 | NestJS DI + modules | explicit composition in `main.rs` | 32 `@Injectable`, 43 `forRootAsync` and 55 `@Inject` all disappear. Ports become trait objects rather than generics, so the composition root reads like the module graph it replaces — `Box<dyn Trait>` where one owner holds one, which is what `bins/api` does with its four, and `Arc` only where something genuinely shares one. An async port therefore carries `#[async_trait]`: `async fn` in a trait is stable and still not dyn compatible, measured on 1.96, and a boxed future per call is the price of the seam |
 | `@nestjs/platform-express` | `axum` + `tower-http` | |
 | `@nestjs/swagger` | `utoipa` + `utoipa-axum` | derive-based, and it reads doc comments — so it maps onto the *field docs* rather than onto the decorators, and `positions.dto.ts`'s 367 lines of restated shape have no counterpart. `utoipa-axum` registers a route with its documentation in one call, which is what the drift guard was going to have to check by hand. **`utoipa-swagger-ui` is not taken**: it embeds the whole 11 MB `swagger-ui-dist` to ship the 2 MB a page loads, and the image copies three files instead |
-| `zod` | `serde` + `garde`; `figment` for env | five files. Abort-on-invalid-config is preserved |
+| `zod` | hand-rolled `crates/env` | five files. Abort-on-invalid-config is preserved. **Not `serde` + `garde` + `figment`, as this row said before any of it was written**: crates.io's `crates_io_env_vars` is one reader per variable over a map, which is what a test wants and what names the one variable it refused |
 | `viem` | `alloy` | `alloy-provider`, `alloy-sol-types`, `alloy-transport-http` |
 | `@clickhouse/client` | `clickhouse` crate | 19 call sites, all `JSONEachRow` today; inserts move to RowBinary and `JSONEachRow` stays only where a `body` column is genuinely JSON |
 | `postgres` (postgres.js) | `tokio-postgres` + `deadpool-postgres` | see [Port notes](#port-notes) |
@@ -1019,11 +1023,44 @@ oracle once it is gone.
 
 ### Phase 3 — the indexing engine and Aave ingestion
 
-`indexing` — the loop, `ReorgDetector`, `CursorStore`, `BlockHeaderStore`, backfill, the alloy
-adapters and provider health — and `aave-events`, the decoders, both ledgers and the processors. The
-port contract suites in `test-support/` port with them; they are what keeps the in-memory doubles
-honest. `aave-abi` and its drift job land here too: the decoders are the first thing that needs
-`sol!` bindings, and vendoring ABIs before anything reads them would be a copy nothing checks.
+Split in two when it was planned out, because the line between the halves is one this crate already
+draws about itself — *nothing here may reach the chain*:
+
+#### Phase 3a — the spine
+
+**Everything that does not touch the chain, implemented.** The loop, `HashChainReorgDetector`,
+`PostgresCursorStore`, `PostgresBlockHeaderStore` and their contract suites; `IndexerStatus`, the
+twelve instruments and the stall signal; `bins/indexer` with its configuration, probes and drain.
+**Everything that does, a port with a double.** `ChainClient`, `LogReader` and `BlockProcessor` have
+their contracts written out and in-memory stand-ins behind them.
+
+The cursor and the window land together rather than in sequence, for the reason
+[Resuming](design-notes.md#resuming) gives: a durable cursor over an in-memory window is strictly
+worse than neither, because the resume point is exactly what a fork reorged out.
+
+Four PRs — the ports and the two that are a database, the detector, the loop, the binary. There is no
+differential gate here and cannot be; nothing to diff exists until 3b. What answers for it instead is
+the ported case coverage, and a guard broken on purpose for each ordering claim.
+
+**Four TypeScript behaviours are reproduced rather than fixed**, because 3b's gate is differential
+and each of these would show up in it as a difference to explain away:
+
+| preserved as-is | why it looks wrong |
+| --- | --- |
+| no jitter on the retry backoff | two replicas retrying one dead provider stay in lockstep |
+| `effective_max_range` only ever halves | one bad provider answer degrades throughput for the life of the process |
+| the terminal-failure delay is computed and never used | `run` returns before it sleeps, so the arm is dead except to a caller driving one iteration |
+| the range-size gauge mirrors the loop's own field | two values to keep in step where one would do |
+
+Each carries a one-line comment naming it as ported-as-is. They are fixed after cutover, against a
+codebase already proven identical to the one it replaced.
+
+#### Phase 3b — the chain, and Aave ingestion
+
+The alloy adapters and provider health — **outside `crates/indexing`**, see the note under
+[Target layout](#target-layout) — then `aave-events`: the decoders, both ledgers and the processors.
+`aave-abi` and its drift job land here too, because the decoders are the first thing that needs
+`sol!` bindings and vendoring ABIs before anything reads them would be a copy nothing checks.
 
 **Gate:** the Rust indexer walks from Main Spoke genesis into a _fresh_ pair of databases while the
 TypeScript one walks into the existing pair, then `SELECT`-level diffs of `spoke_events_current`,

@@ -1,14 +1,24 @@
-//! Where the indexer has got to, and — from Phase 3 — the loop that gets it
-//! there.
+//! Where the indexer has got to, and the loop that gets it there.
 //!
-//! Nothing here may reach the chain: `bins/api` links this crate for
-//! [`SyncStatusStore`] alone, and `./scripts/binary-boundaries.sh` fails if a
-//! provider or an HTTP transport reaches that binary. It does reach a socket —
-//! this is where Postgres is read.
-//!
-//! The read half of the cursor row only. `CursorStore`, the pipeline's single
-//! commit point, arrives with the loop.
+//! Whatever touches the chain is a port with no adapter here: one would link a
+//! provider and an HTTP transport, and `./scripts/binary-boundaries.sh` fails
+//! if either reaches `bins/api`, which links this crate for [`SyncStatusStore`].
 
+mod chain;
 mod cursor;
+#[cfg(test)]
+mod doubles;
+#[cfg(test)]
+mod fixtures;
+mod processors;
+mod reorg;
 
-pub use cursor::{Error, PostgresSyncStatusStore, SyncStatus, SyncStatusStore};
+pub use chain::{BlockHeader, ChainClient, Error as ChainError, LogFilter, LogReader, RawLog};
+pub use cursor::{
+    Cursor, CursorStore, Error, PostgresCursorStore, PostgresSyncStatusStore, SyncStatus,
+    SyncStatusStore,
+};
+pub use processors::{BlockProcessor, Failure, Outcome};
+pub use reorg::{
+    BlockHeaderStore, Error as ReorgError, PostgresBlockHeaderStore, ReorgDetector, Verdict,
+};

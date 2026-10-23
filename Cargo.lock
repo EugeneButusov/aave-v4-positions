@@ -1769,14 +1769,13 @@ version = "0.0.0"
 dependencies = [
  "alloy-primitives",
  "async-trait",
- "migrations",
  "postgres",
- "refinery-core",
  "test-db",
  "thiserror",
  "time",
  "tokio",
  "tokio-postgres",
+ "tokio-util",
  "units",
 ]
 

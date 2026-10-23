@@ -46,7 +46,8 @@ impl SyncStatusStore for PostgresSyncStatusStore {
         let row = self
             .db
             .query_opt("SELECT indexer_cursor", STATUS, &[&Bigint(chain_id.into())])
-            .await?;
+            .await
+            .map_err(Error::ReadFailed)?;
 
         row.as_ref().map(|row| status(chain_id, row)).transpose()
     }
