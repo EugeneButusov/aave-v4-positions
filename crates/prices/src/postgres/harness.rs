@@ -67,8 +67,9 @@ impl Harness for PostgresHarness {
 /// harnesses in shape but not in code — each names its own prefix, and a crate
 /// that exported this would be a test-support crate nothing else wants yet.
 async fn scratch(prefix: &str, case: &str) -> Pool {
-    let base = std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
+    let base = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
+        "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
+    });
     let schema = format!("{prefix}_{case}");
 
     let admin = build_pool(&base, Limits::default()).unwrap();

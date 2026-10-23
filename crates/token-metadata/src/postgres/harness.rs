@@ -24,8 +24,9 @@ impl Harness for PostgresHarness {
     /// they assert on the rows that exist, so a shared one has them creating
     /// and dropping each other's fixtures.
     async fn fresh(case: &str) -> Self {
-        let base = std::env::var("POSTGRES_URL")
-            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
+        let base = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
+            "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
+        });
         let schema = format!("rust_token_metadata_{case}");
 
         let admin = build_pool(&base, Limits::default()).unwrap();

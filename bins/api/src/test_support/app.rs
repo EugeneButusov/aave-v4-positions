@@ -63,8 +63,9 @@ pub(crate) fn clickhouse() -> Client {
 }
 
 pub(crate) fn postgres_url() -> String {
-    std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned())
+    std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
+        "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
+    })
 }
 
 pub(crate) fn postgres() -> Pool {

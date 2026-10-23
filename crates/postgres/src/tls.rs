@@ -15,8 +15,8 @@ use crate::error::Error;
 /// turn the first connection into a panic.
 ///
 /// An empty trust store is not an error: it is what a container with no
-/// `ca-certificates` has, and `sslmode=disable` and a `prefer` that falls back
-/// both work without one. Every verification then fails, which is the answer.
+/// `ca-certificates` has. Every verification then fails, which is the answer.
+/// An explicit `sslmode=disable` never constructs this connector.
 ///
 /// # Errors
 ///
@@ -75,28 +75,28 @@ mod tests {
     /// Int32 length 8, then the request code 80877103.
     const SSL_REQUEST: [u8; 8] = [0, 0, 0, 8, 4, 0xD2, 0x16, 0x2F];
 
-    /// What the client sent first, and the byte after our `S`.
-    async fn opening(sslmode: &str) -> ([u8; 8], Option<u8>) {
+    /// What the client sent first, and the byte after our negotiation reply.
+    async fn opening(sslmode: Option<&str>, negotiation: u8) -> ([u8; 8], Option<u8>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let (reply, sent) = tokio::sync::oneshot::channel();
+        let (report, sent) = tokio::sync::oneshot::channel();
 
         tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
 
             let mut first = [0u8; 8];
             stream.read_exact(&mut first).await.unwrap();
-            // `S` is "yes, TLS", which is the branch a raw stream never takes.
-            stream.write_all(b"S").await.unwrap();
+            stream.write_all(&[negotiation]).await.unwrap();
 
             let mut next = [0u8; 1];
             let next = stream.read_exact(&mut next).await.ok().map(|_| next[0]);
 
-            let _ = reply.send((first, next));
+            let _ = report.send((first, next));
         });
 
+        let parameter = sslmode.map_or_else(String::new, |mode| format!("?sslmode={mode}"));
         let pool = build_pool(
-            &format!("postgres://postgres@{address}/nothing?sslmode={sslmode}"),
+            &format!("postgres://postgres@{address}/nothing{parameter}"),
             Limits::default(),
         )
         .unwrap();
@@ -108,18 +108,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn asks_for_tls_and_then_opens_a_handshake() {
-        let (first, next) = opening("require").await;
+    async fn requires_tls_unless_the_url_explicitly_disables_it() {
+        for sslmode in [None, Some("prefer"), Some("require")] {
+            let (first, next) = opening(sslmode, b'S').await;
 
-        assert_eq!(first, SSL_REQUEST);
-        // 0x16 is the TLS record type for a handshake, so the client answered
-        // our `S` with a ClientHello rather than giving up or going plaintext.
-        assert_eq!(next, Some(0x16), "a ClientHello");
+            assert_eq!(first, SSL_REQUEST, "sslmode {sslmode:?}");
+            // 0x16 is the TLS record type for a handshake, so the client
+            // answered our `S` with a ClientHello rather than falling back.
+            assert_eq!(next, Some(0x16), "sslmode {sslmode:?}: a ClientHello");
+        }
+    }
+
+    #[tokio::test]
+    async fn refuses_the_server_instead_of_falling_back_to_plaintext() {
+        for sslmode in [None, Some("prefer"), Some("require")] {
+            let (first, next) = opening(sslmode, b'N').await;
+
+            assert_eq!(first, SSL_REQUEST, "sslmode {sslmode:?}");
+            assert_eq!(next, None, "sslmode {sslmode:?}: no StartupMessage");
+        }
     }
 
     #[tokio::test]
     async fn sends_no_ssl_request_when_the_url_asks_for_none() {
-        let (first, _) = opening("disable").await;
+        let (first, _) = opening(Some("disable"), b'S').await;
 
         assert_ne!(first, SSL_REQUEST);
         // A StartupMessage: Int32 length, then protocol version 3.0.

@@ -533,6 +533,14 @@ Compose stack and CI do so because their isolated ClickHouse server exposes no
 TLS port. This is construction policy, tested in `client.rs`, not readiness:
 `health.rs` only asks whether the already-built client can serve a query.
 
+Postgres follows the same fail-closed rule through its own URL vocabulary.
+The driver's missing/default `sslmode=prefer` is promoted to `require`, so it
+cannot silently fall back when a server refuses TLS. Plaintext is available
+only when the URL explicitly says `sslmode=disable`; that path uses `NoTls` and
+does not initialize the certificate store. The local `.env`, Rust CI jobs, and
+the Rust Compose services name that exception because their Postgres container
+does not expose TLS.
+
 Nineteen crates join `bins/api`'s graph, nine of them the rustls subtree and the
 rest its platform shims — `security-framework` for the keychain on macOS,
 `x509-cert` and `der` under `rustls-native-certs`. `ISC` joins `deny.toml`'s
@@ -540,10 +548,11 @@ allow list: `ring`'s expression is `Apache-2.0 AND ISC` rather than an `OR`, so
 there is no permitted branch to satisfy instead.
 
 **What this driver will not take.** `sslmode` has three spellings here —
-`disable`, `prefer`, `require` — and `verify-ca` and `verify-full` are a config
-parse error, as is `sslrootcert`, because `config.rs:716` rejects an unknown
-option outright. So a URL copied from a managed provider's console can fail at
-boot naming the variable. `require` verifies the certificate, which makes it
+`disable`, `prefer`, `require` — but this wrapper gives missing and `prefer` the
+secure `require` behavior. `verify-ca` and `verify-full` are a config parse
+error, as is `sslrootcert`, because `config.rs:716` rejects an unknown option
+outright. So a URL copied from a managed provider's console can fail at boot
+naming the variable. `require` verifies the certificate, which makes it
 libpq's `verify-full` rather than its `require`. `sslrootcert` is not a driver
 option; both database clients read `SSL_CERT_FILE` through
 `rustls-native-certs`, so a deployment can point that process-wide setting at a

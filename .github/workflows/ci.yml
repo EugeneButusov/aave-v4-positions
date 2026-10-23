@@ -103,6 +103,7 @@ jobs:
     timeout-minutes: 15
     env:
       CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
+      POSTGRES_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
 
     services: *databases
 
@@ -179,6 +180,7 @@ jobs:
     timeout-minutes: 15
     env:
       CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
+      POSTGRES_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
 
     services: *databases
 

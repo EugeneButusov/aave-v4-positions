@@ -20,7 +20,8 @@ thiserror = "2.0.19"
 tokio-postgres = "0.7.18"
 # What makes `sslmode` mean anything: with `NoTls` the driver answers
 # `can_connect` false and hands `sslmode=prefer` a raw stream without ever
-# sending `SSLRequest`. `ring` rather than `aws-lc-rs` for the provider — one
+# sending `SSLRequest`. The wrapper promotes `prefer` to `require`. `ring`
+# rather than `aws-lc-rs` for the provider — one
 # crypto backend across this crate and `clickhouse-client`, and no cmake in the
 # build — and `native-certs` so the roots are the host's, as libpq's are.
 tokio-postgres-rustls = { version = "0.14.0", default-features = false, features = [

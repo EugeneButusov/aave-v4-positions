@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use deadpool_postgres::{Manager, ManagerConfig, RecyclingMethod, Runtime, Timeouts};
+use tokio_postgres::config::SslMode;
 
 use crate::error::Error;
 
@@ -67,6 +68,13 @@ pub fn build_pool(url: &str, limits: Limits) -> Result<Pool, Error> {
         .parse::<tokio_postgres::Config>()
         .map_err(|source| Error::BadUrl { source })?;
 
+    // `tokio-postgres` defaults to `prefer`, which silently falls back to a
+    // plaintext session when the server refuses TLS. This service instead
+    // requires TLS unless the URL explicitly names `sslmode=disable`.
+    if config.get_ssl_mode() == SslMode::Prefer {
+        config.ssl_mode(SslMode::Require);
+    }
+
     if let Some(options) = options(config.get_options(), limits.statement) {
         config.options(options);
     }
@@ -74,13 +82,14 @@ pub fn build_pool(url: &str, limits: Limits) -> Result<Pool, Error> {
     // `Fast` skips a round trip on checkout. The manager still drops a
     // connection the driver has marked closed, so what this gives up is
     // noticing a server that died silently — which readiness asks about anyway.
-    let manager = Manager::from_config(
-        config,
-        crate::tls::connector()?,
-        ManagerConfig {
-            recycling_method: RecyclingMethod::Fast,
-        },
-    );
+    let manager_config = ManagerConfig {
+        recycling_method: RecyclingMethod::Fast,
+    };
+    let manager = if config.get_ssl_mode() == SslMode::Disable {
+        Manager::from_config(config, tokio_postgres::NoTls, manager_config)
+    } else {
+        Manager::from_config(config, crate::tls::connector()?, manager_config)
+    };
 
     Pool::builder(manager)
         .max_size(limits.max_size)
