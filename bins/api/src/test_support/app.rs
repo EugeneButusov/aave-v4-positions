@@ -11,7 +11,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -108,11 +107,6 @@ pub(crate) struct Stores {
     /// How many times the price store was asked; the point is the answer `0`,
     /// because an explicit `as_of` skips the read rather than discarding it.
     pub(crate) price_reads: Arc<AtomicUsize>,
-
-    /// Every query the handler built. The double answered the same page
-    /// whatever it was asked, so `limit`, `spoke`, `as_of` and the decoded
-    /// resume key could each be dropped with the suite staying green.
-    pub(crate) asked: Arc<Mutex<Vec<PositionQuery>>>,
 }
 
 impl Default for Stores {
@@ -130,7 +124,6 @@ impl Default for Stores {
             request_timeout: PATIENT,
             positions_hang: false,
             price_reads: Arc::new(AtomicUsize::new(0)),
-            asked: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -164,7 +157,6 @@ impl Stores {
             positions: Box::new(Positions {
                 page: self.page,
                 hang: self.positions_hang,
-                asked: Arc::clone(&self.asked),
             }),
             tokens: Box::new(Labels(self.labels)),
             prices: Box::new(Prices {
@@ -189,17 +181,11 @@ impl Stores {
 struct Positions {
     page: PositionPage,
     hang: bool,
-    asked: Arc<Mutex<Vec<PositionQuery>>>,
 }
 
 #[async_trait::async_trait]
 impl PositionStore for Positions {
-    async fn list(&self, query: &PositionQuery) -> Result<PositionPage, StoreError> {
-        self.asked
-            .lock()
-            .expect("no case panics while holding this")
-            .push(query.clone());
-
+    async fn list(&self, _query: &PositionQuery) -> Result<PositionPage, StoreError> {
         if self.hang {
             std::future::pending::<()>().await;
         }

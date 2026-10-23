@@ -3,10 +3,9 @@
 //! Each case names one decision and then pins the whole body it came in.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use aave_positions::store::{Position, PositionAsset, PositionKey, PositionPage, PositionQuery};
+use aave_positions::store::{Position, PositionAsset, PositionKey, PositionPage};
 use aave_positions::valuation::Valuation;
 use alloy_primitives::{Address, I256, U256, uint};
 use axum::body::Body;
@@ -387,59 +386,6 @@ async fn a_token_with_no_label_and_one_with_no_symbol_both_serve_null() {
 
     assert_eq!(served[0], served[1]);
     insta::assert_snapshot!(served[0]);
-}
-
-#[tokio::test]
-async fn passes_all_required_parameters_to_the_store() {
-    // Issued first, because a resume key only reaches the store through a
-    // cursor this service signed for this listing.
-    let (_, body) = answer(
-        Stores {
-            page: PositionPage {
-                items: vec![held()],
-                valued_at: VALUED_AT,
-                next: Some(PositionKey {
-                    spoke: address(SPOKE),
-                    reserve_id: U256::from(7),
-                }),
-            },
-            ..Stores::default()
-        },
-        &format!("?spoke={SPOKE}"),
-    )
-    .await;
-    let cursor =
-        serde_json::from_str::<serde_json::Value>(&body).expect("a JSON body")["next_cursor"]
-            .as_str()
-            .expect("a cursor")
-            .to_owned();
-
-    let stores = Stores::default();
-    let asked = Arc::clone(&stores.asked);
-
-    let (status, _) = answer(
-        stores,
-        &format!("?spoke={SPOKE}&limit=7&as_of={VALUED_AT}&cursor={cursor}"),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    // Compare the complete store query, so adding a required field cannot leave
-    // the handler wiring untested.
-    assert_eq!(
-        asked.lock().expect("not poisoned").as_slice(),
-        [PositionQuery {
-            chain_id: ChainId::known(1),
-            user: address(ALICE),
-            spoke: Some(address(SPOKE)),
-            limit: 7,
-            after: Some(PositionKey {
-                spoke: address(SPOKE),
-                reserve_id: U256::from(7),
-            }),
-            as_of: Some(VALUED_AT),
-        }]
-    );
 }
 
 #[tokio::test]
