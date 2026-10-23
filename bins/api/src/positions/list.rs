@@ -107,9 +107,10 @@ behind unrelated collateral. Every row names the Spoke it came from.";
         // message would be the only thing in it.
         (
             status = 500,
-            description = "A store, the arithmetic or a panic. Fixed text, never the cause: \
-                           what an operator needs is in this service's own logs, under the \
-                           `x-request-id` this response carries.",
+            description = "A store, the arithmetic, a panic, or a dependency that did not \
+                           answer inside this deployment's request deadline. Fixed text, \
+                           never the cause: what an operator needs is in this service's own \
+                           logs, under the `x-request-id` this response carries.",
             content_type = "text/plain",
             body = String,
         ),

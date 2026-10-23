@@ -58,6 +58,8 @@ pub(crate) struct Config {
     pub(crate) clickhouse: clickhouse_client::Config,
     pub(crate) postgres_url: String,
     pub(crate) postgres_limits: postgres::Limits,
+
+    pub(crate) request_timeout: Duration,
 }
 
 /// How old a number may be before a page says so.
@@ -137,6 +139,7 @@ impl Config {
                     MAX_DEADLINE_MS,
                 )?),
             },
+            request_timeout: env.millis("API_REQUEST_TIMEOUT_MS", 10_000, 1, MAX_DEADLINE_MS)?,
         })
     }
 }

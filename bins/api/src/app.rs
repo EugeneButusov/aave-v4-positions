@@ -8,6 +8,7 @@
 //! two holders and [`Uptime`] has to be read at the top of `main`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use aave_positions::store::PositionStore;
 use axum::Router;
@@ -39,6 +40,9 @@ pub(crate) struct App {
 
     pub(crate) signer: Signer,
     pub(crate) staleness: Staleness,
+
+    /// Read by [`handler`] when it wraps the routes, and nowhere else.
+    pub(crate) request_timeout: Duration,
 
     /// Read once here: it decides where the router mounts, and nothing below
     /// the router asks about it.
@@ -72,6 +76,7 @@ impl std::ops::Deref for AppState {
 pub(crate) fn handler(app: App) -> Router {
     let (mount, docs) = (router::mount(&app.prefix), router::docs(&app.docs_path));
     let assets = app.docs_assets.clone();
+    let request_timeout = app.request_timeout;
     let state = AppState(Arc::new(app));
 
     // Split before the probes and the document are merged in, so neither
@@ -87,5 +92,5 @@ pub(crate) fn handler(app: App) -> Router {
         .merge(versioned)
         .merge(docs::routes(&docs, &assets, api));
 
-    middleware::apply(router::refuse_unmatched(served))
+    middleware::apply(router::refuse_unmatched(served), request_timeout)
 }

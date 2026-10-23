@@ -84,6 +84,7 @@ async fn run(uptime: Uptime) -> Result<(), Box<dyn Error>> {
         sync: Box::new(PostgresSyncStatusStore::new(postgres)),
         signer: Signer::new(&config.cursor_secret)?,
         staleness: config.staleness,
+        request_timeout: config.request_timeout,
         prefix: config.prefix,
         docs_path: config.docs_path,
         docs_assets: config.docs_assets,

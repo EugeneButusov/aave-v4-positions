@@ -7,12 +7,15 @@
 //! request id prefers the trace id, so the span exists before the id is minted.
 
 use std::any::Any;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
+use axum::error_handling::HandleErrorLayer;
 use axum::http::{Request, StatusCode, header};
-use axum::response::Response;
-use tower::ServiceBuilder;
+use axum::response::{IntoResponse, Response};
+use tower::timeout::TimeoutLayer;
+use tower::{BoxError, ServiceBuilder};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::request_id::{
     MakeRequestId, MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
@@ -20,13 +23,13 @@ use tower_http::request_id::{
 
 use crate::requests::Instruments;
 
-pub(crate) fn apply(router: Router) -> Router {
+pub(crate) fn apply(router: Router, timeout: Duration) -> Router {
     let instruments = Instruments::new();
 
     router.layer(
         // The order is the contract: span outermost so the id is minted inside
-        // a traced request, and `CatchPanic` innermost so its 500 travels out
-        // through all three.
+        // a traced request and a deadline below is counted like any answer, and
+        // `CatchPanic` innermost so its 500 travels out through all three.
         ServiceBuilder::new()
             .layer(axum::middleware::from_fn_with_state(
                 instruments,
@@ -34,8 +37,23 @@ pub(crate) fn apply(router: Router) -> Router {
             ))
             .layer(SetRequestIdLayer::x_request_id(Traced))
             .layer(PropagateRequestIdLayer::x_request_id())
+            .layer(HandleErrorLayer::new(refused))
+            .layer(TimeoutLayer::new(timeout))
             .layer(CatchPanicLayer::custom(panicked)),
     )
+}
+
+/// A 500, whatever elapsed: a request this service cannot serve inside its own
+/// deadline is this service's bug, not something the caller can act on.
+///
+/// Not a 504 — RFC 9110 §15.6.5 defines that for a server "acting as a gateway
+/// or proxy" waiting on an upstream, which this is not — and not a 408, which
+/// blames the caller for being slow to send. The status is the one the document
+/// already publishes; which deadline elapsed goes to the log.
+async fn refused(error: BoxError) -> Response {
+    tracing::warn!(%error, "request refused");
+
+    (StatusCode::INTERNAL_SERVER_ERROR, "the request failed").into_response()
 }
 
 /// The trace id when there is one, a fresh UUID when there is not.
@@ -85,7 +103,10 @@ mod tests {
             panic!("a secret only the server should know")
         }
 
-        let boom = apply(Router::new().route("/boom", axum::routing::get(boom)));
+        let boom = apply(
+            Router::new().route("/boom", axum::routing::get(boom)),
+            crate::test_support::app::PATIENT,
+        );
         let request = Request::builder()
             .uri("/boom")
             .header("x-request-id", "carried-through")

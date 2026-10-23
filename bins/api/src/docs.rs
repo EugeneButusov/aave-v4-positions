@@ -387,8 +387,9 @@ mod tests {
             );
         }
 
-        // The middleware's 500 is fixed text, so a caller reading the document
-        // is not told to parse an envelope that never arrives.
+        // The 500 is fixed text, whether it came from a store, a panic or the
+        // request deadline, so a caller reading the document is not told to
+        // parse an envelope that never arrives.
         let content = &positions(&document)["responses"]["500"]["content"];
         assert_eq!(content["text/plain"]["schema"]["type"], "string");
         assert!(content["application/json"].is_null());
