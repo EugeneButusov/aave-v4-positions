@@ -15,9 +15,21 @@ use axum::{Json, Router, http::StatusCode};
 use crate::health::{Alive, CheckResult, Liveness, Readiness, Report};
 use crate::shutdown::ShutdownFlag;
 
-/// What both probe paths begin with. Published because the request log and the
-/// tracing layer both drop traffic under it.
-pub const HEALTH_PREFIX: &str = "/health";
+/// What both probe paths begin with.
+const HEALTH_PREFIX: &str = "/health";
+
+/// Whether a path is one of the probes, so a caller can drop it from the
+/// request log and the traces without burying anything else.
+///
+/// On a segment boundary. A raw prefix test also swallowed `/healthz` and
+/// `/health-report`, which are somebody's routes and belong in the log.
+#[must_use]
+pub fn is_probe(path: &str) -> bool {
+    match path.strip_prefix(HEALTH_PREFIX) {
+        Some(rest) => rest.is_empty() || rest.starts_with('/'),
+        None => false,
+    }
+}
 
 /// When the process started. A type rather than a bare `Instant`, because
 /// building the router is already too late to start counting.
@@ -79,6 +91,23 @@ mod tests {
     //! Against the bytes, and the bytes were measured: every expectation was
     //! captured by curling the TypeScript service — with ClickHouse reachable,
     //! pointed at a closed port, and after a SIGTERM.
+
+    #[test]
+    fn counts_a_probe_path_and_not_a_path_that_merely_starts_like_one() {
+        for probe in ["/health", "/health/", "/health/live", "/health/ready"] {
+            assert!(super::is_probe(probe), "{probe}");
+        }
+
+        for route in [
+            "/healthz",
+            "/health-report",
+            "/healthjunk",
+            "/api/health",
+            "",
+        ] {
+            assert!(!super::is_probe(route), "{route}");
+        }
+    }
 
     use axum::body::{Body, to_bytes};
     use axum::http::Request;

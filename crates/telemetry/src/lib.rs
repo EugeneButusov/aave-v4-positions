@@ -4,6 +4,7 @@
 //! [`Settings`] arrives parsed — nothing here reads the environment.
 
 mod context;
+mod panics;
 mod provider;
 mod settings;
 mod subscriber;

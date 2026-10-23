@@ -465,6 +465,26 @@ expression: document().await
               }
             },
             "description": "This deployment has never indexed that chain, so it cannot answer for it. Also returned in the window between an indexer starting and recording its first block."
+          },
+          "500": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A store, the arithmetic or a panic. Fixed text, never the cause: what an operator needs is in this service's own logs, under the `x-request-id` this response carries."
+          },
+          "504": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "A dependency did not answer inside this deployment's request deadline. A 504 rather than a 408 because what elapsed is this service's own wait, not the caller being slow to send."
           }
         },
         "summary": "List a wallet's positions",

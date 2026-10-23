@@ -4,9 +4,10 @@
 #
 # `docs/rust-migration.md` gives a table whose third column says what each binary
 # may *not* link, and says that column is asserted here rather than in review.
-# The rule is **no chain and no socket** — not "no alloy". `alloy-primitives` is
-# an address and two integers, which `bins/api` links through `aave-positions`
-# and is meant to; a provider or an HTTP transport is what it may not.
+# The rule is **no chain** — not "no alloy", and not "no socket" either, since
+# every binary here talks to a database. `alloy-primitives` is an address and two
+# integers, which `bins/api` links through `aave-positions` and is meant to; a
+# provider or an HTTP transport is what it may not.
 #
 # Reaching across then fails the build rather than passing review, and it fails
 # at the link graph rather than at an import: cargo links crates, so a

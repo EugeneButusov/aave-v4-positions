@@ -1507,10 +1507,10 @@ Only open positions come back — §12.1: a position exists while its shares are
 `!= 0` rather than `> 0` deliberately, so a negative balance surfaces as a visibly wrong number for
 §9 to catch instead of vanishing behind the filter that hides closed positions.
 
-`Position` keeps its shares and gains `asset` and `value`. Both are **null
-together**, and only when the join has nothing to offer — a reserve the registry
-has not seen, or a Hub asset with no checkpoint yet. A zero there would be
-indistinguishable from a real zero balance.
+`Position` keeps its shares and gains `asset` and `value`. **`asset` is null when
+the registry has not seen the reserve, and `value` is null whenever `asset` is —
+and also on its own**, when the Hub asset has no checkpoint before the instant.
+A zero there would be indistinguishable from a real zero balance.
 
 `netSuppliedAmount` stays beside `value.suppliedAmount` rather than being
 replaced by it: one is cost basis, the other is current worth, and the difference
@@ -1606,10 +1606,11 @@ parameter stays Unix seconds**, bounded as above, so round-tripping a `valued_at
 means converting it; the bounds are a units check and an ISO string cannot fail one the way a
 millisecond timestamp can.
 
-**`asset` and `value` are null together**, and only when the join has nothing to offer: a reserve the
-registry has not seen, or a Hub asset with no interest checkpoint yet. Null rather than zero, because
-a zero amount cannot be told apart from a real zero balance. The position still appears — its shares
-are real either way.
+**`value` is null whenever `asset` is, and sometimes on its own**: `asset` goes when the registry has
+not seen the reserve, and `value` goes with it or alone — a Hub asset with no interest checkpoint
+before the instant, or a share balance the fold has driven negative, which no `U256` can value. Null
+rather than zero, because a zero amount cannot be told apart from a real zero balance. The position
+still appears either way; its shares are real.
 
 **Three clocks now, because a price is a third source.** `price_usd`, `supplied_amount_usd` and
 `total_debt_usd` come from the Spoke's own oracle, and `pricing` says how fresh they are — reporting the **oldest**
@@ -1973,6 +1974,21 @@ from a client-side report. Probe traffic is excluded so it does not bury everyth
 `authorization`/`cookie` headers are removed rather than masked. Every line is tagged with the
 service, plus the `chainId` on the indexer, so one stream can carry both. `LOG_PRETTY=true` is for
 local use only. A service declares _what it is_, not how logging works:
+
+**The Rust API's telemetry names the route, not the path, and that is a privacy decision rather than
+a cardinality one.** A matched path on the positions route carries the wallet somebody asked about,
+and while a position is public, who is asking about whose wallet is not — these spans and lines
+leave the process for a collector. So `http.route` is recorded and `url.path` is not, except where
+nothing matched: an unmatched path reached no handler, so it discloses no query that happened, and
+it is the only thing that says what was asked for. Metrics were already template-only, for the
+cardinality reason.
+
+**A panic goes through the subscriber, not to stderr.** Rust's default hook writes plain text, which
+lands in the middle of a stream of JSON objects with nothing tying it to the request;
+`telemetry::init` replaces it with one that emits an `ERROR` event carrying the payload and the
+location. It runs at the panic site, so it is inside the request's own span and inherits the request
+id. `CatchPanicLayer` still answers the caller 500 with fixed text and logs nothing itself, because
+two lines for one panic is two alerts.
 
 ```ts
 LoggingModule.forRootAsync({

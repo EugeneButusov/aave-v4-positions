@@ -15,5 +15,5 @@ mod shutdown;
 
 pub use cause::error_message_with_causes;
 pub use health::{Alive, CheckResult, CheckStatus, Liveness, Readiness, Report, check};
-pub use probe::{HEALTH_PREFIX, Uptime, probe_router};
+pub use probe::{Uptime, is_probe, probe_router};
 pub use shutdown::ShutdownFlag;

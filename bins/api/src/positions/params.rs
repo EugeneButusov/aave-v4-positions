@@ -30,6 +30,14 @@ pub(crate) const MAX_AS_OF: u64 = 4_102_444_800;
 /// The four this endpoint answers to; anything else is a refusal.
 const KNOWN: [&str; 4] = ["spoke", "limit", "cursor", "as_of"];
 
+/// How many faults a refusal spells out before it starts counting.
+///
+/// Every unrecognised key is another fault and every fault is in the body, so
+/// an unbounded list makes the refusal as long as the query string a caller
+/// chose to send — bounded only by hyper's 417,792-byte head limit. Eight is
+/// past the five a correct request can carry.
+const MAX_FAULTS: usize = 8;
+
 /// `default` takes a function to call, not a constant to read, so this is what
 /// keeps the published default and the parsed one the same number.
 fn default_limit() -> u32 {
@@ -110,6 +118,8 @@ impl Listing {
 struct Reading {
     query: HashMap<String, String>,
     faults: Vec<String>,
+    /// Including the ones past [`MAX_FAULTS`], which are counted and dropped.
+    found: usize,
 }
 
 impl Reading {
@@ -119,6 +129,7 @@ impl Reading {
         let mut reading = Self {
             query: HashMap::new(),
             faults: Vec::new(),
+            found: 0,
         };
 
         for (key, value) in form_urlencoded::parse(query.as_bytes()) {
@@ -141,12 +152,21 @@ impl Reading {
     /// A 400 listing every fault, in the order the parameters are read.
     fn finish(self) -> Result<(), ApiError> {
         if self.faults.is_empty() {
-            Ok(())
-        } else {
-            // One line rather than the `\n` its predecessor emits, which in a
-            // JSON string is an escape a terminal shows literally.
-            Err(ApiError::bad_request(self.faults.join("; ")))
+            return Ok(());
         }
+
+        // One line rather than the `\n` its predecessor emits, which in a
+        // JSON string is an escape a terminal shows literally.
+        let mut message = self.faults.join("; ");
+        if let Some(dropped) = self
+            .found
+            .checked_sub(self.faults.len())
+            .filter(|counted| *counted > 0)
+        {
+            message.push_str(&format!("; and {dropped} more"));
+        }
+
+        Err(ApiError::bad_request(message))
     }
 
     /// [`ChainId::MIN`] on a fault, which never reaches a query because
@@ -217,7 +237,10 @@ impl Reading {
     }
 
     fn reject(&mut self, fault: String) {
-        self.faults.push(fault);
+        self.found = self.found.saturating_add(1);
+        if self.faults.len() < MAX_FAULTS {
+            self.faults.push(fault);
+        }
     }
 }
 
@@ -365,6 +388,28 @@ mod tests {
             parse("as_of=4102444800").ok().map(|l| l.as_of),
             Some(Some(MAX_AS_OF))
         );
+    }
+
+    #[test]
+    fn caps_the_faults_it_spells_out_and_counts_the_rest() {
+        // Twenty unknown keys, which a caller chooses freely: unbounded, the
+        // body grows with the query string.
+        let query: String = (0..20)
+            .map(|n| format!("junk{n}=1"))
+            .collect::<Vec<_>>()
+            .join("&");
+
+        let refusal = refused("1", ALICE, &query);
+
+        assert_eq!(refusal.matches("unrecognized").count(), MAX_FAULTS);
+        assert!(refusal.ends_with("; and 12 more"), "{refusal}");
+    }
+
+    #[test]
+    fn says_nothing_about_more_when_it_spelled_them_all_out() {
+        let refusal = refused("1", ALICE, "junk=1&limit=0");
+
+        assert!(!refusal.contains("more"), "{refusal}");
     }
 
     #[test]

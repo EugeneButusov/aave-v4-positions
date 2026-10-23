@@ -3282,6 +3282,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
+ "serde_json",
  "thiserror",
  "tokio",
  "tracing",

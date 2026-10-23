@@ -6,11 +6,12 @@
 //! one, so nothing else under that path is reachable.
 
 use std::path::Path;
+use std::sync::Arc;
 
+use axum::Router;
 use axum::http::header;
 use axum::response::Html;
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::routing::{MethodRouter, get};
 use tower_http::services::ServeFile;
 use utoipa::openapi::OpenApi;
 
@@ -29,22 +30,11 @@ const ASSETS: [&str; 3] = [
 pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
     let page = page(mount);
 
-    // Per request from a clone, because `Serialize for Arc` is behind serde's
-    // `rc` feature. Sixteen kilobytes, on a cold route.
-    let rendered = api.clone();
-    let document = get(move || {
-        let api = rendered.clone();
-        async move { Json(api) }
-    });
-
-    let yaml = get(move || {
-        let api = api.clone();
-        async move {
-            api.to_yaml()
-                .map(|yaml| ([(header::CONTENT_TYPE, "application/yaml")], yaml))
-                .map_err(ApiError::from)
-        }
-    });
+    // Rendered here rather than per request: the document is fixed once the
+    // router is built, and both spellings were being serialised again on every
+    // hit — sixteen kilobytes of JSON, and a YAML pass that can fail.
+    let document = served("application/json", api.to_json());
+    let yaml = served("application/yaml", api.to_yaml());
 
     let mut router = Router::new()
         .route(&format!("{mount}/openapi.json"), document)
@@ -60,14 +50,46 @@ pub(crate) fn routes(mount: &str, assets: &str, api: OpenApi) -> Router {
         router = router.route(&at, get(move || std::future::ready(Html(page.clone()))));
     }
 
+    // Registered only when the file is there, so an image built without the
+    // viewer answers the same not-found envelope as any other unknown path
+    // rather than `ServeFile`'s bodiless 404.
     for file in ASSETS {
-        router = router.route_service(
-            &format!("{mount}/{file}"),
-            ServeFile::new(Path::new(assets).join(file)),
-        );
+        let on_disk = Path::new(assets).join(file);
+        if on_disk.is_file() {
+            router = router.route_service(&format!("{mount}/{file}"), ServeFile::new(on_disk));
+        }
     }
 
     router
+}
+
+/// A document that would not render, kept so the route can answer with it.
+///
+/// The router is built before the listener, and a 500 on one spelling of the
+/// document is better than a process that will not boot over something nothing
+/// else depends on.
+#[derive(Debug, thiserror::Error)]
+#[error("the document could not be rendered: {0}")]
+struct Unrenderable(Arc<str>);
+
+/// Serves one spelling, cloning an `Arc` rather than the document.
+fn served<E: std::fmt::Display>(
+    content_type: &'static str,
+    rendered: Result<String, E>,
+) -> MethodRouter {
+    let rendered: Result<Arc<str>, Arc<str>> = rendered
+        .map(|text| Arc::from(text.as_str()))
+        .map_err(|error| Arc::from(error.to_string().as_str()));
+
+    get(move || {
+        let rendered = rendered.clone();
+        async move {
+            match rendered {
+                Ok(text) => Ok(([(header::CONTENT_TYPE, content_type)], text.to_string())),
+                Err(refusal) => Err(ApiError::Internal(Box::new(Unrenderable(refusal)))),
+            }
+        }
+    })
 }
 
 /// The page, pointing at this deployment's own document.
@@ -376,7 +398,7 @@ mod tests {
             .map(String::as_str)
             .collect();
 
-        assert_eq!(statuses, ["200", "400", "404"]);
+        assert_eq!(statuses, ["200", "400", "404", "500", "504"]);
 
         for status in ["400", "404"] {
             assert_eq!(
@@ -385,6 +407,18 @@ mod tests {
                 "#/components/schemas/ErrorEnvelope",
                 "{status}"
             );
+        }
+
+        // The two the middleware answers are fixed text, so a caller reading
+        // the document is not told to parse an envelope that never arrives.
+        for status in ["500", "504"] {
+            let content = &positions(&document)["responses"][status]["content"];
+
+            assert_eq!(
+                content["text/plain"]["schema"]["type"], "string",
+                "{status}"
+            );
+            assert!(content["application/json"].is_null(), "{status}");
         }
     }
 
@@ -403,6 +437,19 @@ mod tests {
         let (status, body) = fetch("/docs/openapi.yaml").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.starts_with("openapi: 3.1.0\n"), "{body:.60}");
+    }
+
+    #[tokio::test]
+    async fn an_absent_viewer_file_answers_the_envelope_like_any_other_unknown_path() {
+        // `/usr/share/api/docs` is what the default config names and what a
+        // `cargo run` does not have, so this is the ordinary local case.
+        let (status, body) = fetch("/docs/swagger-ui.css").await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            body,
+            r#"{"message":"Cannot GET /docs/swagger-ui.css","error":"Not Found","status_code":404}"#
+        );
     }
 
     #[tokio::test]

@@ -52,7 +52,8 @@ impl PositionStore for ClickHousePositionStore {
             .param("chainId", u64::from(query.chain_id))
             .param("user", lower_case(query.user))
             // One more than asked, so the extra row's presence is what says
-            // there is a next page.
+            // there is a next page. Widened first: `u32::MAX + 1` against a
+            // `UInt32` parameter is answered with an empty page and a 200.
             .param("limit", u64::from(query.limit).saturating_add(1))
             // The beginning is a key: no Spoke address is the empty string, so
             // `('', 0)` is below every row.
@@ -226,6 +227,22 @@ mod tests {
     /// it: the fold's own behaviour, observed through this store.
     mod the_fold {
         use super::*;
+
+        /// The port takes any `u32`, and the handler's cap is the only thing
+        /// that kept this off the wire. Bound as `UInt32`, `u32::MAX + 1` was
+        /// answered with an empty page and a 200 — measured, not a refusal.
+        #[tokio::test]
+        async fn serves_a_limit_the_port_allows_and_the_route_would_not() {
+            let (store, client) = store("widest_limit").await;
+            index(&client, &[supply(At::block(100), ALICE, "7", "500")]).await;
+
+            let widest = PositionQuery {
+                limit: u32::MAX,
+                ..ask()
+            };
+
+            assert_eq!(store.list(&widest).await.unwrap().items.len(), 1);
+        }
 
         #[tokio::test]
         async fn matches_a_checksummed_address_against_the_lower_cased_fold() {
