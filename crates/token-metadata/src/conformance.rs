@@ -136,12 +136,12 @@ pub(crate) async fn omits_a_token_with_no_row<H: Harness>() {
     assert!(!labels.contains_key(&UNASKED));
 }
 
-pub(crate) async fn answers_a_checksummed_address_from_a_lower_cased_row<H: Harness>() {
+pub(crate) async fn checksums_a_lower_cased_row<H: Harness>() {
     // What the TypeScript needs `reserveKey`-style lower-casing discipline for.
     // The column is lower-cased — its `CHECK` allows nothing else — and this
     // key was parsed from the checksummed spelling a caller would hold. One
     // `Address`, one hash, no rule to forget.
-    let harness = H::fresh("answers_a_checksummed_address_from_a_lower_cased_row").await;
+    let harness = H::fresh("checksums_a_lower_cased_row").await;
     harness
         .given_labels(&[Stored::labelled(CHAIN_ID, USDC, "USDC")])
         .await;

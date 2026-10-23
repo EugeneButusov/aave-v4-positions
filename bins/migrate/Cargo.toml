@@ -22,5 +22,10 @@ thiserror = "2.0.19"
 time = { version = "0.3", features = ["parsing"] }
 tokio = { version = "1.53.1", features = ["macros", "rt"] }
 
+[dev-dependencies]
+# The scratch schema `tests/postgres.rs` runs against. Empty, not migrated:
+# applying the corpus is what that suite is about.
+test-db.workspace = true
+
 [lints]
 workspace = true

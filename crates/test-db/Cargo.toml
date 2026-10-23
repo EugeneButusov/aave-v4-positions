@@ -1,0 +1,15 @@
+[package]
+name = "test-db"
+description = "A migrated Postgres schema per test case, and nothing else"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The corpus this replays. The reason this is its own crate rather than a
+# module of `postgres`: that one is connectivity and must not know the schema.
+migrations.workspace = true
+postgres.workspace = true
+
+[lints]
+workspace = true

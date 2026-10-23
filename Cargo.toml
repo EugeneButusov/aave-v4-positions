@@ -19,6 +19,8 @@ ops = { path = "crates/ops" }
 postgres = { path = "crates/postgres" }
 prices = { path = "crates/prices" }
 telemetry = { path = "crates/telemetry" }
+# A dev-dependency everywhere it appears; see its crate doc.
+test-db = { path = "crates/test-db" }
 token-metadata = { path = "crates/token-metadata" }
 units = { path = "crates/units" }
 

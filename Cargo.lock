@@ -1772,6 +1772,7 @@ dependencies = [
  "migrations",
  "postgres",
  "refinery-core",
+ "test-db",
  "thiserror",
  "time",
  "tokio",
@@ -2059,6 +2060,7 @@ dependencies = [
  "migrations",
  "postgres",
  "refinery-core",
+ "test-db",
  "thiserror",
  "time",
  "tokio",
@@ -2533,6 +2535,7 @@ dependencies = [
  "migrations",
  "postgres",
  "refinery-core",
+ "test-db",
  "thiserror",
  "time",
  "tokio",
@@ -3454,6 +3457,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-db"
+version = "0.0.0"
+dependencies = [
+ "migrations",
+ "postgres",
+]
+
+[[package]]
 name = "thiserror"
 version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3567,6 +3578,7 @@ dependencies = [
  "migrations",
  "postgres",
  "refinery-core",
+ "test-db",
  "thiserror",
  "tokio",
  "tokio-postgres",
