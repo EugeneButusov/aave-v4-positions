@@ -390,7 +390,7 @@ async fn a_token_with_no_label_and_one_with_no_symbol_both_serve_null() {
 }
 
 #[tokio::test]
-async fn hands_the_store_every_parameter_the_request_carried() {
+async fn passes_all_required_parameters_to_the_store() {
     // Issued first, because a resume key only reaches the store through a
     // cursor this service signed for this listing.
     let (_, body) = answer(
@@ -424,7 +424,8 @@ async fn hands_the_store_every_parameter_the_request_carried() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    // The whole query, so a sixth field cannot arrive untested.
+    // Compare the complete store query, so adding a required field cannot leave
+    // the handler wiring untested.
     assert_eq!(
         asked.lock().expect("not poisoned").as_slice(),
         [PositionQuery {
