@@ -77,7 +77,7 @@ FROM (
     -- One more than asked. The extra row's presence is what says there
     -- is a next page; counting the whole result set to find out would
     -- defeat keyset paging.
-    LIMIT {limit:UInt32}
+    LIMIT {limit:UInt64}
 ) AS p
 -- **A join, not the UNION ALL the collateral flag got.** The two cases
 -- differ structurally, and EXPLAIN indexes = 1 shows how.

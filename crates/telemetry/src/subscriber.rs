@@ -48,8 +48,8 @@ impl Telemetry {
     }
 }
 
-/// Installs the process-wide subscriber. Call once, and before anything that
-/// might want to log.
+/// Installs the process-wide subscriber, and the panic hook that reports
+/// through it. Call once, and before anything that might want to log.
 ///
 /// # Errors
 ///
@@ -57,6 +57,7 @@ impl Telemetry {
 /// built, or when a subscriber is already installed.
 pub fn init(settings: Settings) -> Result<Telemetry, Error> {
     let format = formatter(&settings);
+    std::panic::set_hook(Box::new(crate::panics::report));
 
     if settings.disabled {
         tracing_subscriber::registry()

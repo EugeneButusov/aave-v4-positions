@@ -10,7 +10,7 @@ aave-positions.workspace = true
 clickhouse-client.workspace = true
 env.workspace = true
 # The read-only view of the cursor row, and nothing else from that crate. The
-# boundary rule is no chain and no socket, which its own doc argues this side of.
+# boundary rule is no chain, which that crate's own doc argues this side of.
 indexing.workspace = true
 units.workspace = true
 ops.workspace = true

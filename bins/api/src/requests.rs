@@ -42,12 +42,13 @@ impl Instruments {
     ) -> Response {
         let (method, path) = (request.method().clone(), request.uri().path().to_owned());
 
-        if path.starts_with(ops::HEALTH_PREFIX) {
+        if ops::is_probe(&path) {
             return next.run(request).await;
         }
 
         // The template, never the path: anyone could otherwise mint unbounded
-        // metric series by varying a 404.
+        // metric series by varying a 404. The span and the log line follow the
+        // same rule, for a different reason — see `url.path` below.
         let route = request
             .extensions()
             .get::<MatchedPath>()
@@ -65,15 +66,23 @@ impl Instruments {
             otel.status_code = Empty,
             http.request.method = %method,
             http.route = Empty,
-            url.path = %path,
+            // **Recorded only when nothing matched.** A matched path on this
+            // service carries the wallet somebody asked about, and while a
+            // position is public, who is asking about whose wallet is not —
+            // these spans leave the process for a collector. An unmatched path
+            // reached no handler, so there is nothing it can disclose about a
+            // query that happened, and it is the one case where the path is the
+            // only way to tell what was asked for.
+            url.path = Empty,
             url.scheme = %scheme,
             http.response.status_code = Empty,
             request_id = Empty,
             trace_id = Empty,
         );
-        if let Some(route) = route.as_deref() {
-            span.record("http.route", route);
-        }
+        match route.as_deref() {
+            Some(route) => span.record("http.route", route),
+            None => span.record("url.path", path.as_str()),
+        };
         telemetry::continue_from(&span, request.headers());
         if let Some(id) = telemetry::trace_id(&span) {
             span.record("trace_id", id);
@@ -173,6 +182,7 @@ mod tests {
         Router::new()
             .route("/v1/positions/{user}", get(async || "[]"))
             .route("/health/live", get(async || "{}"))
+            .route("/healthz", get(async || "{}"))
             .route("/boom", get(async || StatusCode::INTERNAL_SERVER_ERROR))
             .layer(axum::middleware::from_fn_with_state(
                 instruments,
@@ -324,6 +334,15 @@ mod tests {
     }
 
     #[test]
+    fn observes_a_route_that_merely_starts_like_a_probe() {
+        // A raw prefix test dropped every path under `/health`, so somebody's
+        // `/healthz` left no span and no metric and nothing said why.
+        let spans = observed(router(Instruments::new()), request("/healthz")).spans;
+
+        assert_eq!(spans.len(), 1, "{spans:?}");
+    }
+
+    #[test]
     fn names_the_span_for_the_route_and_reports_what_the_caller_got() {
         let spans = observed(router(Instruments::new()), request("/v1/positions/0xabc")).spans;
 
@@ -348,6 +367,27 @@ mod tests {
         assert_eq!(spans.len(), 1, "{spans:?}");
         assert_eq!(spans[0].name, "GET");
         assert_eq!(attribute(&spans[0], "http.route"), None);
+    }
+
+    /// A matched path here carries the wallet somebody asked about, and these
+    /// spans leave the process. The template says what was called without
+    /// saying who was asked about.
+    #[test]
+    fn a_matched_request_leaves_the_wallet_out_of_the_span() {
+        let observed = observed(router(Instruments::new()), request("/v1/positions/0xabc"));
+
+        assert_eq!(attribute(&observed.spans[0], "url.path"), None);
+        assert!(!observed.logged.contains("0xabc"), "{}", observed.logged);
+    }
+
+    #[test]
+    fn an_unmatched_request_keeps_its_path_because_nothing_read_it() {
+        let spans = observed(router(Instruments::new()), request("/not-a-route")).spans;
+
+        assert_eq!(
+            attribute(&spans[0], "url.path").as_deref(),
+            Some("/not-a-route")
+        );
     }
 
     #[test]

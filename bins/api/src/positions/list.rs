@@ -102,6 +102,18 @@ behind unrelated collateral. Every row names the Spoke it came from.";
                            and recording its first block.",
             body = ErrorEnvelope,
         ),
+        // Both are `text/plain`, so neither can reuse the envelope the two
+        // above `$ref`: a 5xx says nothing a caller can act on, and the
+        // message would be the only thing in it.
+        (
+            status = 500,
+            description = "A store, the arithmetic, a panic, or a dependency that did not \
+                           answer inside this deployment's request deadline. Fixed text, \
+                           never the cause: what an operator needs is in this service's own \
+                           logs, under the `x-request-id` this response carries.",
+            content_type = "text/plain",
+            body = String,
+        ),
     ),
 )]
 async fn list(

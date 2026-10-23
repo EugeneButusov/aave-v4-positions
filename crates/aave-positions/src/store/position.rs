@@ -25,8 +25,10 @@ pub struct PositionAsset {
 /// balance is not a balance (§5), so the amounts are computed at read time and
 /// carry the instant they were computed at.
 ///
-/// [`Position::asset`] and [`Position::value`] are `None` together, and only
-/// when the join has nothing to offer.
+/// [`Position::asset`] is `None` when the registry has not resolved the reserve,
+/// and [`Position::value`] is `None` whenever `asset` is — but also on its own,
+/// when no Hub checkpoint precedes the instant or a share balance has gone
+/// negative and no `U256` holds it. Null rather than zero either way.
 ///
 /// The share columns are signed although they cannot go negative on chain, so
 /// that drift shows as a wrong number §9 can see rather than a refusal.

@@ -376,7 +376,7 @@ mod tests {
             .map(String::as_str)
             .collect();
 
-        assert_eq!(statuses, ["200", "400", "404"]);
+        assert_eq!(statuses, ["200", "400", "404", "500"]);
 
         for status in ["400", "404"] {
             assert_eq!(
@@ -386,6 +386,13 @@ mod tests {
                 "{status}"
             );
         }
+
+        // The 500 is fixed text, whether it came from a store, a panic or the
+        // request deadline, so a caller reading the document is not told to
+        // parse an envelope that never arrives.
+        let content = &positions(&document)["responses"]["500"]["content"];
+        assert_eq!(content["text/plain"]["schema"]["type"], "string");
+        assert!(content["application/json"].is_null());
     }
 
     #[tokio::test]

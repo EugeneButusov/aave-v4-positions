@@ -53,6 +53,9 @@ tracing-subscriber = { version = "0.3.23", features = ["json"] }
 thiserror = "2.0.19"
 
 [dev-dependencies]
+# Reading a captured log line back as the object a collector would see, rather
+# than as the string this crate happened to format.
+serde_json = "1.0.151"
 # `#[tokio::test]`, and a multi-threaded runtime because the exporters hand work
 # back to it from a thread that is then blocked waiting for the answer.
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }

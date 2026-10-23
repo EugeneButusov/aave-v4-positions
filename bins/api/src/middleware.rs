@@ -15,7 +15,6 @@ use axum::error_handling::HandleErrorLayer;
 use axum::http::{Request, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use tower::timeout::TimeoutLayer;
-use tower::timeout::error::Elapsed;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::request_id::{
@@ -44,20 +43,17 @@ pub(crate) fn apply(router: Router, timeout: Duration) -> Router {
     )
 }
 
-/// `504` rather than `408`: `408` says the client was too slow to send, and
-/// what elapsed is our own wait on a dependency.
+/// A 500, whatever elapsed: a request this service cannot serve inside its own
+/// deadline is this service's bug, not something the caller can act on.
+///
+/// Not a 504 — RFC 9110 §15.6.5 defines that for a server "acting as a gateway
+/// or proxy" waiting on an upstream, which this is not — and not a 408, which
+/// blames the caller for being slow to send. The status is the one the document
+/// already publishes; which deadline elapsed goes to the log.
 async fn refused(error: BoxError) -> Response {
-    let (status, detail) = if error.is::<Elapsed>() {
-        (StatusCode::GATEWAY_TIMEOUT, "the request took too long")
-    } else {
-        // Unreachable, and not a panic, so a second layer added here cannot
-        // make it one.
-        (StatusCode::INTERNAL_SERVER_ERROR, "the request failed")
-    };
+    tracing::warn!(%error, "request refused");
 
-    tracing::warn!(status = status.as_u16(), detail, "request refused");
-
-    (status, detail).into_response()
+    (StatusCode::INTERNAL_SERVER_ERROR, "the request failed").into_response()
 }
 
 /// The trace id when there is one, a fresh UUID when there is not.
@@ -78,15 +74,10 @@ impl MakeRequestId for Traced {
 /// A panic is a bug here, and the caller learns nothing about it.
 ///
 /// The body is fixed text, because a panic message carries whatever was in
-/// scope when it fired. What an operator needs goes to the log instead — the
-/// default hook writes plain text into a stream of JSON objects, with nothing
-/// tying it to the request.
-fn panicked(payload: Box<dyn Any + Send + 'static>) -> Response {
-    // `as_ref()`, not `&payload`: a `&Box<dyn Any>` unsizes to a `&dyn Any`
-    // holding the box, so every downcast below misses and every panic is
-    // logged as having no message. Which is what the first version did.
-    tracing::error!(panic = said(payload.as_ref()), "a handler panicked");
-
+/// scope when it fired. Nothing is logged here: the hook `telemetry::init`
+/// installs has already reported it, from inside the request's own span and
+/// with the location this layer never sees.
+fn panicked(_payload: Box<dyn Any + Send + 'static>) -> Response {
     let mut response = Response::new(Body::from("Service panicked"));
     *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     response.headers_mut().insert(
@@ -96,27 +87,13 @@ fn panicked(payload: Box<dyn Any + Send + 'static>) -> Response {
     response
 }
 
-/// What `panic!` was given, which is a `String` when it was formatted and a
-/// `&str` when it was a literal. Anything else is a payload nobody here creates.
-fn said(payload: &(dyn Any + Send)) -> &str {
-    payload
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| payload.downcast_ref::<&'static str>().copied())
-        .unwrap_or("a panic carrying no message")
-}
-
 #[cfg(test)]
 mod tests {
     use axum::http::Request;
 
     use super::*;
     use crate::test_support::app::{get, handler, postgres, unreachable_postgres};
-    use crate::test_support::observability::{Captured, interesting, observed};
-
-    fn payload(value: impl Any + Send) -> Box<dyn Any + Send> {
-        Box::new(value)
-    }
+    use crate::test_support::observability::observed;
 
     #[tokio::test]
     async fn a_panicking_handler_answers_500_and_says_nothing_about_why() {
@@ -210,43 +187,5 @@ mod tests {
             "{}",
             observed.logged
         );
-    }
-
-    /// What the panic handler wrote, as a deployment would read it. Asserting
-    /// on [`said`] alone leaves the coercion uncovered, which is how the bug
-    /// this catches reached a running process.
-    fn logged_by(panic: Box<dyn Any + Send>) -> String {
-        interesting();
-        let (captured, lines) = Captured::new();
-        let subscriber = tracing_subscriber::fmt()
-            .json()
-            .with_writer(captured)
-            .finish();
-
-        tracing::subscriber::with_default(subscriber, || drop(panicked(panic)));
-
-        lines.read()
-    }
-
-    #[test]
-    fn logs_the_panic_message_rather_than_the_box_around_it() {
-        let logged = logged_by(payload("a secret only the server should know"));
-
-        assert!(
-            logged.contains(r#""panic":"a secret only the server should know""#),
-            "{logged}"
-        );
-    }
-
-    #[test]
-    fn reads_a_panic_message_whether_it_was_formatted_or_a_literal() {
-        // `panic!("x")` is a `&str` and `panic!("{x}")` a `String`; reading
-        // one of the two loses half the messages to the fallback.
-        assert_eq!(said(&*payload("a literal")), "a literal");
-        assert_eq!(
-            said(&*payload(format!("a {} one", "formatted"))),
-            "a formatted one"
-        );
-        assert_eq!(said(&*payload(42_u8)), "a panic carrying no message");
     }
 }

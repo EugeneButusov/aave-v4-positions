@@ -532,12 +532,15 @@ mod the_deadline {
 
         let (status, body, _) = get(stores.handler(), request()).await;
 
-        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
-        assert_eq!(body, "the request took too long");
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, "the request failed");
     }
 
+    /// Not a 408, which RFC 9110 gives to a client too slow to send: what
+    /// elapsed here is this service's own wait. `tower-http`'s own layer
+    /// defaults to it, so the wrong answer is one constant away.
     #[tokio::test(start_paused = true)]
-    async fn says_the_gateway_timed_out_rather_than_blaming_the_caller() {
+    async fn owns_the_failure_rather_than_blaming_the_caller() {
         let stores = Stores {
             positions_hang: true,
             request_timeout: Duration::from_millis(1),
@@ -547,7 +550,7 @@ mod the_deadline {
         let (status, ..) = get(stores.handler(), request()).await;
 
         assert_ne!(status, StatusCode::REQUEST_TIMEOUT);
-        assert_eq!(status, StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[tokio::test(start_paused = true)]
