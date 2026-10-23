@@ -57,7 +57,16 @@ pub fn build_client(config: Config) -> Result<clickhouse::Client, Error> {
     let client = match endpoint.scheme() {
         "https" => clickhouse::Client::default(),
         "http" if config.transport_security == TransportSecurity::AllowInsecureHttp => {
-            http_only_client()
+            // Avoid loading certificate roots for the one mode that promises
+            // not to use them. The driver's TLS-enabled default creates its
+            // root store eagerly even for an HTTP URL.
+            let mut connector = HttpConnector::new();
+            connector.set_keepalive(Some(Duration::from_secs(60)));
+            connector.enforce_http(true);
+            let client = HyperClient::builder(TokioExecutor::new())
+                .pool_idle_timeout(Duration::from_secs(2))
+                .build(connector);
+            clickhouse::Client::with_http_client(client)
         }
         "http" => return Err(Error::InsecureTransport),
         scheme => {
@@ -76,19 +85,6 @@ pub fn build_client(config: Config) -> Result<clickhouse::Client, Error> {
             "max_execution_time",
             max_execution_seconds(config.max_execution).to_string(),
         ))
-}
-
-/// Avoid loading certificate roots for the one mode that promises not to use
-/// them. The driver's TLS-enabled default creates its root store eagerly even
-/// for an HTTP URL.
-fn http_only_client() -> clickhouse::Client {
-    let mut connector = HttpConnector::new();
-    connector.set_keepalive(Some(Duration::from_secs(60)));
-    connector.enforce_http(true);
-    let client = HyperClient::builder(TokioExecutor::new())
-        .pool_idle_timeout(Duration::from_secs(2))
-        .build(connector);
-    clickhouse::Client::with_http_client(client)
 }
 
 /// At least one: `max_execution_time=0` is this server's "no limit", so a
