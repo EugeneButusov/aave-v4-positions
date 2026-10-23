@@ -22,9 +22,9 @@ databases those variables name. `docker compose up -d clickhouse postgres`, then
 
 ```bash
 CLICKHOUSE_USER=aave CLICKHOUSE_PASSWORD=aave CLICKHOUSE_DATABASE=aave \
-POSTGRES_URL='postgres://aave:aave@localhost:5432/aave' cargo run -p migrate
+POSTGRES_URL='postgres://aave:aave@localhost:5432/aave?sslmode=disable' cargo run -p migrate
 CLICKHOUSE_USER=aave CLICKHOUSE_PASSWORD=aave CLICKHOUSE_DATABASE=aave \
-POSTGRES_URL='postgres://aave:aave@localhost:5432/aave' cargo test --workspace
+POSTGRES_URL='postgres://aave:aave@localhost:5432/aave?sslmode=disable' cargo test --workspace
 ```
 
 CI runs the same two images with no password at all — `CLICKHOUSE_SKIP_USER_SETUP` and

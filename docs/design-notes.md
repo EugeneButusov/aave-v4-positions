@@ -464,7 +464,7 @@ behaviour (§7.5), and a threshold set from feed cadence would mark healthy feed
 | `RESERVE_PRICE_AUTOSTART`      | `true`     | Whether to poll the oracle. Its own switch: reading an oracle and walking the chain fail independently.              |
 
 **Storage** — `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` for
-the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres`) for the indexer's
+the event log, and `POSTGRES_URL` (`postgres://postgres@localhost:5432/postgres?sslmode=disable`) for the indexer's
 own position. One URL rather than four fields, because every managed Postgres hands you exactly that
 string, often carrying `?sslmode=require`, and taking it apart only to reassemble it is how a
 percent-encoded password gets mangled. **Both services read both**, and must be pointed at the same

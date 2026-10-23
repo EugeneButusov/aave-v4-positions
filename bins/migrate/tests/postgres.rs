@@ -25,8 +25,9 @@ fn schema(test: &str) -> String {
 /// so the caller keeps it alive for the length of the test.
 async fn target(test: &str) -> (postgres::Pool, postgres::Connection, String) {
     let schema = schema(test);
-    let base = std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgres://postgres@localhost:5432/postgres".to_owned());
+    let base = std::env::var("POSTGRES_URL").unwrap_or_else(|_| {
+        "postgres://postgres@localhost:5432/postgres?sslmode=disable".to_owned()
+    });
 
     let admin = postgres::build_pool(&base, postgres::Limits::default()).unwrap();
     postgres::connection(&admin)

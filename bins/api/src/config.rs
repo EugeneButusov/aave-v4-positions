@@ -103,6 +103,11 @@ impl Config {
             },
             clickhouse: clickhouse_client::Config {
                 url: env.url("CLICKHOUSE_URL", "http://localhost:8123")?,
+                transport_security: if env.flag("CLICKHOUSE_ALLOW_INSECURE_HTTP", false)? {
+                    clickhouse_client::TransportSecurity::AllowInsecureHttp
+                } else {
+                    clickhouse_client::TransportSecurity::RequireTls
+                },
                 database: env.text("CLICKHOUSE_DATABASE", "default"),
                 user: env.text("CLICKHOUSE_USER", "default"),
                 // Empty is legitimate: `CLICKHOUSE_SKIP_USER_SETUP` leaves no
@@ -226,6 +231,10 @@ mod tests {
         assert_eq!(config.port, 3000);
         assert_eq!(config.grace, Duration::from_secs(10));
         assert_eq!(config.clickhouse.url, "http://localhost:8123");
+        assert_eq!(
+            config.clickhouse.transport_security,
+            clickhouse_client::TransportSecurity::RequireTls
+        );
         assert_eq!(config.clickhouse.database, "default");
         assert_eq!(config.clickhouse.user, "default");
         assert_eq!(config.clickhouse.password, "");
@@ -312,6 +321,7 @@ mod tests {
             ("API_PORT", "8080"),
             ("SHUTDOWN_GRACE_SECONDS", "5"),
             ("CLICKHOUSE_URL", "http://clickhouse:8123"),
+            ("CLICKHOUSE_ALLOW_INSECURE_HTTP", "true"),
             ("CLICKHOUSE_DATABASE", "aave"),
             ("CLICKHOUSE_USER", "aave"),
             ("CLICKHOUSE_PASSWORD", "hunter2"),
@@ -341,6 +351,10 @@ mod tests {
         assert_eq!(config.grace, Duration::from_secs(5));
         assert_eq!(config.clickhouse.database, "aave");
         assert_eq!(config.clickhouse.password, "hunter2");
+        assert_eq!(
+            config.clickhouse.transport_security,
+            clickhouse_client::TransportSecurity::AllowInsecureHttp
+        );
         assert_eq!(config.prefix, "gateway");
         assert_eq!(config.cursor_secret, SECRET.1);
         assert_eq!(config.staleness.sync, 30);

@@ -96,6 +96,7 @@ mod tests {
         crate::Config {
             url: std::env::var("CLICKHOUSE_URL")
                 .unwrap_or_else(|_| "http://localhost:8123".to_owned()),
+            transport_security: crate::TransportSecurity::AllowInsecureHttp,
             database: database.to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
@@ -105,7 +106,7 @@ mod tests {
 
     #[tokio::test]
     async fn answers_when_the_server_can_serve_a_query() {
-        ping(&crate::build_client(config("default")))
+        ping(&crate::build_client(config("default")).unwrap())
             .await
             .expect("reachable");
     }
@@ -117,7 +118,8 @@ mod tests {
         let client = crate::build_client(crate::Config {
             password: "not-the-password".to_owned(),
             ..config("default")
-        });
+        })
+        .unwrap();
 
         let refused = ping(&client).await.expect_err("a wrong password");
 
@@ -133,7 +135,7 @@ mod tests {
     #[tokio::test]
     async fn a_query_is_a_client_span_of_a_named_system() {
         interesting();
-        let client = crate::build_client(config("default"));
+        let client = crate::build_client(config("default")).unwrap();
         let (captured, lines) = Captured::new();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(captured)

@@ -80,7 +80,7 @@ mod tests {
     //! applies nothing, and a failure leaves the ledger agreeing with the
     //! schema rather than ahead of it.
 
-    use clickhouse_client::{Config, build_client};
+    use clickhouse_client::{Config, TransportSecurity, build_client};
     use refinery_core::Runner;
 
     use super::*;
@@ -90,13 +90,14 @@ mod tests {
         let config = Config {
             url: std::env::var("CLICKHOUSE_URL")
                 .unwrap_or_else(|_| "http://localhost:8123".to_owned()),
+            transport_security: TransportSecurity::AllowInsecureHttp,
             database: "default".to_owned(),
             user: std::env::var("CLICKHOUSE_USER").unwrap_or_else(|_| "default".to_owned()),
             password: std::env::var("CLICKHOUSE_PASSWORD").unwrap_or_default(),
             max_execution: std::time::Duration::from_secs(60),
         };
 
-        let admin = build_client(config.clone());
+        let admin = build_client(config.clone()).unwrap();
         for statement in [
             format!("DROP DATABASE IF EXISTS {database}"),
             format!("CREATE DATABASE {database}"),
@@ -104,7 +105,7 @@ mod tests {
             admin.query(&statement).execute().await.unwrap();
         }
 
-        ClickHouse(build_client(Config { database, ..config }))
+        ClickHouse(build_client(Config { database, ..config }).unwrap())
     }
 
     async fn run(target: &mut ClickHouse, migrations: &[Migration]) -> Result<Vec<String>, String> {

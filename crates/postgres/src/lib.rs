@@ -10,6 +10,7 @@ mod error;
 mod health;
 mod pool;
 mod query;
+mod tls;
 
 /// The driver's client, which a [`Connection`] derefs to.
 ///

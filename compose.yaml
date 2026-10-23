@@ -82,10 +82,11 @@ services:
     restart: 'no'
     environment:
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
-      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
+      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave?sslmode=disable
     depends_on:
       clickhouse:
         condition: service_healthy
@@ -120,10 +121,11 @@ services:
       API_HOST: 0.0.0.0
       API_PORT: '3000'
       CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_ALLOW_INSECURE_HTTP: 'true'
       CLICKHOUSE_DATABASE: aave
       CLICKHOUSE_USER: aave
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-aave}
-      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave
+      POSTGRES_URL: postgres://aave:${POSTGRES_PASSWORD:-aave}@postgres:5432/aave?sslmode=disable
       # A known value so `docker compose up` works unconfigured. Set your own in
       # any deployment — a shared key is not a signature — and set the SAME one
       # on every replica.
