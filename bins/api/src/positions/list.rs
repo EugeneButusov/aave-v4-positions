@@ -113,14 +113,6 @@ behind unrelated collateral. Every row names the Spoke it came from.";
             content_type = "text/plain",
             body = String,
         ),
-        (
-            status = 504,
-            description = "A dependency did not answer inside this deployment's request \
-                           deadline. A 504 rather than a 408 because what elapsed is this \
-                           service's own wait, not the caller being slow to send.",
-            content_type = "text/plain",
-            body = String,
-        ),
     ),
 )]
 async fn list(

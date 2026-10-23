@@ -376,7 +376,7 @@ mod tests {
             .map(String::as_str)
             .collect();
 
-        assert_eq!(statuses, ["200", "400", "404", "500", "504"]);
+        assert_eq!(statuses, ["200", "400", "404", "500"]);
 
         for status in ["400", "404"] {
             assert_eq!(
@@ -387,17 +387,11 @@ mod tests {
             );
         }
 
-        // The two the middleware answers are fixed text, so a caller reading
-        // the document is not told to parse an envelope that never arrives.
-        for status in ["500", "504"] {
-            let content = &positions(&document)["responses"][status]["content"];
-
-            assert_eq!(
-                content["text/plain"]["schema"]["type"], "string",
-                "{status}"
-            );
-            assert!(content["application/json"].is_null(), "{status}");
-        }
+        // The middleware's 500 is fixed text, so a caller reading the document
+        // is not told to parse an envelope that never arrives.
+        let content = &positions(&document)["responses"]["500"]["content"];
+        assert_eq!(content["text/plain"]["schema"]["type"], "string");
+        assert!(content["application/json"].is_null());
     }
 
     #[tokio::test]

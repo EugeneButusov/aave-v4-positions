@@ -98,12 +98,6 @@ pub(crate) struct Stores {
     pub(crate) prices: HashMap<ReserveKey, ReservePrice>,
     pub(crate) staleness: Staleness,
 
-    pub(crate) request_timeout: Duration,
-
-    /// Makes the position store accept the read and never answer it, which
-    /// the port-1 pool cannot express: that is a dependency which is *down*.
-    pub(crate) positions_hang: bool,
-
     /// How many times the price store was asked; the point is the answer `0`,
     /// because an explicit `as_of` skips the read rather than discarding it.
     pub(crate) price_reads: Arc<AtomicUsize>,
@@ -121,15 +115,10 @@ impl Default for Stores {
             labels: HashMap::new(),
             prices: HashMap::new(),
             staleness: STALENESS,
-            request_timeout: PATIENT,
-            positions_hang: false,
             price_reads: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
-
-/// A deadline a case will not reach by accident.
-pub(crate) const PATIENT: Duration = Duration::from_secs(30);
 
 /// A fixed instant, so a body a case asserts whole does not move with the clock.
 /// 2026-07-25T17:20:00Z.
@@ -154,10 +143,7 @@ impl Stores {
             uptime: Uptime::now(),
             shutdown: ShutdownFlag::new(),
             probes: crate::probes::from_pool(clickhouse(), postgres),
-            positions: Box::new(Positions {
-                page: self.page,
-                hang: self.positions_hang,
-            }),
+            positions: Box::new(Positions(self.page)),
             tokens: Box::new(Labels(self.labels)),
             prices: Box::new(Prices {
                 latest: self.prices,
@@ -166,7 +152,6 @@ impl Stores {
             sync: Box::new(Synced(self.sync)),
             signer: Signer::new(SECRET).expect("HMAC takes a key of any length"),
             staleness: self.staleness,
-            request_timeout: self.request_timeout,
             prefix: "api".to_owned(),
             docs_path: "docs".to_owned(),
             docs_assets: "/usr/share/api/docs".to_owned(),
@@ -178,19 +163,12 @@ impl Stores {
     }
 }
 
-struct Positions {
-    page: PositionPage,
-    hang: bool,
-}
+struct Positions(PositionPage);
 
 #[async_trait::async_trait]
 impl PositionStore for Positions {
     async fn list(&self, _query: &PositionQuery) -> Result<PositionPage, StoreError> {
-        if self.hang {
-            std::future::pending::<()>().await;
-        }
-
-        Ok(self.page.clone())
+        Ok(self.0.clone())
     }
 }
 
