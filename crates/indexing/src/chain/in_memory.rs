@@ -1,5 +1,4 @@
-//! The chain in memory, for cases that are about something else. No conformance
-//! suite to run: `ChainClient` has no adapter in this crate to agree with.
+//! In-memory chains for tests of components that consume [`ChainClient`].
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,7 +10,7 @@ use units::ChainId;
 use super::{BlockHeader, ChainClient, Error};
 use crate::fixtures::{hash_of, timestamp_of};
 
-/// What was asked of the chain, so a case can assert on what was **not**.
+/// Calls made through the chain port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChainCall {
     ChainId,
@@ -19,24 +18,16 @@ pub(crate) enum ChainCall {
     Header(u64),
 }
 
-/// One lock over everything, rather than one per field: a case that reads the
-/// call log after setting a fork wants both to describe the same moment.
 struct State {
     chain_id: ChainId,
     head: u64,
 
-    /// `(above, branch)` in the order declared, resolved last-match-wins, so
-    /// declaring a fork rewrites every block above its point at once.
     forks: Vec<(u64, u8)>,
     failures: usize,
     calls: Vec<ChainCall>,
 }
 
-/// A chain whose ancestry is **derived rather than stored**.
-///
-/// A block's hash is its branch and its height, so a fork needs no rewriting of
-/// anything: the moment one is declared, every header above its point is served
-/// from the new branch and is self-consistent with its neighbours.
+/// Derives each header from its branch and height, making forks self-consistent.
 pub(crate) struct FakeChain {
     state: Mutex<State>,
 }
@@ -54,18 +45,14 @@ impl FakeChain {
         }
     }
 
-    /// Poisoning is ignored: a case that panicked holding this has failed, and
-    /// what it left behind is the evidence.
     fn state(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|held| held.into_inner())
     }
 
-    /// Everything strictly above `above` now belongs to `branch`.
     pub(crate) fn fork_above(&self, above: u64, branch: u8) {
         self.state().forks.push((above, branch));
     }
 
-    /// The next `count` calls of any kind refuse.
     pub(crate) fn fail_next(&self, count: usize) {
         self.state().failures = count;
     }
@@ -81,8 +68,6 @@ impl FakeChain {
             .count()
     }
 
-    /// Which branch `block` sits on. Later declarations win, so a second fork
-    /// over the first is the chain changing its mind twice.
     pub(crate) fn branch_at(&self, block: u64) -> u8 {
         let state = self.state();
 
@@ -95,10 +80,7 @@ impl FakeChain {
             .unwrap_or(b'a')
     }
 
-    /// The header this chain serves for `block`, composed one side at a time:
-    /// the hash from this block's branch, the parent from the branch of the
-    /// block below. They differ at exactly one height — the fork point — which
-    /// is what makes a fork findable at all.
+    /// Derives the parent independently so the link breaks exactly at a fork.
     pub(crate) fn header_at(&self, block: u64) -> BlockHeader {
         BlockHeader {
             number: block,
@@ -147,11 +129,7 @@ impl ChainClient for FakeChain {
     }
 }
 
-/// A chain that forks **part way through a walk**, which is the one thing
-/// [`FakeChain`] cannot script on its own: its forks apply the moment they are
-/// declared, so every header it then serves is already self-consistent.
-///
-/// Counts header reads only, because that is what a backwards walk spends.
+/// Applies a fork after a configured number of header reads.
 pub(crate) struct ForkingChain {
     inner: Arc<FakeChain>,
     after_reads: usize,

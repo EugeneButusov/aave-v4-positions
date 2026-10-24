@@ -1,6 +1,4 @@
-//! The cursor in memory. Its conformance run is below, because a double that
-//! disagreed with its port would make every case using it a proof about a
-//! fiction.
+//! In-memory cursor store for tests.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -9,7 +7,6 @@ use units::ChainId;
 
 use super::{Cursor, CursorStore, Error};
 
-/// The cursor, in memory. One row per chain, overwritten in place.
 #[derive(Default)]
 pub(crate) struct InMemoryCursorStore {
     chains: Mutex<HashMap<ChainId, Cursor>>,
@@ -40,8 +37,6 @@ impl CursorStore for InMemoryCursorStore {
 
 #[cfg(test)]
 mod tests {
-    //! The port's specification, against the double that stands in for it.
-
     use super::InMemoryCursorStore;
     use crate::cursor::conformance::{CursorHarness, cursor_store_conformance};
 

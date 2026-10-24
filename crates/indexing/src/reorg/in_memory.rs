@@ -1,6 +1,4 @@
-//! The retention window in memory. Its conformance run is below, because a
-//! double that disagreed with its port would make every case using it a proof
-//! about a fiction.
+//! In-memory and instrumented implementations of the reorg window port.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -11,8 +9,6 @@ use units::ChainId;
 use super::{BlockHeaderStore, Error};
 use crate::chain::BlockHeader;
 
-/// So a case can keep the store it also handed to the detector, which owns the
-/// port as a `Box<dyn _>` and leaves nothing to read the window through.
 #[async_trait]
 impl<S: BlockHeaderStore + ?Sized> BlockHeaderStore for Arc<S> {
     async fn load(&self, chain_id: ChainId) -> Result<Vec<BlockHeader>, Error> {
@@ -37,10 +33,7 @@ impl<S: BlockHeaderStore + ?Sized> BlockHeaderStore for Arc<S> {
     }
 }
 
-/// What the detector wrote, and a way to make one write refuse.
-///
-/// Recording happens **after** the write succeeded, so what it holds is what the
-/// window actually took.
+/// Records successful transitions and can refuse a selected transition.
 #[derive(Default)]
 pub(crate) struct RecordingBlockHeaderStore {
     inner: InMemoryBlockHeaderStore,
@@ -49,8 +42,8 @@ pub(crate) struct RecordingBlockHeaderStore {
 
 #[derive(Default)]
 struct Log {
-    appended: Vec<BlockHeader>,
-    truncated_at: Vec<Option<u64>>,
+    retained: Vec<BlockHeader>,
+    rewound_to: Vec<Option<u64>>,
     retentions: usize,
     rewinds: usize,
     refuse_retention: Option<usize>,
@@ -66,21 +59,20 @@ impl RecordingBlockHeaderStore {
         self.log.lock().unwrap_or_else(|held| held.into_inner())
     }
 
-    /// 1-based, and counted separately from rewinds.
-    pub(crate) fn refuse_retention(&self, nth: usize) {
+    pub(crate) fn refuse_nth_retention(&self, nth: usize) {
         self.log().refuse_retention = Some(nth);
     }
 
-    pub(crate) fn refuse_rewind(&self, nth: usize) {
+    pub(crate) fn refuse_nth_rewind(&self, nth: usize) {
         self.log().refuse_rewind = Some(nth);
     }
 
-    pub(crate) fn appended(&self) -> Vec<BlockHeader> {
-        self.log().appended.clone()
+    pub(crate) fn retained(&self) -> Vec<BlockHeader> {
+        self.log().retained.clone()
     }
 
-    pub(crate) fn truncated_at(&self) -> Vec<Option<u64>> {
-        self.log().truncated_at.clone()
+    pub(crate) fn rewound_to(&self) -> Vec<Option<u64>> {
+        self.log().rewound_to.clone()
     }
 }
 
@@ -99,16 +91,14 @@ impl BlockHeaderStore for RecordingBlockHeaderStore {
         {
             let mut log = self.log();
             log.retentions += 1;
-            // Refused before anything is mutated: a store that failed having
-            // already written would make the detector's "surfaces rather than
-            // reporting a header it does not hold" untestable.
+            // Refuse before mutation so the log describes completed transitions.
             if log.refuse_retention == Some(log.retentions) {
                 return Err(Error::RetentionRefused);
             }
         }
 
         self.inner.append(chain_id, header, retain_from).await?;
-        self.log().appended.push(*header);
+        self.log().retained.push(*header);
 
         Ok(())
     }
@@ -127,17 +117,13 @@ impl BlockHeaderStore for RecordingBlockHeaderStore {
         }
 
         self.inner.truncate(chain_id, last_valid_block).await?;
-        self.log().truncated_at.push(last_valid_block);
+        self.log().rewound_to.push(last_valid_block);
 
         Ok(())
     }
 }
 
-/// Hands the window back newest-first.
-///
-/// Stands in for an adapter that reads rows without an `ORDER BY`, which the
-/// port permits — so this is what proves the detector sorts what it reads
-/// rather than leaning on an order nothing promised.
+/// Returns the window newest-first to exercise the port's unspecified order.
 #[derive(Default)]
 pub(crate) struct ShufflingBlockHeaderStore {
     inner: InMemoryBlockHeaderStore,
@@ -176,14 +162,9 @@ impl BlockHeaderStore for ShufflingBlockHeaderStore {
     }
 }
 
-/// The retention window, in memory. **A test double and nothing else**, for the
-/// reason [`BlockHeaderStore`] gives.
+/// Test-only in-memory retention window.
 #[derive(Default)]
 pub(crate) struct InMemoryBlockHeaderStore {
-    /// **A sorted list per chain, not a map keyed by height.** Re-inserting a
-    /// key keeps its original position, so a block re-committed on another
-    /// branch would sit in the wrong place and the ancestor walk would read one
-    /// branch as a continuation of the other.
     chains: Mutex<HashMap<ChainId, Vec<BlockHeader>>>,
 }
 
@@ -192,8 +173,6 @@ impl InMemoryBlockHeaderStore {
         Self::default()
     }
 
-    /// Poisoning is ignored: a case that panicked holding this lock has
-    /// already failed.
     fn chains(&self) -> std::sync::MutexGuard<'_, HashMap<ChainId, Vec<BlockHeader>>> {
         self.chains.lock().unwrap_or_else(|held| held.into_inner())
     }
@@ -240,7 +219,7 @@ impl BlockHeaderStore for InMemoryBlockHeaderStore {
 
 #[cfg(test)]
 mod tests {
-    //! The port's specification, against the double that stands in for it.
+    //! The port contract against its in-memory implementation.
 
     use super::InMemoryBlockHeaderStore;
     use crate::reorg::conformance::{Harness, block_header_store_conformance};
@@ -266,9 +245,6 @@ mod tests {
         use crate::fixtures::{CHAIN_ID, header};
         use crate::reorg::BlockHeaderStore;
 
-        /// An implementation detail, pinned because the detector's own cases
-        /// read this double's window positionally — and `load` promises no
-        /// order, which is why it is not in the suite.
         #[tokio::test]
         async fn hands_back_a_window_in_ascending_order() {
             let store = InMemoryBlockHeaderStore::new();

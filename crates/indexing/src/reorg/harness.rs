@@ -1,7 +1,4 @@
-//! A chain, a window and the real detector over both.
-//!
-//! A fixture for this module's own cases rather than anything a consumer could
-//! hold: it builds one concrete detector.
+//! Test fixtures combining a chain, a window, and the real detector.
 
 use std::sync::Arc;
 
@@ -12,19 +9,15 @@ use crate::cursor::Cursor;
 use crate::fixtures::{CHAIN_ID, hash_of};
 use crate::reorg::{BlockHeaderStore, HashChainReorgDetector, ReorgDetector};
 
-/// Far enough above any depth a case uses that the tip is never genesis.
 pub(crate) const HEAD: u64 = 1_000;
 
 pub(crate) struct Harness<W = InMemoryBlockHeaderStore> {
     pub(crate) detector: HashChainReorgDetector,
 
-    /// The chain the detector reads, or the one a [`ForkingChain`] wraps — a
-    /// case declares forks and counts calls on this either way.
     pub(crate) chain: Arc<FakeChain>,
     pub(crate) window: Arc<W>,
 }
 
-/// The default: a plain chain at [`HEAD`] and an in-memory window.
 pub(crate) async fn harness(finality_depth: u64) -> Harness {
     over(
         finality_depth,
@@ -34,8 +27,6 @@ pub(crate) async fn harness(finality_depth: u64) -> Harness {
     .await
 }
 
-/// A window of the caller's choosing, so a store that refuses or reorders can
-/// stand behind the same detector.
 pub(crate) async fn over<W>(finality_depth: u64, head: u64, window: Arc<W>) -> Harness<W>
 where
     W: BlockHeaderStore + 'static,
@@ -46,8 +37,6 @@ where
     assemble(finality_depth, head, chain, client, window).await
 }
 
-/// Without the head primed, which is the state `bootstrap` really runs in: it
-/// is called before the loop has observed one.
 pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
     let chain = Arc::new(FakeChain::at_head(head));
     let window = Arc::new(InMemoryBlockHeaderStore::new());
@@ -65,8 +54,6 @@ pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
     }
 }
 
-/// A chain that forks after `after_reads` header reads, which is the one shape
-/// a plain chain cannot script.
 pub(crate) async fn forking(
     finality_depth: u64,
     after_reads: usize,
@@ -91,9 +78,6 @@ pub(crate) async fn forking(
     .await
 }
 
-/// **Primes the boundary before anything else is asked.** The detector caches
-/// the head it was last shown, and a case that skipped this would have its first
-/// call spend a header read and then measure a different number of them.
 async fn assemble<W>(
     finality_depth: u64,
     head: u64,
@@ -121,8 +105,7 @@ where
 }
 
 impl<W: BlockHeaderStore> Harness<W> {
-    /// Sequentially on purpose: each commit prunes relative to its own height,
-    /// so the order they land in is the retention behaviour under test.
+    /// Sequential because each commit prunes relative to its own height.
     pub(crate) async fn commit(&self, blocks: impl IntoIterator<Item = u64>) {
         for block in blocks {
             self.detector
@@ -151,7 +134,6 @@ impl<W: BlockHeaderStore> Harness<W> {
     }
 }
 
-/// A cursor at `last_block` on `branch`.
 pub(crate) fn cursor_at(last_block: u64, branch: u8) -> Cursor {
     Cursor {
         chain_id: CHAIN_ID,
