@@ -35,16 +35,17 @@ pub enum Error {
         value: String,
     },
 
-    /// The two refusals a window double can script, apart so a case names the
-    /// write it scripted rather than taking whichever came back — `commit`
-    /// truncates before it appends. The driver variants above are out of
-    /// reach: every `tokio_postgres::Error` constructor is crate-private bar
-    /// one marked `#[doc(hidden)]`.
+    /// The two reorg transitions a window double can refuse, apart so a case
+    /// names the transition it scripted rather than taking whichever came back.
+    /// A commit may clear a broken run before retaining its new anchor, so one
+    /// generic refusal would not prove which transition surfaced. The driver
+    /// variants above are out of reach: every `tokio_postgres::Error`
+    /// constructor is crate-private bar one marked `#[doc(hidden)]`.
     #[cfg(test)]
-    #[error("the window double refused an append")]
-    AppendRefused,
+    #[error("the reorg window refused to retain a processed header")]
+    RetentionRefused,
 
     #[cfg(test)]
-    #[error("the window double refused a truncate")]
-    TruncateRefused,
+    #[error("the reorg window refused to apply a rewind")]
+    RewindRefused,
 }

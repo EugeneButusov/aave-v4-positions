@@ -51,10 +51,10 @@ pub(crate) struct RecordingBlockHeaderStore {
 struct Log {
     appended: Vec<BlockHeader>,
     truncated_at: Vec<Option<u64>>,
-    appends: usize,
-    truncates: usize,
-    fail_append: Option<usize>,
-    fail_truncate: Option<usize>,
+    retentions: usize,
+    rewinds: usize,
+    refuse_retention: Option<usize>,
+    refuse_rewind: Option<usize>,
 }
 
 impl RecordingBlockHeaderStore {
@@ -66,13 +66,13 @@ impl RecordingBlockHeaderStore {
         self.log.lock().unwrap_or_else(|held| held.into_inner())
     }
 
-    /// 1-based, and counted separately from truncates.
-    pub(crate) fn fail_append(&self, nth: usize) {
-        self.log().fail_append = Some(nth);
+    /// 1-based, and counted separately from rewinds.
+    pub(crate) fn refuse_retention(&self, nth: usize) {
+        self.log().refuse_retention = Some(nth);
     }
 
-    pub(crate) fn fail_truncate(&self, nth: usize) {
-        self.log().fail_truncate = Some(nth);
+    pub(crate) fn refuse_rewind(&self, nth: usize) {
+        self.log().refuse_rewind = Some(nth);
     }
 
     pub(crate) fn appended(&self) -> Vec<BlockHeader> {
@@ -98,12 +98,12 @@ impl BlockHeaderStore for RecordingBlockHeaderStore {
     ) -> Result<(), Error> {
         {
             let mut log = self.log();
-            log.appends += 1;
+            log.retentions += 1;
             // Refused before anything is mutated: a store that failed having
             // already written would make the detector's "surfaces rather than
             // reporting a header it does not hold" untestable.
-            if log.fail_append == Some(log.appends) {
-                return Err(Error::AppendRefused);
+            if log.refuse_retention == Some(log.retentions) {
+                return Err(Error::RetentionRefused);
             }
         }
 
@@ -120,9 +120,9 @@ impl BlockHeaderStore for RecordingBlockHeaderStore {
     ) -> Result<(), Error> {
         {
             let mut log = self.log();
-            log.truncates += 1;
-            if log.fail_truncate == Some(log.truncates) {
-                return Err(Error::TruncateRefused);
+            log.rewinds += 1;
+            if log.refuse_rewind == Some(log.rewinds) {
+                return Err(Error::RewindRefused);
             }
         }
 

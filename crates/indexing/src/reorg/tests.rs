@@ -554,42 +554,42 @@ mod an_owed_reorg_survives_the_process {
     }
 }
 
-mod the_window_refuses_a_write {
+mod the_window_refuses_a_reorg_transition {
     use super::*;
 
     /// Surfaces rather than reporting a block it did not retain. A commit that
     /// swallowed this would leave the loop advancing its cursor over a window
     /// that cannot vet the resume point.
     #[tokio::test]
-    async fn a_failed_append_surfaces_rather_than_being_swallowed() {
+    async fn a_refused_retention_surfaces_rather_than_being_swallowed() {
         let window = Arc::new(RecordingBlockHeaderStore::new());
         let fixture = over(DEPTH, HEAD, Arc::clone(&window)).await;
-        window.fail_append(1);
+        window.refuse_retention(1);
 
         let refusal = fixture
             .detector
             .commit(&fixture.header(HEAD - 1))
             .await
-            .expect_err("the append refused");
+            .expect_err("header retention was refused");
 
-        assert!(matches!(refusal, Error::AppendRefused), "{refusal:?}");
+        assert!(matches!(refusal, Error::RetentionRefused), "{refusal:?}");
         assert!(window.appended().is_empty(), "it retained a header anyway");
     }
 
     #[tokio::test]
-    async fn a_failed_truncate_leaves_the_reorg_owed() {
+    async fn a_refused_rewind_leaves_the_reorg_owed() {
         let window = Arc::new(RecordingBlockHeaderStore::new());
         let fixture = over(DEPTH, HEAD, Arc::clone(&window)).await;
         fixture.commit([HEAD - 1]).await;
-        window.fail_truncate(1);
+        window.refuse_rewind(1);
 
         let refusal = fixture
             .detector
             .rewind_to(Some(HEAD - 2))
             .await
-            .expect_err("the truncate refused");
+            .expect_err("the rewind was refused");
 
-        assert!(matches!(refusal, Error::TruncateRefused), "{refusal:?}");
+        assert!(matches!(refusal, Error::RewindRefused), "{refusal:?}");
         assert!(window.truncated_at().is_empty());
     }
 }
