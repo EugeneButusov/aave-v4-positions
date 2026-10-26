@@ -1,5 +1,3 @@
-//! Fake chains for tests of components that consume [`ChainClient`].
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +5,7 @@ use alloy_primitives::B256;
 use async_trait::async_trait;
 use units::ChainId;
 
-use super::{BlockHeader, ChainClient, Error};
+use crate::chain::{BlockHeader, ChainClient, Error};
 use crate::fixtures::{hash_of, timestamp_of};
 
 /// Calls made through the chain port.

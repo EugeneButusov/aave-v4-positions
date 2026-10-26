@@ -1,11 +1,9 @@
-//! In-memory cursor store for tests.
-
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use units::ChainId;
 
-use super::{Cursor, CursorStore, Error};
+use crate::cursor::{Cursor, CursorStore, Error};
 
 #[derive(Default)]
 pub(crate) struct InMemoryCursorStore {

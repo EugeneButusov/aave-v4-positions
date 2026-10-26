@@ -1,37 +1,11 @@
-//! In-memory and instrumented implementations of the reorg window port.
-
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use async_trait::async_trait;
 use units::ChainId;
 
-use super::{BlockHeaderStore, Error};
 use crate::chain::BlockHeader;
-
-#[async_trait]
-impl<S: BlockHeaderStore + ?Sized> BlockHeaderStore for Arc<S> {
-    async fn load(&self, chain_id: ChainId) -> Result<Vec<BlockHeader>, Error> {
-        (**self).load(chain_id).await
-    }
-
-    async fn append(
-        &self,
-        chain_id: ChainId,
-        header: &BlockHeader,
-        retain_from: u64,
-    ) -> Result<(), Error> {
-        (**self).append(chain_id, header, retain_from).await
-    }
-
-    async fn truncate(
-        &self,
-        chain_id: ChainId,
-        last_valid_block: Option<u64>,
-    ) -> Result<(), Error> {
-        (**self).truncate(chain_id, last_valid_block).await
-    }
-}
+use crate::reorg::{BlockHeaderStore, Error};
 
 /// Records successful transitions and can refuse a selected transition.
 #[derive(Default)]
