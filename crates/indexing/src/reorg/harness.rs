@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use super::in_memory::InMemoryBlockHeaderStore;
-use crate::chain::in_memory::{FakeChain, ForkingChain};
-use crate::chain::{BlockHeader, ChainClient};
+use crate::chain::{BlockHeader, ChainClient, FakeChain, ForkingChain};
 use crate::cursor::Cursor;
 use crate::fixtures::{CHAIN_ID, hash_of};
 use crate::reorg::{BlockHeaderStore, HashChainReorgDetector, ReorgDetector};

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use super::in_memory::{
     InMemoryBlockHeaderStore, RecordingBlockHeaderStore, ShufflingBlockHeaderStore,
 };
-use crate::chain::in_memory::ChainCall;
+use crate::chain::ChainCall;
 use crate::fixtures::{CHAIN_ID, hash_of};
 use crate::reorg::harness::{HEAD, cursor_at, forking, harness, over, unprimed};
 use crate::reorg::{BlockHeaderStore as _, Error, ReorgDetector, Verdict};

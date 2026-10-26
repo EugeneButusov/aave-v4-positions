@@ -1,4 +1,4 @@
-//! In-memory chains for tests of components that consume [`ChainClient`].
+//! Fake chains for tests of components that consume [`ChainClient`].
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -80,7 +80,8 @@ impl FakeChain {
             .unwrap_or(b'a')
     }
 
-    /// Derives the parent independently so the link breaks exactly at a fork.
+    /// A fork shares the block below it, so the parent is taken from that
+    /// block's own branch rather than from the forked one.
     pub(crate) fn header_at(&self, block: u64) -> BlockHeader {
         BlockHeader {
             number: block,
@@ -171,5 +172,25 @@ impl ChainClient for ForkingChain {
         }
 
         self.inner.block_header(number).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn links_every_header_to_the_one_below_it_across_a_fork() {
+        let chain = FakeChain::at_head(100);
+        chain.fork_above(50, b'b');
+
+        for block in 49..=52 {
+            assert_eq!(
+                chain.header_at(block + 1).parent_hash,
+                chain.header_at(block).hash,
+                "block {} does not extend {block}",
+                block + 1,
+            );
+        }
     }
 }

@@ -9,9 +9,12 @@ mod error;
 mod log_reader;
 
 #[cfg(test)]
-pub(crate) mod in_memory;
+mod fake;
 
 pub use block_header::BlockHeader;
 pub use chain_client::ChainClient;
 pub use error::Error;
 pub use log_reader::{LogFilter, LogReader, RawLog};
+
+#[cfg(test)]
+pub(crate) use fake::{ChainCall, FakeChain, ForkingChain};
