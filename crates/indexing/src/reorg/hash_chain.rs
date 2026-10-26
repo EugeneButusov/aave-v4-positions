@@ -17,7 +17,7 @@ pub struct HashChainReorgDetector {
     finality_depth: u64,
 
     chain: Arc<dyn ChainClient>,
-    window: Box<dyn BlockHeaderStore>,
+    window: Arc<dyn BlockHeaderStore>,
 
     observed_head: Mutex<Option<u64>>,
 }
@@ -28,7 +28,7 @@ impl HashChainReorgDetector {
         chain_id: ChainId,
         finality_depth: u64,
         chain: Arc<dyn ChainClient>,
-        window: Box<dyn BlockHeaderStore>,
+        window: Arc<dyn BlockHeaderStore>,
     ) -> Self {
         Self {
             chain_id,

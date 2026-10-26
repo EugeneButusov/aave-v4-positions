@@ -43,7 +43,7 @@ pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
         CHAIN_ID,
         finality_depth,
         Arc::clone(&chain) as Arc<dyn ChainClient>,
-        Box::new(Arc::clone(&window)),
+        Arc::clone(&window) as Arc<dyn BlockHeaderStore>,
     );
 
     Harness {
@@ -91,7 +91,7 @@ where
         CHAIN_ID,
         finality_depth,
         client,
-        Box::new(Arc::clone(&window)),
+        Arc::clone(&window) as Arc<dyn BlockHeaderStore>,
     );
 
     detector.safe_head(head).await.expect("the boundary");
