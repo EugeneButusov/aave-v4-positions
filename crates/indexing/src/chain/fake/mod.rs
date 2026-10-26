@@ -5,4 +5,4 @@
 
 mod chain_client;
 
-pub(crate) use chain_client::{ChainCall, FakeChain, ForkingChain};
+pub(crate) use chain_client::{ChainCall, FakeChainClient, ForkingChainClient};

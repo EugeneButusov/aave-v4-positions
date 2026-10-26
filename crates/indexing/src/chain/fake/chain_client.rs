@@ -26,11 +26,11 @@ struct State {
 }
 
 /// Derives each header from its branch and height, making forks self-consistent.
-pub(crate) struct FakeChain {
+pub(crate) struct FakeChainClient {
     state: Mutex<State>,
 }
 
-impl FakeChain {
+impl FakeChainClient {
     pub(crate) fn at_head(head: u64) -> Self {
         Self {
             state: Mutex::new(State {
@@ -108,7 +108,7 @@ impl FakeChain {
 }
 
 #[async_trait]
-impl ChainClient for FakeChain {
+impl ChainClient for FakeChainClient {
     async fn chain_id(&self) -> Result<ChainId, Error> {
         self.record(ChainCall::ChainId)?;
 
@@ -129,17 +129,17 @@ impl ChainClient for FakeChain {
 }
 
 /// Applies a fork after a configured number of header reads.
-pub(crate) struct ForkingChain {
-    inner: Arc<FakeChain>,
+pub(crate) struct ForkingChainClient {
+    inner: Arc<FakeChainClient>,
     after_reads: usize,
     fork_point: u64,
     branch: u8,
     reads: AtomicUsize,
 }
 
-impl ForkingChain {
+impl ForkingChainClient {
     pub(crate) fn new(
-        inner: Arc<FakeChain>,
+        inner: Arc<FakeChainClient>,
         after_reads: usize,
         fork_point: u64,
         branch: u8,
@@ -155,7 +155,7 @@ impl ForkingChain {
 }
 
 #[async_trait]
-impl ChainClient for ForkingChain {
+impl ChainClient for ForkingChainClient {
     async fn chain_id(&self) -> Result<ChainId, Error> {
         self.inner.chain_id().await
     }
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn links_every_header_to_the_one_below_it_across_a_fork() {
-        let chain = FakeChain::at_head(100);
+        let chain = FakeChainClient::at_head(100);
         chain.fork_above(50, b'b');
 
         for block in 49..=52 {
@@ -190,5 +190,35 @@ mod tests {
                 block + 1,
             );
         }
+    }
+
+    #[test]
+    fn leaves_the_block_a_fork_sits_above_on_its_original_branch() {
+        let chain = FakeChainClient::at_head(100);
+        chain.fork_above(50, b'b');
+
+        assert_eq!(chain.header_at(50).hash, hash_of(b'a', 50));
+        assert_eq!(chain.header_at(51).hash, hash_of(b'b', 51));
+    }
+
+    #[tokio::test]
+    async fn forks_on_the_header_read_after_the_ones_it_let_through() {
+        let inner = Arc::new(FakeChainClient::at_head(100));
+        let chain = ForkingChainClient::new(Arc::clone(&inner), 2, 50, b'b');
+
+        chain.head_block_number().await.unwrap();
+
+        for read in 1..=2 {
+            assert_eq!(
+                chain.block_header(51).await.unwrap().hash,
+                hash_of(b'a', 51),
+                "header read {read} forked early"
+            );
+        }
+
+        assert_eq!(
+            chain.block_header(51).await.unwrap().hash,
+            hash_of(b'b', 51)
+        );
     }
 }

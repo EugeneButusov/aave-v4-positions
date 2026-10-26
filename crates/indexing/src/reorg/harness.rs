@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use super::in_memory::InMemoryBlockHeaderStore;
-use crate::chain::{BlockHeader, ChainClient, FakeChain, ForkingChain};
+use crate::chain::{BlockHeader, ChainClient, FakeChainClient, ForkingChainClient};
 use crate::cursor::Cursor;
 use crate::fixtures::{CHAIN_ID, hash_of};
 use crate::reorg::{BlockHeaderStore, HashChainReorgDetector, ReorgDetector};
@@ -13,7 +13,7 @@ pub(crate) const HEAD: u64 = 1_000;
 pub(crate) struct Harness<W = InMemoryBlockHeaderStore> {
     pub(crate) detector: HashChainReorgDetector,
 
-    pub(crate) chain: Arc<FakeChain>,
+    pub(crate) chain: Arc<FakeChainClient>,
     pub(crate) window: Arc<W>,
 }
 
@@ -30,14 +30,14 @@ pub(crate) async fn over<W>(finality_depth: u64, head: u64, window: Arc<W>) -> H
 where
     W: BlockHeaderStore + 'static,
 {
-    let chain = Arc::new(FakeChain::at_head(head));
+    let chain = Arc::new(FakeChainClient::at_head(head));
     let client = Arc::clone(&chain) as Arc<dyn ChainClient>;
 
     assemble(finality_depth, head, chain, client, window).await
 }
 
 pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
-    let chain = Arc::new(FakeChain::at_head(head));
+    let chain = Arc::new(FakeChainClient::at_head(head));
     let window = Arc::new(InMemoryBlockHeaderStore::new());
     let detector = HashChainReorgDetector::new(
         CHAIN_ID,
@@ -59,8 +59,8 @@ pub(crate) async fn forking(
     fork_point: u64,
     branch: u8,
 ) -> Harness {
-    let chain = Arc::new(FakeChain::at_head(HEAD));
-    let client = Arc::new(ForkingChain::new(
+    let chain = Arc::new(FakeChainClient::at_head(HEAD));
+    let client = Arc::new(ForkingChainClient::new(
         Arc::clone(&chain),
         after_reads,
         fork_point,
@@ -80,7 +80,7 @@ pub(crate) async fn forking(
 async fn assemble<W>(
     finality_depth: u64,
     head: u64,
-    chain: Arc<FakeChain>,
+    chain: Arc<FakeChainClient>,
     client: Arc<dyn ChainClient>,
     window: Arc<W>,
 ) -> Harness<W>

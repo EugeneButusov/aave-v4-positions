@@ -17,4 +17,4 @@ pub use error::Error;
 pub use log_reader::{LogFilter, LogReader, RawLog};
 
 #[cfg(test)]
-pub(crate) use fake::{ChainCall, FakeChain, ForkingChain};
+pub(crate) use fake::{ChainCall, FakeChainClient, ForkingChainClient};
