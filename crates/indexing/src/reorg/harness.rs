@@ -14,21 +14,16 @@ pub(crate) struct Harness<W = InMemoryBlockHeaderStore> {
     pub(crate) detector: HashChainReorgDetector,
 
     pub(crate) chain: Arc<FakeChainClient>,
-    pub(crate) window: Arc<W>,
+    pub(crate) window: W,
 }
 
 pub(crate) async fn harness(finality_depth: u64) -> Harness {
-    over(
-        finality_depth,
-        HEAD,
-        Arc::new(InMemoryBlockHeaderStore::new()),
-    )
-    .await
+    over(finality_depth, HEAD, InMemoryBlockHeaderStore::new()).await
 }
 
-pub(crate) async fn over<W>(finality_depth: u64, head: u64, window: Arc<W>) -> Harness<W>
+pub(crate) async fn over<W>(finality_depth: u64, head: u64, window: W) -> Harness<W>
 where
-    W: BlockHeaderStore + 'static,
+    W: BlockHeaderStore + Clone + 'static,
 {
     let chain = Arc::new(FakeChainClient::at_head(head));
     let client = Arc::clone(&chain) as Arc<dyn ChainClient>;
@@ -38,12 +33,12 @@ where
 
 pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
     let chain = Arc::new(FakeChainClient::at_head(head));
-    let window = Arc::new(InMemoryBlockHeaderStore::new());
+    let window = InMemoryBlockHeaderStore::new();
     let detector = HashChainReorgDetector::new(
         CHAIN_ID,
         finality_depth,
         Arc::clone(&chain) as Arc<dyn ChainClient>,
-        Arc::clone(&window) as Arc<dyn BlockHeaderStore>,
+        Box::new(window.clone()),
     );
 
     Harness {
@@ -72,7 +67,7 @@ pub(crate) async fn forking(
         HEAD,
         chain,
         client,
-        Arc::new(InMemoryBlockHeaderStore::new()),
+        InMemoryBlockHeaderStore::new(),
     )
     .await
 }
@@ -82,17 +77,13 @@ async fn assemble<W>(
     head: u64,
     chain: Arc<FakeChainClient>,
     client: Arc<dyn ChainClient>,
-    window: Arc<W>,
+    window: W,
 ) -> Harness<W>
 where
-    W: BlockHeaderStore + 'static,
+    W: BlockHeaderStore + Clone + 'static,
 {
-    let detector = HashChainReorgDetector::new(
-        CHAIN_ID,
-        finality_depth,
-        client,
-        Arc::clone(&window) as Arc<dyn BlockHeaderStore>,
-    );
+    let detector =
+        HashChainReorgDetector::new(CHAIN_ID, finality_depth, client, Box::new(window.clone()));
 
     detector.safe_head(head).await.expect("the boundary");
 

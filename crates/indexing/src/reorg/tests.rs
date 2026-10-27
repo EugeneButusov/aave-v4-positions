@@ -1,7 +1,5 @@
 //! The real detector against a chain whose ancestry is derived rather than scripted.
 
-use std::sync::Arc;
-
 use super::in_memory::{
     InMemoryBlockHeaderStore, RecordingBlockHeaderStore, ShufflingBlockHeaderStore,
 };
@@ -203,7 +201,7 @@ mod inspect {
 
     #[tokio::test]
     async fn reaches_the_same_verdict_over_a_window_read_backwards() {
-        let fixture = over(DEPTH, HEAD, Arc::new(ShufflingBlockHeaderStore::new())).await;
+        let fixture = over(DEPTH, HEAD, ShufflingBlockHeaderStore::new()).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
         fixture.chain.fork_above(HEAD - 2, b'b');
 
@@ -234,7 +232,7 @@ mod inspect {
 
     #[tokio::test]
     async fn refuses_a_swap_at_genesis_with_nothing_below_it() {
-        let fixture = over(1, 0, Arc::new(InMemoryBlockHeaderStore::new())).await;
+        let fixture = over(1, 0, InMemoryBlockHeaderStore::new()).await;
         fixture.commit([0]).await;
 
         let replaced = crate::fixtures::header(0, b'b');
@@ -494,8 +492,8 @@ mod the_window_refuses_a_reorg_transition {
 
     #[tokio::test]
     async fn a_refused_retention_surfaces_rather_than_being_swallowed() {
-        let window = Arc::new(RecordingBlockHeaderStore::new());
-        let fixture = over(DEPTH, HEAD, Arc::clone(&window)).await;
+        let window = RecordingBlockHeaderStore::new();
+        let fixture = over(DEPTH, HEAD, window.clone()).await;
         window.refuse_nth_retention(1);
 
         let refusal = fixture
@@ -510,8 +508,8 @@ mod the_window_refuses_a_reorg_transition {
 
     #[tokio::test]
     async fn a_refused_rewind_leaves_the_reorg_owed() {
-        let window = Arc::new(RecordingBlockHeaderStore::new());
-        let fixture = over(DEPTH, HEAD, Arc::clone(&window)).await;
+        let window = RecordingBlockHeaderStore::new();
+        let fixture = over(DEPTH, HEAD, window.clone()).await;
         fixture.commit([HEAD - 1]).await;
         window.refuse_nth_rewind(1);
 

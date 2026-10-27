@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use units::ChainId;
@@ -8,10 +8,10 @@ use crate::chain::BlockHeader;
 use crate::reorg::{BlockHeaderStore, Error};
 
 /// Records successful transitions and can refuse a selected transition.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct RecordingBlockHeaderStore {
     inner: InMemoryBlockHeaderStore,
-    log: Mutex<Log>,
+    log: Arc<Mutex<Log>>,
 }
 
 #[derive(Default)]
@@ -98,7 +98,7 @@ impl BlockHeaderStore for RecordingBlockHeaderStore {
 }
 
 /// Returns the window newest-first to exercise the port's unspecified order.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct ShufflingBlockHeaderStore {
     inner: InMemoryBlockHeaderStore,
 }
@@ -137,9 +137,9 @@ impl BlockHeaderStore for ShufflingBlockHeaderStore {
 }
 
 /// Test-only in-memory retention window.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct InMemoryBlockHeaderStore {
-    chains: Mutex<HashMap<ChainId, Vec<BlockHeader>>>,
+    chains: Arc<Mutex<HashMap<ChainId, Vec<BlockHeader>>>>,
 }
 
 impl InMemoryBlockHeaderStore {
