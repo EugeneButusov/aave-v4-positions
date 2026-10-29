@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -97,45 +98,6 @@ impl BlockHeaderStore for RecordingBlockHeaderStore {
     }
 }
 
-/// Returns the window newest-first to exercise the port's unspecified order.
-#[derive(Clone, Default)]
-pub(crate) struct ShufflingBlockHeaderStore {
-    inner: InMemoryBlockHeaderStore,
-}
-
-impl ShufflingBlockHeaderStore {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[async_trait]
-impl BlockHeaderStore for ShufflingBlockHeaderStore {
-    async fn load(&self, chain_id: ChainId) -> Result<Vec<BlockHeader>, Error> {
-        let mut window = self.inner.load(chain_id).await?;
-        window.reverse();
-
-        Ok(window)
-    }
-
-    async fn append(
-        &self,
-        chain_id: ChainId,
-        header: &BlockHeader,
-        retain_from: u64,
-    ) -> Result<(), Error> {
-        self.inner.append(chain_id, header, retain_from).await
-    }
-
-    async fn truncate(
-        &self,
-        chain_id: ChainId,
-        last_valid_block: Option<u64>,
-    ) -> Result<(), Error> {
-        self.inner.truncate(chain_id, last_valid_block).await
-    }
-}
-
 /// Test-only in-memory retention window.
 #[derive(Clone, Default)]
 pub(crate) struct InMemoryBlockHeaderStore {
@@ -169,7 +131,8 @@ impl BlockHeaderStore for InMemoryBlockHeaderStore {
 
         window.retain(|held| held.number != header.number && held.number >= retain_from);
         window.push(*header);
-        window.sort_unstable_by_key(|held| held.number);
+        // The port promises no order; newest-first makes every case exercise the detector's sort.
+        window.sort_unstable_by_key(|held| Reverse(held.number));
 
         Ok(())
     }
@@ -220,7 +183,7 @@ mod tests {
         use crate::reorg::BlockHeaderStore;
 
         #[tokio::test]
-        async fn hands_back_a_window_in_ascending_order() {
+        async fn hands_back_the_window_newest_first() {
             let store = InMemoryBlockHeaderStore::new();
 
             for block in [503_u64, 500, 502, 501] {
@@ -238,7 +201,7 @@ mod tests {
                 .map(|header| header.number)
                 .collect();
 
-            assert_eq!(numbers, vec![500, 501, 502, 503]);
+            assert_eq!(numbers, vec![503, 502, 501, 500]);
         }
     }
 }

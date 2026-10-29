@@ -1,8 +1,6 @@
 //! The real detector against a chain whose ancestry is derived rather than scripted.
 
-use super::in_memory::{
-    InMemoryBlockHeaderStore, RecordingBlockHeaderStore, ShufflingBlockHeaderStore,
-};
+use super::in_memory::{InMemoryBlockHeaderStore, RecordingBlockHeaderStore};
 use crate::chain::ChainCall;
 use crate::fixtures::{CHAIN_ID, hash_of};
 use crate::reorg::harness::{HEAD, cursor_at, forking, harness, over, unprimed};
@@ -197,21 +195,6 @@ mod inspect {
             unrecoverable(&verdict).contains("is still canonical"),
             "{verdict:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn reaches_the_same_verdict_over_a_window_read_backwards() {
-        let fixture = over(DEPTH, HEAD, ShufflingBlockHeaderStore::new()).await;
-        fixture.commit([HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
-
-        let verdict = fixture
-            .detector
-            .inspect(&fixture.header(HEAD))
-            .await
-            .unwrap();
-
-        assert_eq!(reorg(&verdict), (HEAD - 1, HEAD - 1));
     }
 
     #[tokio::test]
