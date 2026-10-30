@@ -38,73 +38,134 @@ impl HashChainReorgDetector {
             observed_head: Mutex::new(None),
         }
     }
+}
 
-    fn remembered_head(&self) -> Option<u64> {
-        *self
-            .observed_head
-            .lock()
-            .unwrap_or_else(|held| held.into_inner())
-    }
+#[async_trait::async_trait]
+impl ReorgDetector for HashChainReorgDetector {
+    async fn bootstrap(&self, cursor: Option<&Cursor>) -> Result<Verdict, Error> {
+        let Some(cursor) = cursor else {
+            self.window.truncate(self.chain_id, None).await?;
 
-    fn remember(&self, head: u64) {
-        *self
-            .observed_head
-            .lock()
-            .unwrap_or_else(|held| held.into_inner()) = Some(head);
-    }
-
-    async fn current_safe_head(&self) -> Result<Option<u64>, Error> {
-        let head = match self.remembered_head() {
-            Some(head) => head,
-            None => self.chain.head_block_number().await?,
+            return Ok(Verdict::Continuous);
         };
 
-        self.safe_head(head).await
-    }
+        let retained = self.retained_window().await?;
+        let ours = retained
+            .last()
+            .map_or((cursor.last_block, cursor.last_hash), |top| {
+                (top.number, top.hash)
+            });
 
-    async fn retained(&self) -> Result<Vec<BlockHeader>, Error> {
-        let mut window = self.window.load(self.chain_id).await?;
-        window.sort_unstable_by_key(|held| held.number);
+        let canonical = self.chain.block_header(ours.0).await?;
 
-        Ok(window)
-    }
-
-    /// Fills predecessors to the retention floor, verifying every parent link.
-    /// Settled anchors are skipped to avoid a depth-sized walk per backfill range.
-    async fn fill_run_below(&self, anchor: &BlockHeader) -> Result<(), Error> {
-        if let Some(settled) = self.current_safe_head().await?
-            && anchor.number < settled
-        {
-            return Ok(());
+        if canonical.hash != ours.1 {
+            return self
+                .locate_fork(&retained, ours.0.checked_sub(1), ours.0)
+                .await;
         }
 
-        let floor = anchor.number.saturating_sub(self.finality_depth);
-        let mut child = *anchor;
+        self.commit(&canonical).await?;
 
-        while child.number > floor {
-            let Some(parent) = self.retain_parent_of(&child, floor).await? else {
-                return Ok(());
-            };
-            child = parent;
+        Ok(Verdict::Continuous)
+    }
+
+    async fn safe_head(&self, observed_head: u64) -> Result<Option<u64>, Error> {
+        self.remember(observed_head);
+
+        Ok(observed_head.checked_sub(self.finality_depth))
+    }
+
+    async fn inspect(&self, header: &BlockHeader) -> Result<Verdict, Error> {
+        // Settled ranges retain only their top, so there is no ancestry to inspect.
+        if let Some(settled) = self.current_safe_head().await?
+            && header.number <= settled
+        {
+            return Ok(Verdict::Continuous);
+        }
+
+        let retained = self.retained_window().await?;
+
+        if retained.is_empty() {
+            return Ok(Verdict::Continuous);
+        }
+
+        if let Some(existing) = at(&retained, header.number)
+            && existing.hash != header.hash
+        {
+            return self
+                .locate_fork(&retained, header.number.checked_sub(1), header.number)
+                .await;
+        }
+
+        let Some(below) = header.number.checked_sub(1) else {
+            return Ok(Verdict::Continuous);
+        };
+
+        let Some(parent) = at(&retained, below) else {
+            return Ok(Verdict::Unrecoverable {
+                reason: format!(
+                    "nothing retained for block {below}, so block {} has no ancestry to check",
+                    header.number
+                ),
+            });
+        };
+
+        if parent.hash == header.parent_hash {
+            return Ok(Verdict::Continuous);
+        }
+
+        self.locate_fork(&retained, header.number.checked_sub(2), below)
+            .await
+    }
+
+    async fn commit(&self, header: &BlockHeader) -> Result<(), Error> {
+        let retained = self.retained_window().await?;
+
+        // Settled ranges bypass `inspect`; catch a finality violation before restart.
+        if let Some(below) = header.number.checked_sub(1)
+            && let Some(parent) = at(&retained, below)
+            && parent.hash != header.parent_hash
+        {
+            warn!(
+                block = header.number,
+                retained = parent.number,
+                "block does not extend the retained one below it; something changed at or \
+                 below the safe head, so the window is being restarted"
+            );
+        }
+
+        let continues = continues_the_run(&retained, header);
+
+        if !continues {
+            self.window.truncate(self.chain_id, None).await?;
+        }
+
+        let floor = header.number.saturating_sub(self.finality_depth);
+        self.window.append(self.chain_id, header, floor).await?;
+
+        let bottom = match retained.first() {
+            Some(oldest) if continues => oldest.number.max(floor),
+            _ => header.number,
+        };
+
+        if bottom > floor {
+            self.fill_run_below(header).await?;
         }
 
         Ok(())
     }
 
-    async fn retain_parent_of(
-        &self,
-        child: &BlockHeader,
-        floor: u64,
-    ) -> Result<Option<BlockHeader>, Error> {
-        let parent = self.chain.block_header(child.number - 1).await?;
+    async fn rewind_to(&self, last_valid_block: Option<u64>) -> Result<(), Error> {
+        self.window.truncate(self.chain_id, last_valid_block).await
+    }
+}
 
-        if parent.hash != child.parent_hash {
-            return Ok(None);
-        }
+impl HashChainReorgDetector {
+    async fn retained_window(&self) -> Result<Vec<BlockHeader>, Error> {
+        let mut window = self.window.load(self.chain_id).await?;
+        window.sort_unstable_by_key(|held| held.number);
 
-        self.window.append(self.chain_id, &parent, floor).await?;
-
-        Ok(Some(parent))
+        Ok(window)
     }
 
     async fn locate_fork(
@@ -147,125 +208,80 @@ impl HashChainReorgDetector {
 
         Ok(None)
     }
-}
 
-#[async_trait::async_trait]
-impl ReorgDetector for HashChainReorgDetector {
-    async fn bootstrap(&self, cursor: Option<&Cursor>) -> Result<Verdict, Error> {
-        let Some(cursor) = cursor else {
-            self.window.truncate(self.chain_id, None).await?;
+    fn remember(&self, head: u64) {
+        *self
+            .observed_head
+            .lock()
+            .unwrap_or_else(|held| held.into_inner()) = Some(head);
+    }
 
-            return Ok(Verdict::Continuous);
+    fn remembered_head(&self) -> Option<u64> {
+        *self
+            .observed_head
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+    }
+
+    async fn current_safe_head(&self) -> Result<Option<u64>, Error> {
+        let head = match self.remembered_head() {
+            Some(head) => head,
+            None => self.chain.head_block_number().await?,
         };
 
-        let retained = self.retained().await?;
-        let ours = retained
-            .last()
-            .map_or((cursor.last_block, cursor.last_hash), |top| {
-                (top.number, top.hash)
-            });
-
-        let canonical = self.chain.block_header(ours.0).await?;
-
-        if canonical.hash != ours.1 {
-            return self
-                .locate_fork(&retained, ours.0.checked_sub(1), ours.0)
-                .await;
-        }
-
-        self.commit(&canonical).await?;
-
-        Ok(Verdict::Continuous)
+        self.safe_head(head).await
     }
 
-    async fn safe_head(&self, observed_head: u64) -> Result<Option<u64>, Error> {
-        self.remember(observed_head);
-
-        Ok(observed_head.checked_sub(self.finality_depth))
-    }
-
-    async fn inspect(&self, header: &BlockHeader) -> Result<Verdict, Error> {
-        // Settled ranges retain only their top, so there is no ancestry to inspect.
+    /// Fills predecessors to the retention floor, verifying every parent link.
+    /// Settled anchors are skipped to avoid a depth-sized walk per backfill range.
+    async fn fill_run_below(&self, anchor: &BlockHeader) -> Result<(), Error> {
         if let Some(settled) = self.current_safe_head().await?
-            && header.number <= settled
+            && anchor.number < settled
         {
-            return Ok(Verdict::Continuous);
+            return Ok(());
         }
 
-        let retained = self.retained().await?;
+        let floor = anchor.number.saturating_sub(self.finality_depth);
+        let mut child = *anchor;
 
-        if retained.is_empty() {
-            return Ok(Verdict::Continuous);
-        }
-
-        if let Some(existing) = at(&retained, header.number)
-            && existing.hash != header.hash
-        {
-            return self
-                .locate_fork(&retained, header.number.checked_sub(1), header.number)
-                .await;
-        }
-
-        let Some(below) = header.number.checked_sub(1) else {
-            return Ok(Verdict::Continuous);
-        };
-
-        let Some(parent) = at(&retained, below) else {
-            return Ok(Verdict::Unrecoverable {
-                reason: format!(
-                    "nothing retained for block {below}, so block {} has no ancestry to check",
-                    header.number
-                ),
-            });
-        };
-
-        if parent.hash == header.parent_hash {
-            return Ok(Verdict::Continuous);
-        }
-
-        self.locate_fork(&retained, header.number.checked_sub(2), below)
-            .await
-    }
-
-    async fn commit(&self, header: &BlockHeader) -> Result<(), Error> {
-        let retained = self.retained().await?;
-
-        // Settled ranges bypass `inspect`; catch a finality violation before restart.
-        if let Some(below) = header.number.checked_sub(1)
-            && let Some(parent) = at(&retained, below)
-            && parent.hash != header.parent_hash
-        {
-            warn!(
-                block = header.number,
-                retained = parent.number,
-                "block does not extend the retained one below it; something changed at or \
-                 below the safe head, so the window is being restarted"
-            );
-        }
-
-        let continues = continues_the_run(&retained, header);
-
-        if !continues {
-            self.window.truncate(self.chain_id, None).await?;
-        }
-
-        let floor = header.number.saturating_sub(self.finality_depth);
-        self.window.append(self.chain_id, header, floor).await?;
-
-        let bottom = match retained.first() {
-            Some(oldest) if continues => oldest.number.max(floor),
-            _ => header.number,
-        };
-
-        if bottom > floor {
-            self.fill_run_below(header).await?;
+        while child.number > floor {
+            let Some(parent) = self.retain_parent_of(&child, floor).await? else {
+                return Ok(());
+            };
+            child = parent;
         }
 
         Ok(())
     }
 
-    async fn rewind_to(&self, last_valid_block: Option<u64>) -> Result<(), Error> {
-        self.window.truncate(self.chain_id, last_valid_block).await
+    async fn retain_parent_of(
+        &self,
+        child: &BlockHeader,
+        floor: u64,
+    ) -> Result<Option<BlockHeader>, Error> {
+        let parent = self.chain.block_header(child.number - 1).await?;
+
+        if parent.hash != child.parent_hash {
+            return Ok(None);
+        }
+
+        self.window.append(self.chain_id, &parent, floor).await?;
+
+        Ok(Some(parent))
+    }
+}
+
+fn describe_search(retained: &[BlockHeader], walk_from: Option<u64>) -> String {
+    let Some(walk_from) = walk_from else {
+        return "nothing below block 0 to compare against".to_owned();
+    };
+
+    match retained.first() {
+        Some(oldest) if oldest.number <= walk_from => format!(
+            "no retained header between {} and {walk_from} is still canonical",
+            oldest.number
+        ),
+        _ => format!("nothing retained at or below block {walk_from} to compare against"),
     }
 }
 
@@ -285,18 +301,4 @@ fn continues_the_run(retained: &[BlockHeader], header: &BlockHeader) -> bool {
     }
 
     header.number + 1 >= oldest.number && header.number <= newest.number + 1
-}
-
-fn describe_search(retained: &[BlockHeader], walk_from: Option<u64>) -> String {
-    let Some(walk_from) = walk_from else {
-        return "nothing below block 0 to compare against".to_owned();
-    };
-
-    match retained.first() {
-        Some(oldest) if oldest.number <= walk_from => format!(
-            "no retained header between {} and {walk_from} is still canonical",
-            oldest.number
-        ),
-        _ => format!("nothing retained at or below block {walk_from} to compare against"),
-    }
 }
