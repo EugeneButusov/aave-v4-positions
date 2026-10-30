@@ -1,0 +1,207 @@
+use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use async_trait::async_trait;
+use units::ChainId;
+
+use crate::chain::BlockHeader;
+use crate::reorg::{BlockHeaderStore, Error};
+
+/// Records successful transitions and can refuse a selected transition.
+#[derive(Clone, Default)]
+pub(crate) struct RecordingBlockHeaderStore {
+    inner: InMemoryBlockHeaderStore,
+    log: Arc<Mutex<Log>>,
+}
+
+#[derive(Default)]
+struct Log {
+    retained: Vec<BlockHeader>,
+    rewound_to: Vec<Option<u64>>,
+    retentions: usize,
+    rewinds: usize,
+    refuse_retention: Option<usize>,
+    refuse_rewind: Option<usize>,
+}
+
+impl RecordingBlockHeaderStore {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    fn log(&self) -> std::sync::MutexGuard<'_, Log> {
+        self.log.lock().unwrap_or_else(|held| held.into_inner())
+    }
+
+    pub(crate) fn refuse_nth_retention(&self, nth: usize) {
+        self.log().refuse_retention = Some(nth);
+    }
+
+    pub(crate) fn refuse_nth_rewind(&self, nth: usize) {
+        self.log().refuse_rewind = Some(nth);
+    }
+
+    pub(crate) fn retained(&self) -> Vec<BlockHeader> {
+        self.log().retained.clone()
+    }
+
+    pub(crate) fn rewound_to(&self) -> Vec<Option<u64>> {
+        self.log().rewound_to.clone()
+    }
+}
+
+#[async_trait]
+impl BlockHeaderStore for RecordingBlockHeaderStore {
+    async fn load(&self, chain_id: ChainId) -> Result<Vec<BlockHeader>, Error> {
+        self.inner.load(chain_id).await
+    }
+
+    async fn append(
+        &self,
+        chain_id: ChainId,
+        header: &BlockHeader,
+        retain_from: u64,
+    ) -> Result<(), Error> {
+        {
+            let mut log = self.log();
+            log.retentions += 1;
+            // Refuse before mutation so the log describes completed transitions.
+            if log.refuse_retention == Some(log.retentions) {
+                return Err(Error::RetentionRefused);
+            }
+        }
+
+        self.inner.append(chain_id, header, retain_from).await?;
+        self.log().retained.push(*header);
+
+        Ok(())
+    }
+
+    async fn truncate(
+        &self,
+        chain_id: ChainId,
+        last_valid_block: Option<u64>,
+    ) -> Result<(), Error> {
+        {
+            let mut log = self.log();
+            log.rewinds += 1;
+            if log.refuse_rewind == Some(log.rewinds) {
+                return Err(Error::RewindRefused);
+            }
+        }
+
+        self.inner.truncate(chain_id, last_valid_block).await?;
+        self.log().rewound_to.push(last_valid_block);
+
+        Ok(())
+    }
+}
+
+/// Test-only in-memory retention window.
+#[derive(Clone, Default)]
+pub(crate) struct InMemoryBlockHeaderStore {
+    chains: Arc<Mutex<HashMap<ChainId, Vec<BlockHeader>>>>,
+}
+
+impl InMemoryBlockHeaderStore {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    fn chains(&self) -> std::sync::MutexGuard<'_, HashMap<ChainId, Vec<BlockHeader>>> {
+        self.chains.lock().unwrap_or_else(|held| held.into_inner())
+    }
+}
+
+#[async_trait::async_trait]
+impl BlockHeaderStore for InMemoryBlockHeaderStore {
+    async fn load(&self, chain_id: ChainId) -> Result<Vec<BlockHeader>, Error> {
+        Ok(self.chains().get(&chain_id).cloned().unwrap_or_default())
+    }
+
+    async fn append(
+        &self,
+        chain_id: ChainId,
+        header: &BlockHeader,
+        retain_from: u64,
+    ) -> Result<(), Error> {
+        let mut chains = self.chains();
+        let window = chains.entry(chain_id).or_default();
+
+        window.retain(|held| held.number != header.number && held.number >= retain_from);
+        window.push(*header);
+        // The port promises no order; newest-first makes every case exercise the detector's sort.
+        window.sort_unstable_by_key(|held| Reverse(held.number));
+
+        Ok(())
+    }
+
+    async fn truncate(
+        &self,
+        chain_id: ChainId,
+        last_valid_block: Option<u64>,
+    ) -> Result<(), Error> {
+        let mut chains = self.chains();
+        let window = chains.entry(chain_id).or_default();
+
+        match last_valid_block {
+            Some(block) => window.retain(|held| held.number <= block),
+            None => window.clear(),
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The port contract against its in-memory implementation.
+
+    use super::InMemoryBlockHeaderStore;
+    use crate::reorg::conformance::{Harness, block_header_store_conformance};
+
+    struct Double(InMemoryBlockHeaderStore);
+
+    impl Harness for Double {
+        type Store = InMemoryBlockHeaderStore;
+
+        async fn fresh(_case: &str) -> Self {
+            Self(InMemoryBlockHeaderStore::new())
+        }
+
+        fn store(&self) -> &Self::Store {
+            &self.0
+        }
+    }
+
+    block_header_store_conformance!(Double);
+
+    mod beyond_the_contract {
+        use super::*;
+        use crate::fixtures::{CHAIN_ID, header};
+        use crate::reorg::BlockHeaderStore;
+
+        #[tokio::test]
+        async fn hands_back_the_window_newest_first() {
+            let store = InMemoryBlockHeaderStore::new();
+
+            for block in [503_u64, 500, 502, 501] {
+                store
+                    .append(CHAIN_ID, &header(block, b'a'), 0)
+                    .await
+                    .unwrap();
+            }
+
+            let numbers: Vec<u64> = store
+                .load(CHAIN_ID)
+                .await
+                .unwrap()
+                .iter()
+                .map(|header| header.number)
+                .collect();
+
+            assert_eq!(numbers, vec![503, 502, 501, 500]);
+        }
+    }
+}
