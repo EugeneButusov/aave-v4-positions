@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tracing::warn;
 use units::ChainId;
@@ -18,8 +18,6 @@ pub struct HashChainReorgDetector {
 
     chain_client: Arc<dyn ChainClient>,
     block_header_store: Box<dyn BlockHeaderStore>,
-
-    observed_head: Mutex<Option<u64>>,
 }
 
 impl HashChainReorgDetector {
@@ -35,7 +33,6 @@ impl HashChainReorgDetector {
             finality_depth,
             chain_client,
             block_header_store,
-            observed_head: Mutex::new(None),
         }
     }
 }
@@ -66,20 +63,23 @@ impl ReorgDetector for HashChainReorgDetector {
                 .await;
         }
 
-        self.commit(&canonical).await?;
+        let head = self.chain_client.head_block_number().await?;
+        self.commit(&canonical, self.safe_head(head)).await?;
 
         Ok(Verdict::Continuous)
     }
 
-    async fn safe_head(&self, observed_head: u64) -> Result<Option<u64>, Error> {
-        self.remember(observed_head);
-
-        Ok(observed_head.checked_sub(self.finality_depth))
+    fn safe_head(&self, observed_head: u64) -> Option<u64> {
+        observed_head.checked_sub(self.finality_depth)
     }
 
-    async fn inspect(&self, header: &BlockHeader) -> Result<Verdict, Error> {
+    async fn inspect(
+        &self,
+        header: &BlockHeader,
+        safe_head: Option<u64>,
+    ) -> Result<Verdict, Error> {
         // Settled ranges retain only their top, so there is no ancestry to inspect.
-        if let Some(settled) = self.current_safe_head().await?
+        if let Some(settled) = safe_head
             && header.number <= settled
         {
             return Ok(Verdict::Continuous);
@@ -120,7 +120,7 @@ impl ReorgDetector for HashChainReorgDetector {
             .await
     }
 
-    async fn commit(&self, header: &BlockHeader) -> Result<(), Error> {
+    async fn commit(&self, header: &BlockHeader, safe_head: Option<u64>) -> Result<(), Error> {
         let retained = self.retained_window().await?;
 
         // Settled ranges bypass `inspect`; catch a finality violation before restart.
@@ -155,7 +155,7 @@ impl ReorgDetector for HashChainReorgDetector {
         };
 
         if bottom > floor {
-            self.fill_run_below(header).await?;
+            self.fill_run_below(header, safe_head).await?;
         }
 
         Ok(())
@@ -217,33 +217,14 @@ impl HashChainReorgDetector {
         Ok(None)
     }
 
-    fn remember(&self, head: u64) {
-        *self
-            .observed_head
-            .lock()
-            .unwrap_or_else(|held| held.into_inner()) = Some(head);
-    }
-
-    fn remembered_head(&self) -> Option<u64> {
-        *self
-            .observed_head
-            .lock()
-            .unwrap_or_else(|held| held.into_inner())
-    }
-
-    async fn current_safe_head(&self) -> Result<Option<u64>, Error> {
-        let head = match self.remembered_head() {
-            Some(head) => head,
-            None => self.chain_client.head_block_number().await?,
-        };
-
-        self.safe_head(head).await
-    }
-
     /// Fills predecessors to the retention floor, verifying every parent link.
     /// Settled anchors are skipped to avoid a depth-sized walk per backfill range.
-    async fn fill_run_below(&self, anchor: &BlockHeader) -> Result<(), Error> {
-        if let Some(settled) = self.current_safe_head().await?
+    async fn fill_run_below(
+        &self,
+        anchor: &BlockHeader,
+        safe_head: Option<u64>,
+    ) -> Result<(), Error> {
+        if let Some(settled) = safe_head
             && anchor.number < settled
         {
             return Ok(());

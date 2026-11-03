@@ -2,7 +2,7 @@
 
 use crate::chain::ChainCall;
 use crate::fixtures::{CHAIN_ID, hash_of};
-use crate::reorg::harness::{HEAD, at_head, cursor_at, forking, harness, unprimed};
+use crate::reorg::harness::{HEAD, at_head, cursor_at, forking, harness};
 use crate::reorg::{BlockHeaderStore as _, Error, ReorgDetector, Verdict};
 
 const DEPTH: u64 = 10;
@@ -32,7 +32,7 @@ mod finality {
     async fn settles_one_finality_depth_below_the_observed_head() {
         let fixture = harness(DEPTH).await;
 
-        let settled = fixture.detector.safe_head(500).await.unwrap();
+        let settled = fixture.detector.safe_head(500);
 
         assert_eq!(settled, Some(490));
     }
@@ -41,8 +41,8 @@ mod finality {
     async fn settles_nothing_on_a_chain_shorter_than_the_depth() {
         let fixture = harness(DEPTH).await;
 
-        assert_eq!(fixture.detector.safe_head(DEPTH - 1).await.unwrap(), None);
-        assert_eq!(fixture.detector.safe_head(DEPTH).await.unwrap(), Some(0));
+        assert_eq!(fixture.detector.safe_head(DEPTH - 1), None);
+        assert_eq!(fixture.detector.safe_head(DEPTH), Some(0));
     }
 }
 
@@ -56,7 +56,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -69,7 +69,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -83,7 +83,11 @@ mod inspect {
         let before = fixture.chain_client.header_reads();
 
         let settled = crate::fixtures::header(HEAD - DEPTH - 5, b'z');
-        let verdict = fixture.detector.inspect(&settled).await.unwrap();
+        let verdict = fixture
+            .detector
+            .inspect(&settled, fixture.safe_head)
+            .await
+            .unwrap();
 
         assert_eq!(verdict, Verdict::Continuous);
         assert_eq!(
@@ -101,7 +105,7 @@ mod inspect {
 
         fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -116,7 +120,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -131,7 +135,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -145,7 +149,11 @@ mod inspect {
         fixture.chain_client.fork_above(HEAD - 2, b'b');
 
         let replacement = fixture.header(HEAD - 1);
-        let verdict = fixture.detector.inspect(&replacement).await.unwrap();
+        let verdict = fixture
+            .detector
+            .inspect(&replacement, fixture.safe_head)
+            .await
+            .unwrap();
 
         assert_eq!(reorg(&verdict), (HEAD - 1, HEAD - 1));
     }
@@ -157,7 +165,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -171,7 +179,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -190,7 +198,7 @@ mod inspect {
 
         let verdict = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .unwrap();
 
@@ -209,7 +217,7 @@ mod inspect {
 
         let refusal = fixture
             .detector
-            .inspect(&fixture.header(HEAD))
+            .inspect(&fixture.header(HEAD), fixture.safe_head)
             .await
             .expect_err("the walk needs the chain");
 
@@ -222,7 +230,11 @@ mod inspect {
         fixture.commit([0]).await;
 
         let replaced = crate::fixtures::header(0, b'b');
-        let verdict = fixture.detector.inspect(&replaced).await.unwrap();
+        let verdict = fixture
+            .detector
+            .inspect(&replaced, fixture.safe_head)
+            .await
+            .unwrap();
 
         assert!(
             unrecoverable(&verdict).contains("nothing below block 0"),
@@ -235,8 +247,8 @@ mod bootstrap {
     use super::*;
 
     #[tokio::test]
-    async fn reads_the_head_itself_having_never_been_shown_one() {
-        let fixture = unprimed(DEPTH, HEAD);
+    async fn reads_the_head_itself() {
+        let fixture = harness(DEPTH).await;
 
         fixture
             .detector
@@ -483,7 +495,7 @@ mod the_window_refuses_a_reorg_transition {
 
         let refusal = fixture
             .detector
-            .commit(&fixture.header(HEAD - 1))
+            .commit(&fixture.header(HEAD - 1), fixture.safe_head)
             .await
             .expect_err("header retention was refused");
 
@@ -614,7 +626,11 @@ mod retention {
         fixture.commit([HEAD - 2, HEAD - 1]).await;
 
         let stacked = crate::fixtures::header(HEAD, b'b');
-        fixture.detector.commit(&stacked).await.unwrap();
+        fixture
+            .detector
+            .commit(&stacked, fixture.safe_head)
+            .await
+            .unwrap();
 
         let retained = fixture.retained().await;
         let window = fixture.block_header_store.load(CHAIN_ID).await.unwrap();

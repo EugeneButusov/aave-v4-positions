@@ -15,6 +15,8 @@ pub(crate) struct Harness {
 
     pub(crate) chain_client: Arc<FakeChainClient>,
     pub(crate) block_header_store: InMemoryBlockHeaderStore,
+
+    pub(crate) safe_head: Option<u64>,
 }
 
 pub(crate) async fn harness(finality_depth: u64) -> Harness {
@@ -26,23 +28,6 @@ pub(crate) async fn at_head(finality_depth: u64, head: u64) -> Harness {
     let detector_client = Arc::clone(&chain_client) as Arc<dyn ChainClient>;
 
     assemble(finality_depth, head, chain_client, detector_client).await
-}
-
-pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
-    let chain_client = Arc::new(FakeChainClient::at_head(head));
-    let block_header_store = InMemoryBlockHeaderStore::new();
-    let detector = HashChainReorgDetector::new(
-        CHAIN_ID,
-        finality_depth,
-        Arc::clone(&chain_client) as Arc<dyn ChainClient>,
-        Box::new(block_header_store.clone()),
-    );
-
-    Harness {
-        detector,
-        chain_client,
-        block_header_store,
-    }
 }
 
 pub(crate) async fn forking(
@@ -76,12 +61,13 @@ async fn assemble(
         Box::new(block_header_store.clone()),
     );
 
-    detector.safe_head(head).await.expect("the boundary");
+    let safe_head = detector.safe_head(head);
 
     Harness {
         detector,
         chain_client,
         block_header_store,
+        safe_head,
     }
 }
 
@@ -90,7 +76,7 @@ impl Harness {
     pub(crate) async fn commit(&self, blocks: impl IntoIterator<Item = u64>) {
         for block in blocks {
             self.detector
-                .commit(&self.chain_client.header_at(block))
+                .commit(&self.chain_client.header_at(block), self.safe_head)
                 .await
                 .expect("the header should commit");
         }
