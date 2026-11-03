@@ -1031,7 +1031,7 @@ draws about itself — *nothing here may reach the chain*:
 **Everything that does not touch the chain, implemented.** The loop, `HashChainReorgDetector`,
 `PostgresCursorStore`, `PostgresBlockHeaderStore` and their contract suites; `IndexerStatus`, the
 twelve instruments and the stall signal; `bins/indexer` with its configuration, probes and drain.
-**Everything that does, a port with a double.** `ChainClient`, `LogReader` and `BlockProcessor` have
+**Everything that does, a port with only a test implementation.** `ChainClient`, `LogReader` and `BlockProcessor` have
 their contracts written out and in-memory stand-ins behind them.
 
 The cursor and the window land together rather than in sequence, for the reason

@@ -3,7 +3,7 @@
 //! The cases drive the real router rather than reassembling one, so a wiring
 //! mistake fails them rather than hiding behind a parallel definition.
 //!
-//! The four read ports are doubles: what a store does with a query is its own
+//! The four read ports answer from memory: what a store does with a query is its own
 //! crate's conformance suite to prove, and what this binary adds is the join,
 //! the wire shape and the refusals. The two connections stay real for the
 //! readiness probe.

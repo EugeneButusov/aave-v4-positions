@@ -133,7 +133,7 @@ and `PostgresCursorStore`, `reorg/` the same for the header window. The two tabl
 ship as `.sql` from `src/postgres-migrations/`, and `bins/migrate` names the directory. There is
 **one** adapter per persistence port, not two: an in-memory cursor under a durable window (or the
 reverse) names a resume point nothing can vet, so the second one would exist only to be wired by
-mistake. The in-memory doubles live in `test-support/` with the other fakes, and they run the same
+mistake. The in-memory stores live in `test-support/` with the other fakes, and they run the same
 contract suites the real adapters do — a fake that quietly disagrees with its port turns every test
 using it into a proof about a fiction.
 
