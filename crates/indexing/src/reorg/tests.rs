@@ -342,6 +342,20 @@ mod bootstrap {
     }
 
     #[tokio::test]
+    async fn continues_when_the_window_is_one_block_ahead_of_the_cursor() {
+        let fixture = harness(DEPTH).await;
+        fixture.commit([HEAD - 2, HEAD - 1]).await;
+
+        let verdict = fixture
+            .detector
+            .bootstrap(Some(&cursor_at(HEAD - 2, b'a')))
+            .await
+            .unwrap();
+
+        assert_eq!(verdict, Verdict::Continuous);
+    }
+
+    #[tokio::test]
     async fn falls_back_to_the_cursor_when_the_window_is_empty() {
         let fixture = harness(DEPTH).await;
         fixture.chain_client.fork_above(HEAD - 5, b'b');

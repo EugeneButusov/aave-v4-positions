@@ -49,17 +49,17 @@ impl ReorgDetector for HashChainReorgDetector {
         };
 
         let retained = self.retained_window().await?;
-        let ours = retained
-            .last()
-            .map_or((cursor.last_block, cursor.last_hash), |top| {
-                (top.number, top.hash)
-            });
+        let ours = retained.last().map_or(*cursor, |top| Cursor {
+            chain_id: self.chain_id,
+            last_block: top.number,
+            last_hash: top.hash,
+        });
 
-        let canonical = self.chain_client.block_header(ours.0).await?;
+        let canonical = self.chain_client.block_header(ours.last_block).await?;
 
-        if canonical.hash != ours.1 {
+        if canonical.hash != ours.last_hash {
             return self
-                .locate_fork(&retained, ours.0.checked_sub(1), ours.0)
+                .locate_fork(&retained, ours.last_block.checked_sub(1), ours.last_block)
                 .await;
         }
 
