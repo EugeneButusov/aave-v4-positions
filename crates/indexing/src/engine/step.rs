@@ -17,23 +17,9 @@ use crate::engine::{Iteration, Options};
 use crate::processors::BlockProcessor;
 use crate::reorg::{ReorgDetector, Verdict};
 
-/// **The loop knows about block numbers and nothing else.** It holds no notion
-/// of finality, of what a fork looks like, or of what a processor does with a
-/// range; each of those sits behind a port, and every chain-shape question is
-/// answered by asking rather than by arithmetic here.
-///
-/// Each iteration takes one of two paths, chosen fresh from the head every time
-/// rather than latched as a mode:
-///
-/// - **At or below the detector's safe head**, blocks are settled, so they go
-///   out in ranges of up to `max_range_size` with no per-block inspection. That
-///   is what makes a backfill of the better part of a million blocks take
-///   minutes.
-/// - **Above it**, one block at a time, inspected before it is dispatched.
-///
-/// A range never straddles the boundary: half of it would be covered by a
-/// finality assumption and half not, and the single hash committed for its top
-/// would sit inside the reorg window with no ancestry beneath it.
+/// Knows block numbers and nothing else: finality and the shape of a fork are
+/// the detector's answers. At or below its safe head blocks go out in ranges,
+/// above it one at a time, and a range never straddles the two.
 pub(crate) struct Step {
     options: Options,
     chain_client: Arc<dyn ChainClient>,
@@ -79,14 +65,10 @@ impl Step {
         }
     }
 
-    /// One iteration, every refusal carried out of [`attempt`](Self::attempt) as a retry.
     pub(crate) async fn advance(&mut self) -> Iteration {
         match self.attempt().await {
             Ok(result) => result,
-            // Reached only by a fault outside a processor — a failed read, a
-            // cursor store refusing. Retries are unbounded, so a genuine defect
-            // keeps failing here and surfaces through the stall signal rather
-            // than being mistaken for a terminal condition.
+            // Never terminal: a defect keeps failing here and surfaces through the stall signal.
             Err(reason) => Iteration::Retry {
                 reason: format!("unhandled: {reason}"),
             },
@@ -102,8 +84,7 @@ impl Step {
             return Ok(decided);
         }
 
-        // Clamped to the high-water mark inside the status: a failover can
-        // otherwise make the head appear to move backwards.
+        // The status clamps it: a failover can otherwise move the head backwards.
         let head = self.status.observe_head(
             self.chain_client
                 .head_block_number()
@@ -119,9 +100,6 @@ impl Step {
             return Ok(Iteration::Idle);
         }
 
-        // The boundary decides how wide to dispatch and nothing else. At or
-        // below it the blocks are settled, so they go out in ranges; above it,
-        // one at a time. A range never straddles it.
         let safe_head = self.reorg_detector.safe_head(head);
         let to = match safe_head {
             Some(settled) if next <= settled => (next + self.effective_max_range - 1).min(settled),
@@ -131,9 +109,7 @@ impl Step {
         self.index_range(next, to, safe_head).await
     }
 
-    /// Checked once, lazily, rather than at construction: a boot that reaches
-    /// out to a node turns a provider outage into a crash loop, where what is
-    /// wanted is a pod that starts and reports not-ready.
+    /// Lazily, not at construction: a boot that needs a node turns an outage into a crash loop.
     async fn verify_chain_id(&mut self) -> Result<Option<Iteration>, String> {
         if self.chain_id_verified {
             return Ok(None);
@@ -155,10 +131,7 @@ impl Step {
         Ok(None)
     }
 
-    /// Loads the cursor and lets the detector vet the resume point.
-    ///
-    /// `bootstrapped` is set only once the whole step succeeded, so a transient
-    /// failure re-runs it rather than leaving the detector half-primed.
+    /// Set as done only once it succeeds, so a transient failure re-runs the whole of it.
     async fn bootstrap(&mut self) -> Result<Option<Iteration>, String> {
         if self.bootstrapped {
             return Ok(None);
@@ -184,25 +157,16 @@ impl Step {
                 last_invalid_block,
                 last_valid_hash,
             } => {
-                // The chain forked while the process was down. Nothing else
-                // would notice: the detector's window starts empty, so without
-                // this the loop would carry on from the cursor onto a branch
-                // that lost.
-                self.instruments.reorg(
-                    first_invalid_block,
-                    last_invalid_block,
-                    Phase::Bootstrap,
-                    None,
-                );
                 let rewound = self
-                    .apply_reorg(first_invalid_block, last_invalid_block, last_valid_hash)
+                    .unwind(
+                        first_invalid_block,
+                        last_invalid_block,
+                        last_valid_hash,
+                        Phase::Bootstrap,
+                        None,
+                    )
                     .await?;
-
-                if !matches!(rewound, Iteration::Progressed { .. }) {
-                    return Ok(Some(rewound));
-                }
-
-                self.bootstrapped = true;
+                self.bootstrapped = matches!(rewound, Iteration::Progressed { .. });
 
                 Ok(Some(rewound))
             }
@@ -226,18 +190,7 @@ impl Step {
         }
     }
 
-    /// Indexes `from..=to`, having asked the detector about it first.
-    ///
-    /// One path for settled and unsettled alike. The width is the only thing
-    /// that differs, and the width is all the loop decides: a wide range means
-    /// one header read for many blocks, so the top is the only header there is
-    /// to anchor on or ask about. Whether that header needs checking is the
-    /// detector's call — it knows where the boundary is, and a settled top it
-    /// waves through without looking.
-    ///
-    /// Reading the top header even for a settled range costs one call per range
-    /// and is what lets `Cursor::last_hash` mean the same thing always, so the
-    /// detector can re-anchor from the cursor alone.
+    /// The top header is read even for a settled range, so `last_hash` can always anchor a resume.
     async fn index_range(
         &mut self,
         from: u64,
@@ -261,20 +214,12 @@ impl Step {
         self.save_cursor(header.number, header.hash).await?;
 
         self.instruments.indexed(to - from + 1);
-        // `debug` and not `info`: at one iteration every few seconds a healthy
-        // indexer would otherwise be the whole log stream. Before it existed an
-        // empty range was completely silent.
         debug!(from, to, blocks = to - from + 1, "range indexed");
 
         Ok(Iteration::Progressed { cursor_at: to })
     }
 
-    /// Asks the detector whether this header extends what was folded, and
-    /// answers `None` when it does.
-    ///
-    /// **It does not only report.** A fork is unwound here, which dispatches the
-    /// discard and moves the cursor, so the `Progressed` that comes back
-    /// describes the rewind rather than the range the caller was about to index.
+    /// `None` when the header extends what was folded; a fork is unwound here.
     async fn verify_ancestry(
         &mut self,
         header: &BlockHeader,
@@ -295,37 +240,32 @@ impl Step {
                 first_invalid_block,
                 last_invalid_block,
                 last_valid_hash,
-            } => {
-                self.instruments.reorg(
+            } => self
+                .unwind(
                     first_invalid_block,
                     last_invalid_block,
+                    last_valid_hash,
                     Phase::Inspect,
                     Some(header.number),
-                );
-
-                self.apply_reorg(first_invalid_block, last_invalid_block, last_valid_hash)
-                    .await
-                    .map(Some)
-            }
+                )
+                .await
+                .map(Some),
         }
     }
 
-    /// Unwinds a fork. **Nothing is mutated until every processor has accepted
-    /// the discard**, so a refusal there leaves the step entirely unapplied and
-    /// retried.
-    ///
-    /// **The rewind is last, after the cursor is durable**, because it discards
-    /// the headers that are the evidence of the abandoned branch. Rewinding
-    /// first and then failing the save would leave the detector holding less
-    /// than it started with, having committed to nothing; this way it holds
-    /// more — stale headers above an already-correct cursor — which a bootstrap
-    /// resolves by re-reporting the range for an idempotent second discard.
-    async fn apply_reorg(
+    /// Processors, then the cursor, then the rewind: the rewind discards the
+    /// headers a restart needs to find this fork again if the save is refused.
+    async fn unwind(
         &mut self,
         first_invalid_block: u64,
         last_invalid_block: u64,
         last_valid_hash: B256,
+        phase: Phase,
+        at_block: Option<u64>,
     ) -> Result<Iteration, String> {
+        self.instruments
+            .reorg(first_invalid_block, last_invalid_block, phase, at_block);
+
         if let Some(refusal) = self
             .dispatch(Operation::Reorg, first_invalid_block, last_invalid_block)
             .await
@@ -334,11 +274,9 @@ impl Step {
         }
 
         let last_valid_block = first_invalid_block.checked_sub(1);
-
         match last_valid_block {
             Some(block) => self.save_cursor(block, last_valid_hash).await?,
-            // Genesis itself was replaced. There is no cursor below it, so the
-            // store is left alone and the window is cleared.
+            // Genesis itself was replaced, so there is no cursor below it to save.
             None => self.cursor = None,
         }
 
@@ -352,14 +290,6 @@ impl Step {
         })
     }
 
-    /// Hands the range over and translates the answer. `None` when every
-    /// processor accepted it.
-    ///
-    /// Only the translation lives here: the retry policy is what makes the loop
-    /// different from a one-shot backfill, and it is one line of it — a retry
-    /// backs the loop off and is re-attempted forever, because an outage should
-    /// recover by itself and a wedged processor is surfaced by the stall signal
-    /// rather than by giving up.
     async fn dispatch(&mut self, operation: Operation, from: u64, to: u64) -> Option<Iteration> {
         let result = dispatch::to_processors(
             &self.processors,
@@ -388,8 +318,7 @@ impl Step {
         }
     }
 
-    /// Halved, floored at 1, and never restored: a defect kept on purpose, see
-    /// `docs/rust-migration.md`.
+    /// Never restored: a defect kept on purpose, see `docs/rust-migration.md`.
     fn narrow_range(&mut self, processor: &str) {
         self.effective_max_range = (self.effective_max_range / 2).max(1);
         self.instruments.narrowed_to(self.effective_max_range);
@@ -400,10 +329,7 @@ impl Step {
         );
     }
 
-    /// The single durable commit point, written last. A crash before it replays
-    /// the range; a crash after it does not. The in-memory copy is updated only
-    /// once the store accepted the write, so a refusing store leaves the loop
-    /// pointing at the last position actually persisted.
+    /// The commit point, written last; the in-memory copy only follows an accepted save.
     async fn save_cursor(&mut self, last_block: u64, last_hash: B256) -> Result<(), String> {
         let cursor = Cursor {
             chain_id: self.options.chain_id,
