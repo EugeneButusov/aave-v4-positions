@@ -1,9 +1,8 @@
 //! The real detector against a chain whose ancestry is derived rather than scripted.
 
-use super::in_memory::{InMemoryBlockHeaderStore, RecordingBlockHeaderStore};
 use crate::chain::ChainCall;
 use crate::fixtures::{CHAIN_ID, hash_of};
-use crate::reorg::harness::{HEAD, cursor_at, forking, harness, over, unprimed};
+use crate::reorg::harness::{HEAD, at_head, cursor_at, forking, harness, unprimed};
 use crate::reorg::{BlockHeaderStore as _, Error, ReorgDetector, Verdict};
 
 const DEPTH: u64 = 10;
@@ -215,7 +214,7 @@ mod inspect {
 
     #[tokio::test]
     async fn refuses_a_swap_at_genesis_with_nothing_below_it() {
-        let fixture = over(1, 0, InMemoryBlockHeaderStore::new()).await;
+        let fixture = at_head(1, 0).await;
         fixture.commit([0]).await;
 
         let replaced = crate::fixtures::header(0, b'b');
@@ -475,9 +474,8 @@ mod the_window_refuses_a_reorg_transition {
 
     #[tokio::test]
     async fn a_refused_retention_surfaces_rather_than_being_swallowed() {
-        let window = RecordingBlockHeaderStore::new();
-        let fixture = over(DEPTH, HEAD, window.clone()).await;
-        window.refuse_nth_retention(1);
+        let fixture = harness(DEPTH).await;
+        fixture.window.refuse_nth_retention(1);
 
         let refusal = fixture
             .detector
@@ -486,15 +484,18 @@ mod the_window_refuses_a_reorg_transition {
             .expect_err("header retention was refused");
 
         assert!(matches!(refusal, Error::RetentionRefused), "{refusal:?}");
-        assert!(window.retained().is_empty(), "it retained a header anyway");
+        assert!(
+            fixture.retained().await.is_empty(),
+            "it retained a header anyway"
+        );
     }
 
     #[tokio::test]
     async fn a_refused_rewind_leaves_the_reorg_owed() {
-        let window = RecordingBlockHeaderStore::new();
-        let fixture = over(DEPTH, HEAD, window.clone()).await;
+        let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 1]).await;
-        window.refuse_nth_rewind(1);
+        fixture.window.refuse_nth_rewind(1);
+        let before = fixture.retained().await;
 
         let refusal = fixture
             .detector
@@ -503,7 +504,7 @@ mod the_window_refuses_a_reorg_transition {
             .expect_err("the rewind was refused");
 
         assert!(matches!(refusal, Error::RewindRefused), "{refusal:?}");
-        assert!(window.rewound_to().is_empty());
+        assert_eq!(fixture.retained().await, before);
     }
 }
 

@@ -10,25 +10,22 @@ use crate::reorg::{BlockHeaderStore, HashChainReorgDetector, ReorgDetector};
 
 pub(crate) const HEAD: u64 = 1_000;
 
-pub(crate) struct Harness<W = InMemoryBlockHeaderStore> {
+pub(crate) struct Harness {
     pub(crate) detector: HashChainReorgDetector,
 
     pub(crate) chain: Arc<FakeChainClient>,
-    pub(crate) window: W,
+    pub(crate) window: InMemoryBlockHeaderStore,
 }
 
 pub(crate) async fn harness(finality_depth: u64) -> Harness {
-    over(finality_depth, HEAD, InMemoryBlockHeaderStore::new()).await
+    at_head(finality_depth, HEAD).await
 }
 
-pub(crate) async fn over<W>(finality_depth: u64, head: u64, window: W) -> Harness<W>
-where
-    W: BlockHeaderStore + Clone + 'static,
-{
+pub(crate) async fn at_head(finality_depth: u64, head: u64) -> Harness {
     let chain = Arc::new(FakeChainClient::at_head(head));
     let client = Arc::clone(&chain) as Arc<dyn ChainClient>;
 
-    assemble(finality_depth, head, chain, client, window).await
+    assemble(finality_depth, head, chain, client).await
 }
 
 pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
@@ -62,26 +59,16 @@ pub(crate) async fn forking(
         branch,
     )) as Arc<dyn ChainClient>;
 
-    assemble(
-        finality_depth,
-        HEAD,
-        chain,
-        client,
-        InMemoryBlockHeaderStore::new(),
-    )
-    .await
+    assemble(finality_depth, HEAD, chain, client).await
 }
 
-async fn assemble<W>(
+async fn assemble(
     finality_depth: u64,
     head: u64,
     chain: Arc<FakeChainClient>,
     client: Arc<dyn ChainClient>,
-    window: W,
-) -> Harness<W>
-where
-    W: BlockHeaderStore + Clone + 'static,
-{
+) -> Harness {
+    let window = InMemoryBlockHeaderStore::new();
     let detector =
         HashChainReorgDetector::new(CHAIN_ID, finality_depth, client, Box::new(window.clone()));
 
@@ -94,7 +81,7 @@ where
     }
 }
 
-impl<W: BlockHeaderStore> Harness<W> {
+impl Harness {
     /// Sequential because each commit prunes relative to its own height.
     pub(crate) async fn commit(&self, blocks: impl IntoIterator<Item = u64>) {
         for block in blocks {
