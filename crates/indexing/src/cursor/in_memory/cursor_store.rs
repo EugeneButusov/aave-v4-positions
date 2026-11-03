@@ -1,13 +1,24 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use units::ChainId;
 
 use crate::cursor::{Cursor, CursorStore, Error};
+use crate::fixtures::Trace;
+
+/// Test-only cursor table, which a case can make refuse a chosen save.
+#[derive(Clone, Default)]
+pub(crate) struct InMemoryCursorStore {
+    state: Arc<Mutex<State>>,
+}
 
 #[derive(Default)]
-pub(crate) struct InMemoryCursorStore {
-    chains: Mutex<HashMap<ChainId, Cursor>>,
+struct State {
+    chains: HashMap<ChainId, Cursor>,
+    saved: Vec<Cursor>,
+    saves: usize,
+    refuse_save: Option<usize>,
+    trace: Option<Trace>,
 }
 
 impl InMemoryCursorStore {
@@ -15,19 +26,51 @@ impl InMemoryCursorStore {
         Self::default()
     }
 
-    fn chains(&self) -> std::sync::MutexGuard<'_, HashMap<ChainId, Cursor>> {
-        self.chains.lock().unwrap_or_else(|held| held.into_inner())
+    pub(crate) fn traced(trace: Trace) -> Self {
+        let store = Self::new();
+        store.state().trace = Some(trace);
+
+        store
+    }
+
+    pub(crate) fn holding(self, cursor: Cursor) -> Self {
+        self.state().chains.insert(cursor.chain_id, cursor);
+
+        self
+    }
+
+    pub(crate) fn refuse_nth_save(&self, nth: usize) {
+        self.state().refuse_save = Some(nth);
+    }
+
+    pub(crate) fn saved(&self) -> Vec<Cursor> {
+        self.state().saved.clone()
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|held| held.into_inner())
     }
 }
 
 #[async_trait::async_trait]
 impl CursorStore for InMemoryCursorStore {
     async fn load(&self, chain_id: ChainId) -> Result<Option<Cursor>, Error> {
-        Ok(self.chains().get(&chain_id).copied())
+        Ok(self.state().chains.get(&chain_id).copied())
     }
 
     async fn save(&self, cursor: &Cursor) -> Result<(), Error> {
-        self.chains().insert(cursor.chain_id, *cursor);
+        let mut state = self.state();
+        if let Some(trace) = &state.trace {
+            trace.note(format!("cursor.save({})", cursor.last_block));
+        }
+
+        state.saves += 1;
+        if state.refuse_save == Some(state.saves) {
+            return Err(Error::SaveRefused);
+        }
+
+        state.chains.insert(cursor.chain_id, *cursor);
+        state.saved.push(*cursor);
 
         Ok(())
     }

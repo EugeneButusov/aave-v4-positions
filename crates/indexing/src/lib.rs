@@ -6,6 +6,7 @@
 
 mod chain;
 mod cursor;
+mod engine;
 #[cfg(test)]
 mod fixtures;
 mod processors;
@@ -15,6 +16,10 @@ pub use chain::{BlockHeader, ChainClient, Error as ChainError, LogFilter, LogRea
 pub use cursor::{
     Cursor, CursorStore, Error, PostgresCursorStore, PostgresSyncStatusStore, SyncStatus,
     SyncStatusStore,
+};
+pub use engine::{
+    Indexer, IndexerSnapshot, IndexerState, IndexerStatus, Instruments, Iteration, Options,
+    Pipeline, SHUTDOWN_DRAIN,
 };
 pub use processors::{BlockProcessor, Failure, Outcome};
 pub use reorg::{

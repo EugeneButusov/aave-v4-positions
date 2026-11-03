@@ -56,6 +56,13 @@ impl From<ChainId> for u64 {
     }
 }
 
+impl From<ChainId> for i64 {
+    fn from(id: ChainId) -> Self {
+        // Lossless: `ChainId::MAX` is below `i64::MAX`.
+        id.0 as Self
+    }
+}
+
 impl TryFrom<u64> for ChainId {
     type Error = NotAChainId;
 
@@ -99,6 +106,11 @@ mod tests {
         let palm = ChainId::new(11_297_108_109).expect("a deployed chain id");
 
         assert_eq!(u64::from(palm), 11_297_108_109);
+    }
+
+    #[test]
+    fn widens_to_a_signed_attribute_without_wrapping() {
+        assert_eq!(i64::from(ChainId::MAX), 9_007_199_254_740_991);
     }
 
     #[test]

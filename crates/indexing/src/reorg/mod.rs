@@ -15,6 +15,8 @@ mod harness;
 #[cfg(test)]
 pub(crate) mod in_memory;
 #[cfg(test)]
+pub(crate) mod scripted;
+#[cfg(test)]
 mod tests;
 
 pub use block_header_store::BlockHeaderStore;
