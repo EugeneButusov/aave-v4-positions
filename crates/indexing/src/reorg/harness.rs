@@ -6,9 +6,10 @@ use super::in_memory::InMemoryBlockHeaderStore;
 use crate::chain::{BlockHeader, ChainClient, FakeChainClient, ForkingChainClient};
 use crate::cursor::Cursor;
 use crate::fixtures::{CHAIN_ID, hash_of};
-use crate::reorg::{BlockHeaderStore, HashChainReorgDetector, ReorgDetector};
+use crate::reorg::{BlockHeaderStore, HashChainReorgDetector, ReorgDetector, Verdict};
 
 pub(crate) const HEAD: u64 = 1_000;
+pub(crate) const DEPTH: u64 = 10;
 
 pub(crate) struct Harness {
     pub(crate) detector: HashChainReorgDetector,
@@ -106,5 +107,23 @@ pub(crate) fn cursor_at(last_block: u64, branch: u8) -> Cursor {
         chain_id: CHAIN_ID,
         last_block,
         last_hash: hash_of(branch, last_block),
+    }
+}
+
+pub(crate) fn reorg(verdict: &Verdict) -> (u64, u64) {
+    match verdict {
+        Verdict::Reorg {
+            first_invalid_block,
+            last_invalid_block,
+            ..
+        } => (*first_invalid_block, *last_invalid_block),
+        other => panic!("expected a reorg: {other:?}"),
+    }
+}
+
+pub(crate) fn unrecoverable(verdict: &Verdict) -> String {
+    match verdict {
+        Verdict::Unrecoverable { reason } => reason.clone(),
+        other => panic!("expected an unrecoverable verdict: {other:?}"),
     }
 }
