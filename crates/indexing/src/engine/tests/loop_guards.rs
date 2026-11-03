@@ -65,17 +65,19 @@ async fn a_backwards_head_is_clamped_to_the_high_mark() {
 
 #[tokio::test]
 async fn stops_on_a_chain_id_mismatch() {
-    let mut fixture = plain();
-    fixture.chain_client.set_chain_id(OTHER_CHAIN);
+    let mut fixture = fixture(Setup {
+        options: Options {
+            chain_id: OTHER_CHAIN,
+            ..options()
+        },
+        ..Setup::default()
+    });
 
     let result = fixture.indexer.run_once().await;
 
     assert_eq!(
         reason(&result),
-        format!(
-            "chain id mismatch: configured {CHAIN_ID}, provider reports {}",
-            OTHER_CHAIN
-        )
+        format!("chain id mismatch: configured {OTHER_CHAIN}, provider reports {CHAIN_ID}")
     );
 }
 

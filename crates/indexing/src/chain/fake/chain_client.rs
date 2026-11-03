@@ -51,10 +51,6 @@ impl FakeChainClient {
         self.state().head = head;
     }
 
-    pub(crate) fn set_chain_id(&self, chain_id: ChainId) {
-        self.state().chain_id = chain_id;
-    }
-
     pub(crate) fn fork_above(&self, above: u64, branch: u8) {
         self.state().forks.push((above, branch));
     }
