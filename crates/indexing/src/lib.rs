@@ -7,8 +7,6 @@
 mod chain;
 mod cursor;
 #[cfg(test)]
-mod doubles;
-#[cfg(test)]
 mod fixtures;
 mod processors;
 mod reorg;
@@ -20,5 +18,6 @@ pub use cursor::{
 };
 pub use processors::{BlockProcessor, Failure, Outcome};
 pub use reorg::{
-    BlockHeaderStore, Error as ReorgError, PostgresBlockHeaderStore, ReorgDetector, Verdict,
+    BlockHeaderStore, Error as ReorgError, HashChainReorgDetector, PostgresBlockHeaderStore,
+    ReorgDetector, Verdict,
 };

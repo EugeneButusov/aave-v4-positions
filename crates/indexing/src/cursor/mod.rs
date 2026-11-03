@@ -8,6 +8,8 @@ mod sync_status_store;
 
 #[cfg(test)]
 pub(crate) mod conformance;
+#[cfg(test)]
+mod in_memory;
 
 pub use cursor_store::{Cursor, CursorStore};
 pub use error::Error;

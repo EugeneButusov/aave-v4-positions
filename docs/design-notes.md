@@ -678,6 +678,10 @@ fork turns out to be deep. The window is `FINALITY_DEPTH + 1` headers deep, and 
 not slack: the deepest fork the loop can hand over begins at `safeHead + 1`, so placing it means
 matching its parent at exactly `safeHead`.
 
+The Rust detector says two of those numbers differently and nothing else: `safeHead`'s `-1` and
+`rewindTo(-1)` are each an `Option`, because a negative height in an unsigned world is an underflow
+waiting for the first chain shorter than the finality depth.
+
 **The window is one contiguous run, enforced rather than assumed.** A walk over a set with holes in
 it is not a parent-hash chain; it is spot checks joined by an assumption. The assumption does hold —
 a chain is ancestor-closed, so a header that still matches proves its ancestors do — but leaning on
@@ -791,11 +795,13 @@ loop's own failure paths are exercised by tests through scripted fakes rather th
 service.
 
 **Where the Rust port stands.** Everything above that does not touch the chain is ported and
-durable: the cursor, the window, and both of their adapters. `ChainClient`, `LogReader` and
-`BlockProcessor` are ports with no adapter behind them yet — an adapter for one links a provider and
-an HTTP transport, which `crates/indexing` may not, so they land outside it. The loop, the detector
-and the instruments are in flight. [`docs/rust-migration.md`](rust-migration.md) carries the
-sequence.
+durable: the cursor, the window, both of their adapters, and the hash-chain detector — the window
+walk, the contiguity restart, the predecessor pull and `bootstrap` vetting the window's top, all
+driven through a chain whose ancestry is derived rather than scripted, so every verdict in those
+cases is one it reached from headers it read. `ChainClient`, `LogReader` and `BlockProcessor` are
+ports with no adapter behind them yet — an adapter for one links a provider and an HTTP transport,
+which `crates/indexing` may not, so they land outside it. The loop and the instruments are what is
+left of the spine. [`docs/rust-migration.md`](rust-migration.md) carries the sequence.
 
 Three limits are worth stating plainly:
 

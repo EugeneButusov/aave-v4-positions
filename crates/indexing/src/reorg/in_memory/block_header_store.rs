@@ -1,20 +1,25 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use units::ChainId;
 
 use crate::chain::BlockHeader;
 use crate::reorg::{BlockHeaderStore, Error};
 
-/// The retention window, in memory. **A test double and nothing else**, for the
-/// reason [`BlockHeaderStore`] gives.
-#[derive(Default)]
+/// Test-only in-memory retention window, which a case can make refuse a chosen write.
+#[derive(Clone, Default)]
 pub(crate) struct InMemoryBlockHeaderStore {
-    /// **A sorted list per chain, not a map keyed by height.** Re-inserting a
-    /// key keeps its original position, so a block re-committed on another
-    /// branch would sit in the wrong place and the ancestor walk would read one
-    /// branch as a continuation of the other.
-    chains: Mutex<HashMap<ChainId, Vec<BlockHeader>>>,
+    state: Arc<Mutex<State>>,
+}
+
+#[derive(Default)]
+struct State {
+    chains: HashMap<ChainId, Vec<BlockHeader>>,
+    retentions: usize,
+    rewinds: usize,
+    refuse_retention: Option<usize>,
+    refuse_rewind: Option<usize>,
 }
 
 impl InMemoryBlockHeaderStore {
@@ -22,17 +27,28 @@ impl InMemoryBlockHeaderStore {
         Self::default()
     }
 
-    /// Poisoning is ignored: a case that panicked holding this lock has
-    /// already failed.
-    fn chains(&self) -> std::sync::MutexGuard<'_, HashMap<ChainId, Vec<BlockHeader>>> {
-        self.chains.lock().unwrap_or_else(|held| held.into_inner())
+    pub(crate) fn refuse_nth_retention(&self, nth: usize) {
+        self.state().refuse_retention = Some(nth);
+    }
+
+    pub(crate) fn refuse_nth_rewind(&self, nth: usize) {
+        self.state().refuse_rewind = Some(nth);
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|held| held.into_inner())
     }
 }
 
 #[async_trait::async_trait]
 impl BlockHeaderStore for InMemoryBlockHeaderStore {
     async fn load(&self, chain_id: ChainId) -> Result<Vec<BlockHeader>, Error> {
-        Ok(self.chains().get(&chain_id).cloned().unwrap_or_default())
+        Ok(self
+            .state()
+            .chains
+            .get(&chain_id)
+            .cloned()
+            .unwrap_or_default())
     }
 
     async fn append(
@@ -41,12 +57,17 @@ impl BlockHeaderStore for InMemoryBlockHeaderStore {
         header: &BlockHeader,
         retain_from: u64,
     ) -> Result<(), Error> {
-        let mut chains = self.chains();
-        let window = chains.entry(chain_id).or_default();
+        let mut state = self.state();
+        state.retentions += 1;
+        if state.refuse_retention == Some(state.retentions) {
+            return Err(Error::RetentionRefused);
+        }
 
+        let window = state.chains.entry(chain_id).or_default();
         window.retain(|held| held.number != header.number && held.number >= retain_from);
         window.push(*header);
-        window.sort_unstable_by_key(|held| held.number);
+        // The port promises no order; newest-first makes every case exercise the detector's sort.
+        window.sort_unstable_by_key(|held| Reverse(held.number));
 
         Ok(())
     }
@@ -56,9 +77,13 @@ impl BlockHeaderStore for InMemoryBlockHeaderStore {
         chain_id: ChainId,
         last_valid_block: Option<u64>,
     ) -> Result<(), Error> {
-        let mut chains = self.chains();
-        let window = chains.entry(chain_id).or_default();
+        let mut state = self.state();
+        state.rewinds += 1;
+        if state.refuse_rewind == Some(state.rewinds) {
+            return Err(Error::RewindRefused);
+        }
 
+        let window = state.chains.entry(chain_id).or_default();
         match last_valid_block {
             Some(block) => window.retain(|held| held.number <= block),
             None => window.clear(),
@@ -70,7 +95,7 @@ impl BlockHeaderStore for InMemoryBlockHeaderStore {
 
 #[cfg(test)]
 mod tests {
-    //! The port's specification, against the double that stands in for it.
+    //! The port contract against its in-memory implementation.
 
     use super::InMemoryBlockHeaderStore;
     use crate::reorg::conformance::{Harness, block_header_store_conformance};
@@ -96,11 +121,8 @@ mod tests {
         use crate::fixtures::{CHAIN_ID, header};
         use crate::reorg::BlockHeaderStore;
 
-        /// An implementation detail, pinned because the detector's own cases
-        /// read this double's window positionally — and `load` promises no
-        /// order, which is why it is not in the suite.
         #[tokio::test]
-        async fn hands_back_a_window_in_ascending_order() {
+        async fn hands_back_the_window_newest_first() {
             let store = InMemoryBlockHeaderStore::new();
 
             for block in [503_u64, 500, 502, 501] {
@@ -118,7 +140,7 @@ mod tests {
                 .map(|header| header.number)
                 .collect();
 
-            assert_eq!(numbers, vec![500, 501, 502, 503]);
+            assert_eq!(numbers, vec![503, 502, 501, 500]);
         }
     }
 }

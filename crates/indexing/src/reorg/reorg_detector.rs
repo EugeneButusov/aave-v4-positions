@@ -28,8 +28,9 @@ pub enum Verdict {
 /// The chain's shape, behind one port.
 ///
 /// The loop computes no finality boundary of its own: it asks
-/// [`safe_head`](Self::safe_head) and uses the answer only to decide how wide
-/// to dispatch.
+/// [`safe_head`](Self::safe_head), decides how wide to dispatch from the answer,
+/// and hands the same answer to [`inspect`](Self::inspect) and
+/// [`commit`](Self::commit).
 #[async_trait]
 pub trait ReorgDetector: Send + Sync {
     /// Vet the resume point against the chain, once, before the first
@@ -48,13 +49,10 @@ pub trait ReorgDetector: Send + Sync {
 
     /// The highest block this detector calls settled. `None` means nothing is,
     /// which is the answer on a chain shorter than the depth.
-    ///
-    /// # Errors
-    ///
-    /// [`Error`] when answering needs a read that fails.
-    async fn safe_head(&self, observed_head: u64) -> Result<Option<u64>, Error>;
+    fn safe_head(&self, observed_head: u64) -> Option<u64>;
 
-    /// Vet one header against what is retained below it.
+    /// Vet one header against what is retained below it. `safe_head` is what
+    /// [`safe_head`](Self::safe_head) answered for this iteration's head.
     ///
     /// `header.number` is at most one above the highest committed and **may
     /// equal it**, which a rejected cursor save makes ordinary: an
@@ -63,15 +61,16 @@ pub trait ReorgDetector: Send + Sync {
     /// # Errors
     ///
     /// [`Error`] when the window or the chain cannot be read.
-    async fn inspect(&self, header: &BlockHeader) -> Result<Verdict, Error>;
+    async fn inspect(&self, header: &BlockHeader, safe_head: Option<u64>)
+    -> Result<Verdict, Error>;
 
     /// Called only after every processor accepted the range, and **always
-    /// before the cursor is saved**.
+    /// before the cursor is saved**. `safe_head` as for [`inspect`](Self::inspect).
     ///
     /// # Errors
     ///
     /// [`Error`] when the window cannot be written.
-    async fn commit(&self, header: &BlockHeader) -> Result<(), Error>;
+    async fn commit(&self, header: &BlockHeader, safe_head: Option<u64>) -> Result<(), Error>;
 
     /// Discard the retained headers above `last_valid_block`; `None` clears the
     /// window.

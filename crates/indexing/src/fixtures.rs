@@ -31,7 +31,17 @@ pub(crate) fn header(block: u64, branch: u8) -> BlockHeader {
     BlockHeader {
         number: block,
         hash: hash_of(branch, block),
-        parent_hash: hash_of(branch, block.saturating_sub(1)),
-        timestamp: 1_700_000_000 + block * 12,
+        parent_hash: parent_of(block, branch),
+        timestamp: timestamp_of(block),
     }
+}
+
+pub(crate) fn parent_of(block: u64, branch: u8) -> B256 {
+    block
+        .checked_sub(1)
+        .map_or(B256::ZERO, |below| hash_of(branch, below))
+}
+
+pub(crate) fn timestamp_of(block: u64) -> u64 {
+    1_700_000_000 + block * 12
 }
