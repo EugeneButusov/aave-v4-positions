@@ -10,6 +10,7 @@ use crate::fixtures::Trace;
 #[derive(Clone, Default)]
 pub(crate) struct InMemoryCursorStore {
     state: Arc<Mutex<State>>,
+    trace: Option<Trace>,
 }
 
 #[derive(Default)]
@@ -18,7 +19,6 @@ struct State {
     saved: Vec<Cursor>,
     saves: usize,
     refuse_save: Option<usize>,
-    trace: Option<Trace>,
 }
 
 impl InMemoryCursorStore {
@@ -27,10 +27,10 @@ impl InMemoryCursorStore {
     }
 
     pub(crate) fn traced(trace: Trace) -> Self {
-        let store = Self::new();
-        store.state().trace = Some(trace);
-
-        store
+        Self {
+            trace: Some(trace),
+            ..Self::default()
+        }
     }
 
     pub(crate) fn holding(self, cursor: Cursor) -> Self {
@@ -59,11 +59,11 @@ impl CursorStore for InMemoryCursorStore {
     }
 
     async fn save(&self, cursor: &Cursor) -> Result<(), Error> {
-        let mut state = self.state();
-        if let Some(trace) = &state.trace {
+        if let Some(trace) = &self.trace {
             trace.note(format!("cursor.save({})", cursor.last_block));
         }
 
+        let mut state = self.state();
         state.saves += 1;
         if state.refuse_save == Some(state.saves) {
             return Err(Error::SaveRefused);
