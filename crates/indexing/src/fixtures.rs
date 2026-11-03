@@ -48,8 +48,8 @@ pub(crate) fn timestamp_of(block: u64) -> u64 {
     1_700_000_000 + block * 12
 }
 
-/// One order-of-operations log shared by several doubles, so a case reads the
-/// sequence across ports rather than inferring it.
+/// One order-of-operations log shared by several test implementations, so a case
+/// reads the sequence across ports rather than inferring it.
 #[derive(Clone, Default)]
 pub(crate) struct Trace(Arc<Mutex<Vec<String>>>);
 

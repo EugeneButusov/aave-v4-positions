@@ -81,9 +81,9 @@ mod tests {
     use super::InMemoryCursorStore;
     use crate::cursor::conformance::{CursorHarness, cursor_store_conformance};
 
-    struct Double(InMemoryCursorStore);
+    struct InMemory(InMemoryCursorStore);
 
-    impl CursorHarness for Double {
+    impl CursorHarness for InMemory {
         type Store = InMemoryCursorStore;
 
         async fn fresh(_case: &str) -> Self {
@@ -95,5 +95,5 @@ mod tests {
         }
     }
 
-    cursor_store_conformance!(Double);
+    cursor_store_conformance!(InMemory);
 }

@@ -1058,7 +1058,7 @@ fact rather than a judgement:
 | --- | --- |
 | `opentelemetry` 0.31 has **no batch observable callback** — one per instrument and nothing spanning several | the "one `snapshot` per collection" property cannot be had by sharing a callback. The snapshot is memoised for a millisecond instead: a collection runs back to back in microseconds, two scrapes are seconds apart, and the window sits three orders of magnitude clear of both |
 | a span event takes its name from the event's **message** when there is one | a reorg is two emissions — the event named `reorg`, and the log line carrying the sentence. One emission cannot be both |
-| `async fn` in a trait is not dyn compatible, so a port is `#[async_trait]`, so a test double behind one cannot also be read by the case that supplied it | each double is `Clone` over shared state, so a case keeps one handle and hands the loop another — no port widened to `Arc`, and no blanket impl for a test's benefit |
+| `async fn` in a trait is not dyn compatible, so a port is `#[async_trait]`, so a test implementation behind one cannot also be read by the case that supplied it | each test implementation is `Clone` over shared state, so a case keeps one handle and hands the loop another — no port widened to `Arc`, and no blanket impl for a test's benefit |
 
 The backoff has **no jitter**, which is the first row of the preserved-defect table below and the one
 with a real operational argument against it. It stays, because the gate that will prove this port

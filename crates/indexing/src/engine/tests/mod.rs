@@ -1,4 +1,4 @@
-//! The loop, driven one iteration at a time through scripted doubles.
+//! The loop, driven one iteration at a time through scripted ports.
 
 mod dispatch_shape;
 mod loop_guards;

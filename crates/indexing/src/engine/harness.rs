@@ -1,4 +1,4 @@
-//! The loop wired to scripted doubles, driven one iteration at a time.
+//! The loop wired to scripted ports, driven one iteration at a time.
 
 use std::sync::Arc;
 
