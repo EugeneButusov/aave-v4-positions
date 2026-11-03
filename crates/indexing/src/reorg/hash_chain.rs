@@ -16,8 +16,8 @@ pub struct HashChainReorgDetector {
     chain_id: ChainId,
     finality_depth: u64,
 
-    chain: Arc<dyn ChainClient>,
-    window: Box<dyn BlockHeaderStore>,
+    chain_client: Arc<dyn ChainClient>,
+    block_header_store: Box<dyn BlockHeaderStore>,
 
     observed_head: Mutex<Option<u64>>,
 }
@@ -27,14 +27,14 @@ impl HashChainReorgDetector {
     pub fn new(
         chain_id: ChainId,
         finality_depth: u64,
-        chain: Arc<dyn ChainClient>,
-        window: Box<dyn BlockHeaderStore>,
+        chain_client: Arc<dyn ChainClient>,
+        block_header_store: Box<dyn BlockHeaderStore>,
     ) -> Self {
         Self {
             chain_id,
             finality_depth,
-            chain,
-            window,
+            chain_client,
+            block_header_store,
             observed_head: Mutex::new(None),
         }
     }
@@ -44,7 +44,9 @@ impl HashChainReorgDetector {
 impl ReorgDetector for HashChainReorgDetector {
     async fn bootstrap(&self, cursor: Option<&Cursor>) -> Result<Verdict, Error> {
         let Some(cursor) = cursor else {
-            self.window.truncate(self.chain_id, None).await?;
+            self.block_header_store
+                .truncate(self.chain_id, None)
+                .await?;
 
             return Ok(Verdict::Continuous);
         };
@@ -56,7 +58,7 @@ impl ReorgDetector for HashChainReorgDetector {
                 (top.number, top.hash)
             });
 
-        let canonical = self.chain.block_header(ours.0).await?;
+        let canonical = self.chain_client.block_header(ours.0).await?;
 
         if canonical.hash != ours.1 {
             return self
@@ -137,11 +139,15 @@ impl ReorgDetector for HashChainReorgDetector {
         let continues = continues_the_run(&retained, header);
 
         if !continues {
-            self.window.truncate(self.chain_id, None).await?;
+            self.block_header_store
+                .truncate(self.chain_id, None)
+                .await?;
         }
 
         let floor = header.number.saturating_sub(self.finality_depth);
-        self.window.append(self.chain_id, header, floor).await?;
+        self.block_header_store
+            .append(self.chain_id, header, floor)
+            .await?;
 
         let bottom = match retained.first() {
             Some(oldest) if continues => oldest.number.max(floor),
@@ -156,13 +162,15 @@ impl ReorgDetector for HashChainReorgDetector {
     }
 
     async fn rewind_to(&self, last_valid_block: Option<u64>) -> Result<(), Error> {
-        self.window.truncate(self.chain_id, last_valid_block).await
+        self.block_header_store
+            .truncate(self.chain_id, last_valid_block)
+            .await
     }
 }
 
 impl HashChainReorgDetector {
     async fn retained_window(&self) -> Result<Vec<BlockHeader>, Error> {
-        let mut window = self.window.load(self.chain_id).await?;
+        let mut window = self.block_header_store.load(self.chain_id).await?;
         window.sort_unstable_by_key(|held| held.number);
 
         Ok(window)
@@ -199,7 +207,7 @@ impl HashChainReorgDetector {
         };
 
         for candidate in retained.iter().rev().filter(|held| held.number <= from) {
-            let canonical = self.chain.block_header(candidate.number).await?;
+            let canonical = self.chain_client.block_header(candidate.number).await?;
 
             if canonical.hash == candidate.hash {
                 return Ok(Some(*candidate));
@@ -226,7 +234,7 @@ impl HashChainReorgDetector {
     async fn current_safe_head(&self) -> Result<Option<u64>, Error> {
         let head = match self.remembered_head() {
             Some(head) => head,
-            None => self.chain.head_block_number().await?,
+            None => self.chain_client.head_block_number().await?,
         };
 
         self.safe_head(head).await
@@ -259,13 +267,15 @@ impl HashChainReorgDetector {
         child: &BlockHeader,
         floor: u64,
     ) -> Result<Option<BlockHeader>, Error> {
-        let parent = self.chain.block_header(child.number - 1).await?;
+        let parent = self.chain_client.block_header(child.number - 1).await?;
 
         if parent.hash != child.parent_hash {
             return Ok(None);
         }
 
-        self.window.append(self.chain_id, &parent, floor).await?;
+        self.block_header_store
+            .append(self.chain_id, &parent, floor)
+            .await?;
 
         Ok(Some(parent))
     }

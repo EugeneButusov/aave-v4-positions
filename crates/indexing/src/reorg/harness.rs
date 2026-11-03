@@ -1,4 +1,4 @@
-//! Test fixtures combining a chain, a window, and the real detector.
+//! Test fixtures combining a chain_client detector_client, a block header store, and the real detector.
 
 use std::sync::Arc;
 
@@ -13,8 +13,8 @@ pub(crate) const HEAD: u64 = 1_000;
 pub(crate) struct Harness {
     pub(crate) detector: HashChainReorgDetector,
 
-    pub(crate) chain: Arc<FakeChainClient>,
-    pub(crate) window: InMemoryBlockHeaderStore,
+    pub(crate) chain_client: Arc<FakeChainClient>,
+    pub(crate) block_header_store: InMemoryBlockHeaderStore,
 }
 
 pub(crate) async fn harness(finality_depth: u64) -> Harness {
@@ -22,26 +22,26 @@ pub(crate) async fn harness(finality_depth: u64) -> Harness {
 }
 
 pub(crate) async fn at_head(finality_depth: u64, head: u64) -> Harness {
-    let chain = Arc::new(FakeChainClient::at_head(head));
-    let client = Arc::clone(&chain) as Arc<dyn ChainClient>;
+    let chain_client = Arc::new(FakeChainClient::at_head(head));
+    let detector_client = Arc::clone(&chain_client) as Arc<dyn ChainClient>;
 
-    assemble(finality_depth, head, chain, client).await
+    assemble(finality_depth, head, chain_client, detector_client).await
 }
 
 pub(crate) fn unprimed(finality_depth: u64, head: u64) -> Harness {
-    let chain = Arc::new(FakeChainClient::at_head(head));
-    let window = InMemoryBlockHeaderStore::new();
+    let chain_client = Arc::new(FakeChainClient::at_head(head));
+    let block_header_store = InMemoryBlockHeaderStore::new();
     let detector = HashChainReorgDetector::new(
         CHAIN_ID,
         finality_depth,
-        Arc::clone(&chain) as Arc<dyn ChainClient>,
-        Box::new(window.clone()),
+        Arc::clone(&chain_client) as Arc<dyn ChainClient>,
+        Box::new(block_header_store.clone()),
     );
 
     Harness {
         detector,
-        chain,
-        window,
+        chain_client,
+        block_header_store,
     }
 }
 
@@ -51,33 +51,37 @@ pub(crate) async fn forking(
     fork_point: u64,
     branch: u8,
 ) -> Harness {
-    let chain = Arc::new(FakeChainClient::at_head(HEAD));
-    let client = Arc::new(ForkingChainClient::new(
-        Arc::clone(&chain),
+    let chain_client = Arc::new(FakeChainClient::at_head(HEAD));
+    let detector_client = Arc::new(ForkingChainClient::new(
+        Arc::clone(&chain_client),
         after_reads,
         fork_point,
         branch,
     )) as Arc<dyn ChainClient>;
 
-    assemble(finality_depth, HEAD, chain, client).await
+    assemble(finality_depth, HEAD, chain_client, detector_client).await
 }
 
 async fn assemble(
     finality_depth: u64,
     head: u64,
-    chain: Arc<FakeChainClient>,
-    client: Arc<dyn ChainClient>,
+    chain_client: Arc<FakeChainClient>,
+    detector_client: Arc<dyn ChainClient>,
 ) -> Harness {
-    let window = InMemoryBlockHeaderStore::new();
-    let detector =
-        HashChainReorgDetector::new(CHAIN_ID, finality_depth, client, Box::new(window.clone()));
+    let block_header_store = InMemoryBlockHeaderStore::new();
+    let detector = HashChainReorgDetector::new(
+        CHAIN_ID,
+        finality_depth,
+        detector_client,
+        Box::new(block_header_store.clone()),
+    );
 
     detector.safe_head(head).await.expect("the boundary");
 
     Harness {
         detector,
-        chain,
-        window,
+        chain_client,
+        block_header_store,
     }
 }
 
@@ -86,7 +90,7 @@ impl Harness {
     pub(crate) async fn commit(&self, blocks: impl IntoIterator<Item = u64>) {
         for block in blocks {
             self.detector
-                .commit(&self.chain.header_at(block))
+                .commit(&self.chain_client.header_at(block))
                 .await
                 .expect("the header should commit");
         }
@@ -94,7 +98,7 @@ impl Harness {
 
     pub(crate) async fn retained(&self) -> Vec<u64> {
         let mut numbers: Vec<u64> = self
-            .window
+            .block_header_store
             .load(CHAIN_ID)
             .await
             .expect("the window should read")
@@ -107,7 +111,7 @@ impl Harness {
     }
 
     pub(crate) fn header(&self, block: u64) -> BlockHeader {
-        self.chain.header_at(block)
+        self.chain_client.header_at(block)
     }
 }
 

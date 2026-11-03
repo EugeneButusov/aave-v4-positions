@@ -80,20 +80,24 @@ mod inspect {
     async fn waves_a_settled_block_through_without_reading_the_window() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 1]).await;
-        let before = fixture.chain.header_reads();
+        let before = fixture.chain_client.header_reads();
 
         let settled = crate::fixtures::header(HEAD - DEPTH - 5, b'z');
         let verdict = fixture.detector.inspect(&settled).await.unwrap();
 
         assert_eq!(verdict, Verdict::Continuous);
-        assert_eq!(fixture.chain.header_reads(), before, "it read the chain");
+        assert_eq!(
+            fixture.chain_client.header_reads(),
+            before,
+            "it read the chain"
+        );
     }
 
     #[tokio::test]
     async fn costs_no_header_read_when_the_chain_simply_extends() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 1]).await;
-        let before = fixture.chain.header_reads();
+        let before = fixture.chain_client.header_reads();
 
         fixture
             .detector
@@ -101,14 +105,14 @@ mod inspect {
             .await
             .unwrap();
 
-        assert_eq!(fixture.chain.header_reads(), before);
+        assert_eq!(fixture.chain_client.header_reads(), before);
     }
 
     #[tokio::test]
     async fn names_the_invalid_range_when_a_parent_hash_does_not_match() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 3, HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 3, b'b');
+        fixture.chain_client.fork_above(HEAD - 3, b'b');
 
         let verdict = fixture
             .detector
@@ -123,7 +127,7 @@ mod inspect {
     async fn finds_a_one_block_fork_at_the_tip() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
+        fixture.chain_client.fork_above(HEAD - 2, b'b');
 
         let verdict = fixture
             .detector
@@ -138,7 +142,7 @@ mod inspect {
     async fn catches_a_swap_at_a_height_committed_but_never_cursored() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
+        fixture.chain_client.fork_above(HEAD - 2, b'b');
 
         let replacement = fixture.header(HEAD - 1);
         let verdict = fixture.detector.inspect(&replacement).await.unwrap();
@@ -182,7 +186,7 @@ mod inspect {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
 
-        fixture.chain.fork_above(HEAD - 2 - DEPTH, b'b');
+        fixture.chain_client.fork_above(HEAD - 2 - DEPTH, b'b');
 
         let verdict = fixture
             .detector
@@ -200,8 +204,8 @@ mod inspect {
     async fn surfaces_a_failed_read_rather_than_calling_it_a_fork() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
-        fixture.chain.fail_next(1);
+        fixture.chain_client.fork_above(HEAD - 2, b'b');
+        fixture.chain_client.fail_next(1);
 
         let refusal = fixture
             .detector
@@ -241,16 +245,16 @@ mod bootstrap {
             .unwrap();
 
         assert!(
-            fixture.chain.calls().contains(&ChainCall::Head),
+            fixture.chain_client.calls().contains(&ChainCall::Head),
             "{:?}",
-            fixture.chain.calls()
+            fixture.chain_client.calls()
         );
     }
 
     #[tokio::test]
     async fn surfaces_a_read_that_fails_while_rebuilding_the_run() {
         let fixture = harness(DEPTH).await;
-        fixture.chain.fail_next(2);
+        fixture.chain_client.fail_next(2);
 
         let refusal = fixture
             .detector
@@ -275,7 +279,7 @@ mod bootstrap {
     #[tokio::test]
     async fn a_still_canonical_cursor_settles_it_in_one_read() {
         let fixture = harness(DEPTH).await;
-        let before = fixture.chain.header_reads();
+        let before = fixture.chain_client.header_reads();
 
         let verdict = fixture
             .detector
@@ -285,7 +289,7 @@ mod bootstrap {
 
         assert_eq!(verdict, Verdict::Continuous);
         let depth = usize::try_from(DEPTH).expect("a depth a case chose");
-        assert_eq!(fixture.chain.header_reads() - before, 1 + depth);
+        assert_eq!(fixture.chain_client.header_reads() - before, 1 + depth);
     }
 
     #[tokio::test]
@@ -314,7 +318,7 @@ mod bootstrap {
     async fn vets_the_window_top_rather_than_the_cursor_behind_it() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
+        fixture.chain_client.fork_above(HEAD - 2, b'b');
 
         let verdict = fixture
             .detector
@@ -328,7 +332,7 @@ mod bootstrap {
     #[tokio::test]
     async fn falls_back_to_the_cursor_when_the_window_is_empty() {
         let fixture = harness(DEPTH).await;
-        fixture.chain.fork_above(HEAD - 5, b'b');
+        fixture.chain_client.fork_above(HEAD - 5, b'b');
 
         let verdict = fixture
             .detector
@@ -348,7 +352,7 @@ mod bootstrap {
         fixture
             .commit([HEAD - 4, HEAD - 3, HEAD - 2, HEAD - 1])
             .await;
-        fixture.chain.fork_above(HEAD - 3, b'b');
+        fixture.chain_client.fork_above(HEAD - 3, b'b');
 
         let verdict = fixture
             .detector
@@ -364,7 +368,7 @@ mod bootstrap {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 2, HEAD - 1]).await;
         let before = fixture.retained().await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
+        fixture.chain_client.fork_above(HEAD - 2, b'b');
 
         fixture
             .detector
@@ -401,7 +405,7 @@ mod an_owed_reorg_survives_the_process {
     async fn reports_the_same_fork_again_when_nothing_was_applied() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 3, HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 3, b'b');
+        fixture.chain_client.fork_above(HEAD - 3, b'b');
 
         let first = fixture
             .detector
@@ -422,7 +426,7 @@ mod an_owed_reorg_survives_the_process {
     async fn reports_it_again_when_the_cursor_landed_but_the_rewind_did_not() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 3, HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 3, b'b');
+        fixture.chain_client.fork_above(HEAD - 3, b'b');
 
         let verdict = fixture
             .detector
@@ -444,7 +448,7 @@ mod an_owed_reorg_survives_the_process {
     async fn stops_reporting_once_the_rewind_also_ran() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 3, HEAD - 2, HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 3, b'b');
+        fixture.chain_client.fork_above(HEAD - 3, b'b');
 
         let verdict = fixture
             .detector
@@ -475,7 +479,7 @@ mod the_window_refuses_a_reorg_transition {
     #[tokio::test]
     async fn a_refused_retention_surfaces_rather_than_being_swallowed() {
         let fixture = harness(DEPTH).await;
-        fixture.window.refuse_nth_retention(1);
+        fixture.block_header_store.refuse_nth_retention(1);
 
         let refusal = fixture
             .detector
@@ -494,7 +498,7 @@ mod the_window_refuses_a_reorg_transition {
     async fn a_refused_rewind_leaves_the_reorg_owed() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 1]).await;
-        fixture.window.refuse_nth_rewind(1);
+        fixture.block_header_store.refuse_nth_rewind(1);
         let before = fixture.retained().await;
 
         let refusal = fixture
@@ -613,7 +617,7 @@ mod retention {
         fixture.detector.commit(&stacked).await.unwrap();
 
         let retained = fixture.retained().await;
-        let window = fixture.window.load(CHAIN_ID).await.unwrap();
+        let window = fixture.block_header_store.load(CHAIN_ID).await.unwrap();
 
         assert!(
             window
@@ -627,10 +631,10 @@ mod retention {
     async fn replaces_a_height_re_committed_on_another_branch() {
         let fixture = harness(DEPTH).await;
         fixture.commit([HEAD - 1]).await;
-        fixture.chain.fork_above(HEAD - 2, b'b');
+        fixture.chain_client.fork_above(HEAD - 2, b'b');
 
         fixture.commit([HEAD - 1]).await;
-        let window = fixture.window.load(CHAIN_ID).await.unwrap();
+        let window = fixture.block_header_store.load(CHAIN_ID).await.unwrap();
 
         let at_height: Vec<_> = window
             .iter()
