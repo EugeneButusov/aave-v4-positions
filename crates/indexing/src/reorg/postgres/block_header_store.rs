@@ -176,9 +176,9 @@ mod tests {
     //! The port's specification, against a real Postgres.
 
     use crate::reorg::conformance::block_header_store_conformance;
-    use crate::reorg::postgres::harness::PostgresWindowHarness;
+    use crate::reorg::postgres::harness::PostgresBlockHeaderHarness;
 
-    block_header_store_conformance!(PostgresWindowHarness);
+    block_header_store_conformance!(PostgresBlockHeaderHarness);
 }
 
 #[cfg(test)]
@@ -188,13 +188,13 @@ mod beyond_the_contract {
     use crate::fixtures::{CHAIN_ID, WIDE_CHAIN, hash_of, header};
     use crate::reorg::BlockHeaderStore;
     use crate::reorg::conformance::Harness as _;
-    use crate::reorg::postgres::harness::PostgresWindowHarness;
+    use crate::reorg::postgres::harness::PostgresBlockHeaderHarness;
 
     /// Against the table, because `load` would hand two rows back as a window
     /// of two and the ancestor walk would read one of them as canonical.
     #[tokio::test]
     async fn holds_one_row_however_often_a_height_is_rewritten() {
-        let harness = PostgresWindowHarness::fresh("holds_one_row_per_height").await;
+        let harness = PostgresBlockHeaderHarness::fresh("holds_one_row_per_height").await;
 
         for branch in [b'a', b'b', b'c'] {
             harness
@@ -211,7 +211,7 @@ mod beyond_the_contract {
     /// at the width the write used, so it cannot see a narrowing of both.
     #[tokio::test]
     async fn stores_a_chain_id_past_what_a_u32_can_hold() {
-        let harness = PostgresWindowHarness::fresh("a_chain_id_past_a_u32").await;
+        let harness = PostgresBlockHeaderHarness::fresh("a_chain_id_past_a_u32").await;
 
         harness
             .store()
@@ -226,7 +226,7 @@ mod beyond_the_contract {
     async fn round_trips_a_height_past_what_a_double_can_hold() {
         const HIGH: u64 = 9_007_199_254_740_993;
 
-        let harness = PostgresWindowHarness::fresh("a_height_past_a_double").await;
+        let harness = PostgresBlockHeaderHarness::fresh("a_height_past_a_double").await;
         harness
             .store()
             .append(CHAIN_ID, &header(HIGH, b'a'), 0)
@@ -243,7 +243,7 @@ mod beyond_the_contract {
     /// equality, so a differently-cased one reads as an unrecoverable reorg.
     #[tokio::test]
     async fn the_table_refuses_a_hash_that_is_not_lowercase() {
-        let harness = PostgresWindowHarness::fresh("refuses_uppercase").await;
+        let harness = PostgresBlockHeaderHarness::fresh("refuses_uppercase").await;
         let canonical = hash_of(b'a', 500).to_string();
 
         assert!(
