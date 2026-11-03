@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 use opentelemetry::{KeyValue, Value};
+use tracing::warn;
 use units::ChainId;
 
 use crate::engine::Iteration;
@@ -139,10 +140,46 @@ impl Instruments {
         );
     }
 
-    pub(crate) fn reorg(&self, depth: u64, phase: Phase) {
+    /// A reorg, said three ways at once.
+    ///
+    /// As a span **event** rather than a span of its own, because a fork is
+    /// something that happened *inside* an iteration rather than a phase beside
+    /// it. The histogram's own count is how often, so there is no separate
+    /// counter; its values are how deep, which is the number worth watching
+    /// against the finality depth.
+    pub(crate) fn reorg(
+        &self,
+        first_invalid_block: u64,
+        last_invalid_block: u64,
+        phase: Phase,
+        at_block: Option<u64>,
+    ) {
+        let depth = last_invalid_block - first_invalid_block + 1;
+
         self.reorg_depth.record(
             depth,
             &[self.chain.clone(), KeyValue::new("phase", phase.as_str())],
+        );
+
+        // **Two emissions, because one cannot be both.** The span event's name
+        // is taken from the message when there is one, so an event carrying the
+        // sentence would be named after it and a trace backend could not query
+        // for `reorg`. The first is the event; the second is the line.
+        tracing::event!(
+            name: "reorg",
+            tracing::Level::WARN,
+            depth,
+            phase = phase.as_str(),
+            first_invalid_block,
+            last_invalid_block,
+        );
+        warn!(
+            depth,
+            phase = phase.as_str(),
+            first_invalid_block,
+            last_invalid_block,
+            at_block,
+            "reorg; blocks are stale"
         );
     }
 

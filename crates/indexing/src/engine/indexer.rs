@@ -1,48 +1,19 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use alloy_primitives::B256;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument as _, debug, info, warn};
-use units::ChainId;
 
 use crate::chain::{BlockHeader, ChainClient};
 use crate::cursor::{Cursor, CursorStore};
-use crate::engine::Iteration;
+use crate::engine::cause::describe;
 use crate::engine::dispatch::{self, Dispatch, Operation};
 use crate::engine::metrics::{Instruments, Phase};
+use crate::engine::pipeline::Pipeline;
 use crate::engine::status::IndexerStatus;
+use crate::engine::{Iteration, Options, pacing};
 use crate::processors::BlockProcessor;
 use crate::reorg::{ReorgDetector, Verdict};
-
-/// Constants rather than configuration: retries are unbounded, and the stall
-/// signal rather than the delay is what makes a wedged loop visible, so there is
-/// nothing here an operator would usefully tune.
-const RETRY_BASE: Duration = Duration::from_millis(500);
-const RETRY_MAX: Duration = Duration::from_secs(30);
-
-/// How long a shutdown waits for an iteration that ignored its cancellation.
-///
-/// Exists so a processor that does not honour the token cannot make the drain
-/// outlive the container's termination grace period.
-pub const SHUTDOWN_DRAIN: Duration = Duration::from_secs(10);
-
-/// What the loop reads, and nothing more: the finality depth is the detector's,
-/// the provider list the chain client's, the stall threshold the readiness check's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Options {
-    pub chain_id: ChainId,
-
-    /// The floor, used only when the cursor store has nothing.
-    pub start_block: u64,
-
-    /// Upper bound on one dispatched range, halved at runtime if a processor
-    /// asks.
-    pub max_range_size: u64,
-
-    /// How long to wait after catching up.
-    pub poll_interval: Duration,
-}
 
 /// Walks the chain and hands ranges to the processors.
 ///
@@ -77,30 +48,6 @@ pub struct Indexer {
     chain_id_verified: bool,
     bootstrapped: bool,
     effective_max_range: u64,
-}
-
-/// Everything the loop is wired to, named at the call site.
-///
-/// A struct rather than eight positional arguments, which is the shape
-/// `bins/api` composes its router from and for the same reason: the collaborator
-/// list is long enough that the order stops being self-evident.
-pub struct Pipeline {
-    pub options: Options,
-
-    /// Shared, because the detector reads the head through the same client and
-    /// two of them over one provider list diverge the moment one fails over.
-    pub chain_client: Arc<dyn ChainClient>,
-    pub reorg_detector: Box<dyn ReorgDetector>,
-    pub cursor_store: Box<dyn CursorStore>,
-
-    /// Dispatched in this order, stopping at the first that does not accept a
-    /// range.
-    pub processors: Vec<Box<dyn BlockProcessor>>,
-
-    /// Shared with the gauges and the readiness check.
-    pub status: Arc<IndexerStatus>,
-    pub instruments: Instruments,
-    pub cancel: CancellationToken,
 }
 
 impl Indexer {
@@ -165,7 +112,11 @@ impl Indexer {
 
             // Wakes on cancellation too, so a quiet loop does not sit out its
             // poll interval before noticing.
-            let delay = self.delay_for(&result);
+            let delay = pacing::delay_after(
+                &result,
+                self.options.poll_interval,
+                self.status.consecutive_failures(),
+            );
             if !delay.is_zero() {
                 tokio::select! {
                     () = tokio::time::sleep(delay) => {}
@@ -355,7 +306,7 @@ impl Indexer {
                 // would notice: the detector's window starts empty, so without
                 // this the loop would carry on from the cursor onto a branch
                 // that lost.
-                self.record_reorg(
+                self.instruments.reorg(
                     first_invalid_block,
                     last_invalid_block,
                     Phase::Bootstrap,
@@ -463,7 +414,7 @@ impl Indexer {
                 last_invalid_block,
                 last_valid_hash,
             } => {
-                self.record_reorg(
+                self.instruments.reorg(
                     first_invalid_block,
                     last_invalid_block,
                     Phase::Inspect,
@@ -555,46 +506,6 @@ impl Indexer {
         }
     }
 
-    /// A reorg, said three ways at once.
-    ///
-    /// As a span **event** rather than a span of its own, because a fork is
-    /// something that happened *inside* an iteration rather than a phase beside
-    /// it. The histogram's own count is how often, so there is no separate
-    /// counter; its values are how deep, which is the number worth watching
-    /// against the finality depth.
-    fn record_reorg(
-        &self,
-        first_invalid_block: u64,
-        last_invalid_block: u64,
-        phase: Phase,
-        at_block: Option<u64>,
-    ) {
-        let depth = last_invalid_block - first_invalid_block + 1;
-
-        self.instruments.reorg(depth, phase);
-
-        // **Two emissions, because one cannot be both.** The span event's name
-        // is taken from the message when there is one, so an event carrying the
-        // sentence would be named after it and a trace backend could not query
-        // for `reorg`. The first is the event; the second is the line.
-        tracing::event!(
-            name: "reorg",
-            tracing::Level::WARN,
-            depth,
-            phase = phase.as_str(),
-            first_invalid_block,
-            last_invalid_block,
-        );
-        warn!(
-            depth,
-            phase = phase.as_str(),
-            first_invalid_block,
-            last_invalid_block,
-            at_block,
-            "reorg; blocks are stale"
-        );
-    }
-
     /// Halved, floored at 1, and never restored: a defect kept on purpose, see
     /// `docs/rust-migration.md`.
     fn narrow_range(&mut self, processor: &str) {
@@ -623,49 +534,4 @@ impl Indexer {
 
         Ok(())
     }
-
-    fn delay_for(&self, result: &Iteration) -> Duration {
-        match result {
-            Iteration::Progressed { .. } => Duration::ZERO,
-            Iteration::Idle => self.options.poll_interval,
-            // `Failed` is unreachable from `run`, which returns before sleeping on it.
-            Iteration::Retry { .. } | Iteration::Failed { .. } => {
-                backoff(self.status.consecutive_failures())
-            }
-        }
-    }
-}
-
-/// How long to wait after the `failures`th consecutive failure.
-///
-/// 500ms doubling to a 30s ceiling, with no jitter: a defect kept on purpose, see
-/// `docs/rust-migration.md`.
-pub(super) fn backoff(failures: u32) -> Duration {
-    let exponent = failures.saturating_sub(1).min(16);
-
-    RETRY_MAX.min(RETRY_BASE * 2_u32.pow(exponent))
-}
-
-/// Every port's error, flattened to the message the loop puts on a line. The
-/// chain formatter is what keeps the cause from being lost.
-fn describe(error: impl std::error::Error) -> String {
-    ops_cause(&error)
-}
-
-/// Spelled out here rather than linking `ops`, which pulls axum: this crate may
-/// not reach a socket.
-fn ops_cause(error: &dyn std::error::Error) -> String {
-    let mut message = error.to_string();
-    let mut cause = error.source();
-
-    while let Some(next) = cause {
-        let text = next.to_string();
-        if !message.contains(&text) {
-            message.push_str(": ");
-            message.push_str(&text);
-        }
-        cause = next.source();
-    }
-
-    message
 }

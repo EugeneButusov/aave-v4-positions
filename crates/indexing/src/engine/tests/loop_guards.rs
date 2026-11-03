@@ -178,11 +178,9 @@ async fn shutdown_does_not_wait_out_the_poll_interval() {
     );
 }
 
-/// 500ms doubling to a 30s ceiling, and the ends of it: no wait at all
-/// after progress, the poll interval after idling.
 #[test]
 fn the_backoff_doubles_to_a_ceiling() {
-    use crate::engine::indexer::backoff;
+    use crate::engine::pacing::backoff;
 
     let waits: Vec<_> = (1..=8).map(backoff).collect();
 
@@ -201,6 +199,23 @@ fn the_backoff_doubles_to_a_ceiling() {
     );
     // The count the loop has before its first failure is recorded.
     assert_eq!(backoff(0), std::time::Duration::from_millis(500));
+}
+
+#[test]
+fn waits_by_what_the_iteration_did() {
+    use crate::engine::pacing::{backoff, delay_after};
+
+    let poll = std::time::Duration::from_secs(5);
+    let retry = Iteration::Retry {
+        reason: String::new(),
+    };
+
+    assert_eq!(
+        delay_after(&Iteration::Progressed { cursor_at: START }, poll, 0),
+        std::time::Duration::ZERO
+    );
+    assert_eq!(delay_after(&Iteration::Idle, poll, 0), poll);
+    assert_eq!(delay_after(&retry, poll, 3), backoff(3));
 }
 
 /// And the loop actually waits it, which the formula on its own does not
