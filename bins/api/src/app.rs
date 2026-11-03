@@ -31,8 +31,8 @@ pub(crate) struct App {
     /// stores above were handed clones of their own.
     pub(crate) probes: probes::Dependencies,
 
-    /// Four ports, four trait objects, so a case can put a double in front of
-    /// the handler without a database.
+    /// Four ports, four trait objects, so a case can put an in-memory store in
+    /// front of the handler without a database.
     pub(crate) positions: Box<dyn PositionStore>,
     pub(crate) tokens: Box<dyn TokenMetadataStore>,
     pub(crate) prices: Box<dyn ReservePriceStore>,
