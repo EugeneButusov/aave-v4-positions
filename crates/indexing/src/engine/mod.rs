@@ -8,6 +8,7 @@ pub(crate) mod metrics;
 mod pacing;
 mod pipeline;
 mod status;
+mod step;
 
 #[cfg(test)]
 mod harness;

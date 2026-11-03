@@ -20,6 +20,7 @@ use crate::engine::status::{IndexerSnapshot, IndexerState, IndexerStatus};
 /// Takes a [`Meter`] rather than naming a scope, so this crate does not link
 /// the telemetry crate — and so a case can hand it one over an in-memory
 /// exporter.
+#[derive(Clone)]
 pub struct Instruments {
     chain: KeyValue,
     iterations: Counter<u64>,
