@@ -26,4 +26,8 @@ pub enum Error {
         expected: &'static str,
         value: String,
     },
+
+    #[cfg(test)]
+    #[error("the cursor store refused to record the advance")]
+    SaveRefused,
 }

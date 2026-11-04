@@ -10,6 +10,8 @@ publish.workspace = true
 # doc for why that distinction is load-bearing here rather than incidental.
 alloy-primitives = { version = "1.6.1", default-features = false, features = ["std"] }
 async-trait = "0.1.92"
+# `metrics` alone: the scope name is the binary's to supply.
+opentelemetry = { version = "0.31.0", default-features = false, features = ["metrics"] }
 postgres.workspace = true
 units.workspace = true
 # The `Row` a query hands back and the error it refuses with. `with-time-0_3`
@@ -25,10 +27,15 @@ thiserror = "2.0.19"
 tracing = { version = "0.1.42", default-features = false, features = ["std", "attributes"] }
 # When the indexer last advanced, which reaches the wire as an ISO-8601 string.
 time = "0.3.55"
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "macros"] }
 
 [dev-dependencies]
+# Exporters, so instruments and spans are read back rather than asserted from source.
+opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
 test-db.workspace = true
-tokio = { version = "1.53.1", features = ["macros", "rt"] }
+tokio = { version = "1.53.1", features = ["macros", "rt", "test-util"] }
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber = "0.3.23"
 
 [lints]
 workspace = true

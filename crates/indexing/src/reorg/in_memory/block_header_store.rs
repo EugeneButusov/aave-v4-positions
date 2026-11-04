@@ -100,9 +100,9 @@ mod tests {
     use super::InMemoryBlockHeaderStore;
     use crate::reorg::conformance::{Harness, block_header_store_conformance};
 
-    struct Double(InMemoryBlockHeaderStore);
+    struct InMemoryBlockHeaderHarness(InMemoryBlockHeaderStore);
 
-    impl Harness for Double {
+    impl Harness for InMemoryBlockHeaderHarness {
         type Store = InMemoryBlockHeaderStore;
 
         async fn fresh(_case: &str) -> Self {
@@ -114,7 +114,7 @@ mod tests {
         }
     }
 
-    block_header_store_conformance!(Double);
+    block_header_store_conformance!(InMemoryBlockHeaderHarness);
 
     mod beyond_the_contract {
         use super::*;

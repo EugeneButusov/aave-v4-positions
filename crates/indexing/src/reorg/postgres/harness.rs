@@ -10,12 +10,12 @@ use units::ChainId;
 use super::PostgresBlockHeaderStore;
 use crate::reorg::conformance::Harness;
 
-pub(crate) struct PostgresWindowHarness {
+pub(crate) struct PostgresBlockHeaderHarness {
     pool: Pool,
     store: PostgresBlockHeaderStore,
 }
 
-impl Harness for PostgresWindowHarness {
+impl Harness for PostgresBlockHeaderHarness {
     type Store = PostgresBlockHeaderStore;
 
     async fn fresh(case: &str) -> Self {
@@ -32,7 +32,7 @@ impl Harness for PostgresWindowHarness {
     }
 }
 
-impl PostgresWindowHarness {
+impl PostgresBlockHeaderHarness {
     /// For the cases that assert against the table rather than through the
     /// port — which is the only way to see a second row that `load` would
     /// quietly hand back as one.

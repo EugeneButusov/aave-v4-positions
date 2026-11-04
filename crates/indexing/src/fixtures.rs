@@ -1,6 +1,8 @@
 //! The chain ids, the hashes and the headers every suite starts from. Shapes
 //! only; what puts one in front of an implementation is its harness.
 
+use std::sync::{Arc, Mutex};
+
 use alloy_primitives::B256;
 use units::ChainId;
 
@@ -44,4 +46,23 @@ pub(crate) fn parent_of(block: u64, branch: u8) -> B256 {
 
 pub(crate) fn timestamp_of(block: u64) -> u64 {
     1_700_000_000 + block * 12
+}
+
+/// One order-of-operations log shared by several test implementations, so a case
+/// reads the sequence across ports rather than inferring it.
+#[derive(Clone, Default)]
+pub(crate) struct Trace(Arc<Mutex<Vec<String>>>);
+
+impl Trace {
+    pub(crate) fn note(&self, entry: String) {
+        self.entries().push(entry);
+    }
+
+    pub(crate) fn recorded(&self) -> Vec<String> {
+        self.entries().clone()
+    }
+
+    fn entries(&self) -> std::sync::MutexGuard<'_, Vec<String>> {
+        self.0.lock().unwrap_or_else(|held| held.into_inner())
+    }
 }
