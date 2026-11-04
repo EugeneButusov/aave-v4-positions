@@ -97,16 +97,14 @@ impl Durable {
     }
 }
 
-/// Until it idles rather than a fixed count: the first iteration bootstraps
-/// *and* indexes, so a count is one off before it is anything else.
-async fn catch_up(indexer: &mut Indexer) {
-    for _ in 0..64 {
+async fn catch_up(indexer: &mut Indexer, within: usize) {
+    for _ in 0..within {
         if indexer.run_once().await == Iteration::Idle {
             return;
         }
     }
 
-    panic!("it never caught up");
+    panic!("it did not catch up within {within} iterations");
 }
 
 #[tokio::test]
@@ -115,7 +113,7 @@ async fn walking_the_tip_leaves_a_contiguous_window() {
     let durable = Durable::at_head(head);
     let (mut indexer, _) = durable.indexer(30);
 
-    catch_up(&mut indexer).await;
+    catch_up(&mut indexer, 12).await;
 
     let window = durable.retained().await;
     assert!(
@@ -130,7 +128,7 @@ async fn walking_the_tip_leaves_a_contiguous_window() {
 async fn unwinds_a_fork_the_detector_found_for_itself() {
     let durable = Durable::at_head(40);
     let (mut indexer, processor) = durable.indexer(30);
-    catch_up(&mut indexer).await;
+    catch_up(&mut indexer, 12).await;
 
     durable.chain_client.fork_above(38, b'b');
     durable.chain_client.set_head(41);
@@ -149,7 +147,7 @@ async fn unwinds_a_fork_the_detector_found_for_itself() {
 async fn a_second_loop_resumes_from_what_the_first_one_retained() {
     let durable = Durable::at_head(40);
     let (mut first, _) = durable.indexer(30);
-    catch_up(&mut first).await;
+    catch_up(&mut first, 12).await;
     drop(first);
 
     durable.chain_client.set_head(42);
@@ -165,7 +163,7 @@ async fn a_second_loop_resumes_from_what_the_first_one_retained() {
 async fn a_restart_re_reports_a_fork_whose_rewind_never_ran() {
     let durable = Durable::at_head(40);
     let (mut first, _) = durable.indexer(30);
-    catch_up(&mut first).await;
+    catch_up(&mut first, 12).await;
     drop(first);
 
     durable.chain_client.fork_above(38, b'b');
